@@ -134,6 +134,13 @@ No domain is needed.
 
 ---
 
+### If the Vercel build fails with `tsc: command not found` in `apps/api`
+
+Vercel built an old commit, or ran an install that skipped dev tools. Check:
+- **Deployments:** the failing deployment's commit must be the newest one on GitHub. "Redeploy" on an old deployment rebuilds that old commit, so push a new commit instead.
+- **Settings → Build and Deployment:** turn off the Build, Install and Output overrides, and set **Root Directory** to the repository root (empty).
+- **Settings → Environment Variables:** delete `NODE_ENV` if it's there.
+
 ## 4. Use it
 
 1. Open the Vercel URL, create your account, then your organization and channel.

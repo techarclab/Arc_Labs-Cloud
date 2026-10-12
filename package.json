@@ -9,7 +9,8 @@
     "tools/*"
   ],
   "scripts": {
-    "build": "npm run build -w @arc/shared && npm run build -w @arc/api -w @arc/ingestion-worker",
+    "build": "node tools/build.mjs",
+    "build:backend": "npm run build -w @arc/shared && npm run build -w @arc/api -w @arc/ingestion-worker",
     "test": "npm run build -w @arc/shared && vitest run",
     "test:e2e": "npm run build && tsx tests/e2e/run.ts",
     "migrate": "npm run migrate -w @arc/api",
