@@ -55,6 +55,17 @@ const MESSAGES: Record<string, string> = {
   device_inactive: 'This device is suspended, revoked or retired.',
 };
 
+function isLocal() {
+  return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+}
+
+function unreachableMessage() {
+  if (isLocal()) return 'Can’t reach the ARC Cloud server. Check that Docker is running.';
+  if (!import.meta.env.VITE_API_URL)
+    return 'This console isn’t connected to an ARC Cloud server yet. Set VITE_API_URL to the server’s address and redeploy.';
+  return `Can’t reach the ARC Cloud server at ${API_ORIGIN}. It may be starting up or offline — try again in a minute.`;
+}
+
 export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
   const token = getToken();
   let res: Response;
@@ -65,7 +76,12 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, 'network', 'Can’t reach the ARC Cloud server. Check that Docker is running.', null);
+    throw new ApiError(0, 'network', unreachableMessage(), null);
+  }
+  // A hosted console with no API behind it gets the page HTML (or a 404/405) instead of JSON.
+  const isJson = (res.headers.get('content-type') ?? '').includes('json');
+  if (!isJson && res.status !== 204 && !import.meta.env.VITE_API_URL && !isLocal()) {
+    throw new ApiError(0, 'network', unreachableMessage(), null);
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
