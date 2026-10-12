@@ -127,7 +127,7 @@ No domain is needed.
 ## 3. Vercel: web console
 
 1. On vercel.com: **Add New → Project →** import `arc-cloud` from GitHub.
-2. **Root Directory:** `apps/console`. Vercel then reads `apps/console/vercel.json`, which sets the install and build commands, the output folder and page routing.
+2. **Root Directory:** leave it as the repository root. The `vercel.json` at the top of the repo builds only the console (`apps/console`) and serves it. (Setting Root Directory to `apps/console` also works.)
 3. **Environment Variables:** `VITE_API_URL` = your Railway API URL from step 2.2, for example `https://arc-cloud-api.up.railway.app`, with no trailing slash.
 4. **Deploy.** Note the site URL, for example `https://arc-cloud.vercel.app`.
 5. Back in Railway, set the `api` variable `CORS_ORIGINS` to that exact URL and redeploy `api`. To allow more than one address (such as a custom domain), separate them with commas.
