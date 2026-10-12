@@ -23,13 +23,23 @@ warn() { printf '   \033[33m!!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31mStopped: %s\033[0m\n' "$*"; exit 1; }
 
 command -v node >/dev/null || die "Node.js is not installed."
-CLI_DIR="$HOME/.arc-railway-cli"
-if [ ! -x "$CLI_DIR/node_modules/.bin/railway" ]; then
-  echo "Installing the Railway command-line tool (one time)..."
-  npm install --prefix "$CLI_DIR" "@railway/cli@$CLI_VERSION" --no-audit --no-fund >/dev/null 2>&1 \
-    || die "couldn't install @railway/cli (check your internet connection)"
+# Installed inside the project (relative path: Windows npm misreads /c/... paths when
+# MSYS path conversion is off). The folder is git-ignored.
+CLI_DIR=".railway-cli"
+RAILWAY_BIN="$CLI_DIR/node_modules/.bin/railway"
+if [ ! -f "$RAILWAY_BIN" ]; then
+  echo "Installing the Railway command-line tool (one time, ~30 s)..."
+  mkdir -p "$CLI_DIR"
+  npm install --prefix "$CLI_DIR" "@railway/cli@$CLI_VERSION" --no-audit --no-fund --loglevel=error \
+    || warn "npm install of @railway/cli failed; falling back to npx"
 fi
-R() { "$CLI_DIR/node_modules/.bin/railway" "$@"; }
+if [ -f "$RAILWAY_BIN" ] && "$RAILWAY_BIN" --version >/dev/null 2>&1; then
+  R() { "$RAILWAY_BIN" "$@"; }
+else
+  R() { npx -y "@railway/cli@$CLI_VERSION" "$@"; }
+fi
+R --version >/dev/null 2>&1 || die "the Railway command-line tool won't start. Paste me the output of: npx -y @railway/cli@$CLI_VERSION --version"
+ok "Railway CLI $(R --version 2>/dev/null)"
 
 cat <<INFO
 This sets up ARC Cloud's backend in your Railway project:
@@ -95,7 +105,7 @@ create_or_update api \
   "JWT_SECRET=$JWT_SECRET" \
   "INTERNAL_HOOK_TOKEN=$INTERNAL_HOOK_TOKEN" \
   "MQTT_SERVICE_PASSWORD=$MQTT_SERVICE_PASSWORD" \
-  MQTT_URL=mqtt://emqx.railway.internal:1883 \
+  'MQTT_URL=mqtt://${{emqx.RAILWAY_PRIVATE_DOMAIN}}:1883' \
   'HTTP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}' \
   "CORS_ORIGINS=$CONSOLE_URL" \
   ALLOW_SIGNUP=true
@@ -107,11 +117,23 @@ if [ -z "$API_DOMAIN" ]; then
 fi
 [ -n "$API_DOMAIN" ] && ok "public address: https://$API_DOMAIN" || warn "add a domain in api -> Settings -> Networking -> Generate Domain (port 3000)"
 
+# Services Railway auto-created from the monorepo carry Railpack build/start commands
+# that override the Dockerfile; reset them so the repo's Dockerfile decides.
+reset_build() {
+  R environment edit -m "ARC: use Dockerfile for $1" \
+    --service-config "$1" build.builder DOCKERFILE \
+    --service-config "$1" build.buildCommand "" \
+    --service-config "$1" deploy.startCommand "" >/dev/null 2>&1 \
+    && ok "$1: builds with the repo's Dockerfile" \
+    || warn "$1: clear Custom Build/Start Command in its Settings if it keeps failing"
+}
+reset_build api
+
 say "6/7  MQTT broker (emqx)"
 create_or_update emqx \
   RAILWAY_DOCKERFILE_PATH=Dockerfile.emqx \
   "INTERNAL_HOOK_TOKEN=$INTERNAL_HOOK_TOKEN" \
-  API_HOOKS_URL=http://api.railway.internal:3001 \
+  'API_HOOKS_URL=http://${{api.RAILWAY_PRIVATE_DOMAIN}}:3001' \
   "EMQX_DASHBOARD__DEFAULT_PASSWORD=$EMQX_DASH"
 PROXY="$(R tcp-proxy list --service emqx --json 2>/dev/null)"
 if ! grep -q 'proxy.rlwy.net' <<<"$PROXY"; then
@@ -137,9 +159,11 @@ say "7/7  Ingestion worker"
 create_or_update worker \
   ARC_ROLE=worker \
   'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
-  MQTT_URL=mqtt://emqx.railway.internal:1883 \
+  'MQTT_URL=mqtt://${{emqx.RAILWAY_PRIVATE_DOMAIN}}:1883' \
   "MQTT_SERVICE_PASSWORD=$MQTT_SERVICE_PASSWORD" \
   WORKER_ID=ingest-1
+
+reset_build worker
 
 say "Deploying"
 for s in api emqx worker; do

@@ -25,6 +25,8 @@ COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/ingestion-worker/package.json apps/ingestion-worker/
 COPY --from=build /app/apps/ingestion-worker/dist apps/ingestion-worker/dist
 COPY infra/db/migrations infra/db/migrations
+# Root package.json lets `npm run start -w @arc/api` (a common platform default) work too.
+COPY package.json ./
 USER node
 ENV ARC_ROLE=api
 CMD ["sh", "-c", "if [ \"$ARC_ROLE\" = worker ]; then exec node apps/ingestion-worker/dist/main.js; else exec node apps/api/dist/main.js; fi"]

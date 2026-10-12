@@ -11,3 +11,5 @@ device.json
 device-*.json
 .arc-update.tgz
 railway-variables.txt
+.railway-cli/
+railway-doctor.txt
