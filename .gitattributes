@@ -1,0 +1,5 @@
+# Keep Unix line endings so scripts and Dockerfiles work on Linux (Railway, Docker).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

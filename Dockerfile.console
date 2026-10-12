@@ -1,0 +1,16 @@
+# Builds the web console and serves it with nginx on port 80 (published as 3002 by docker-compose).
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/api/package.json apps/api/
+COPY apps/ingestion-worker/package.json apps/ingestion-worker/
+COPY apps/console/package.json apps/console/
+COPY tools/device-simulator/package.json tools/device-simulator/
+RUN npm ci --no-audit --no-fund
+COPY apps/console apps/console
+RUN npm run build -w @arc/console
+
+FROM nginx:1.28-alpine
+COPY infra/console/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/apps/console/dist /usr/share/nginx/html

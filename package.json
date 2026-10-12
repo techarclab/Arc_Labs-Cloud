@@ -1,0 +1,32 @@
+{
+  "name": "arc-cloud",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ARC Cloud \u2014 multi-tenant IoT platform (MVP: identity, device registry, MQTT ingestion, telemetry)",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "tools/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @arc/shared && npm run build -w @arc/api -w @arc/ingestion-worker",
+    "test": "npm run build -w @arc/shared && vitest run",
+    "test:e2e": "npm run build && tsx tests/e2e/run.ts",
+    "migrate": "npm run migrate -w @arc/api",
+    "dev:api": "npm run dev -w @arc/api",
+    "dev:worker": "npm run dev -w @arc/ingestion-worker",
+    "simulate": "tsx tools/device-simulator/src/simulate.ts",
+    "certs:dev": "bash infra/certs/gen-dev-certs.sh",
+    "typecheck": "tsc -b packages/shared apps/api apps/ingestion-worker tools/device-simulator"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "aedes": "^1.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

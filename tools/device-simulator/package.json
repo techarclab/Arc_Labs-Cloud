@@ -1,0 +1,11 @@
+{
+  "name": "@arc/device-simulator",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "tsx src/simulate.ts"
+  },
+  "dependencies": {
+    "mqtt": "^5.13.0"
+  }
+}

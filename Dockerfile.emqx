@@ -1,0 +1,5 @@
+# EMQX broker for ARC Cloud (local docker-compose and Railway).
+FROM emqx/emqx:5.8.9
+COPY infra/emqx/base.hocon.tpl /arc/base.hocon.tpl
+COPY --chmod=755 infra/emqx/entrypoint.sh /arc/entrypoint.sh
+ENTRYPOINT ["/arc/entrypoint.sh"]

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+infra/certs/out/
+coverage/
+.DS_Store
+firmware/**/config.h
+.arc-session.json
+device.json
+device-*.json
+.arc-update.tgz

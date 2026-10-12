@@ -1,0 +1,104 @@
+# Local development stack.  First run:  bash infra/scripts/bootstrap.sh && docker compose up -d --build
+# Web console: http://localhost:3002   API: http://localhost:3000
+name: arc-cloud
+
+services:
+  db:
+    image: timescale/timescaledb:2.30.1-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    command: ["node", "apps/api/dist/main.js"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      RUN_MIGRATIONS: "true"
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-3600}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      INTERNAL_HOOK_TOKEN: ${INTERNAL_HOOK_TOKEN}
+      MQTT_SERVICE_USERNAME: ${MQTT_SERVICE_USERNAME:-arc-ingest}
+      MQTT_SERVICE_PASSWORD: ${MQTT_SERVICE_PASSWORD}
+      MQTT_PUBLIC_HOST: ${MQTT_PUBLIC_HOST:-localhost}
+      MQTT_PUBLIC_PORT: ${MQTT_PUBLIC_PORT:-8883}
+      MQTT_URL: mqtt://emqx:1883            # used to push control values to devices
+      HTTP_PUBLIC_URL: ${HTTP_PUBLIC_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"          # public management API
+      # 3001 (broker hooks) is intentionally NOT published.
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  emqx:
+    environment:
+      INTERNAL_HOOK_TOKEN: ${INTERNAL_HOOK_TOKEN}
+      EMQX_NODE__NAME: emqx@127.0.0.1
+    # Renders base.hocon (hook token + API URL), then starts EMQX. Same image is used on Railway.
+    build:
+      context: .
+      dockerfile: Dockerfile.emqx
+    volumes:
+      - ./infra/certs/out:/opt/emqx/etc/certs/arc:ro
+      - emqx-data:/opt/emqx/data
+    ports:
+      - "8883:8883"                 # devices (TLS)
+      - "127.0.0.1:1883:1883"       # local debugging only
+      - "127.0.0.1:18083:18083"     # EMQX dashboard
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  ingestion-worker:
+    build: .
+    command: ["node", "apps/ingestion-worker/dist/main.js"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      MQTT_URL: mqtt://emqx:1883
+      MQTT_SERVICE_USERNAME: ${MQTT_SERVICE_USERNAME:-arc-ingest}
+      MQTT_SERVICE_PASSWORD: ${MQTT_SERVICE_PASSWORD}
+      WORKER_ID: ingest-1
+      DEVICE_RATE_PER_SEC: ${DEVICE_RATE_PER_SEC:-5}
+      DEVICE_BURST: ${DEVICE_BURST:-20}
+    ports:
+      - "127.0.0.1:9100:9100"       # /health/ready and /metrics
+    depends_on:
+      emqx:
+        condition: service_healthy
+
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile.console
+    ports:
+      - "3002:80"                   # web console: http://localhost:3002
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  emqx-data:

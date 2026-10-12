@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+.git
+.env
+device*.json
+.arc-session.json
+infra/certs/out
+firmware
+tests
+coverage
