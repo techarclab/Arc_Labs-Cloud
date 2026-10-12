@@ -10,3 +10,4 @@ firmware/**/config.h
 device.json
 device-*.json
 .arc-update.tgz
+railway-variables.txt

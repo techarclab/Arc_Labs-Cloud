@@ -3,7 +3,7 @@
   "installCommand": "npm ci --include=dev --no-audit --no-fund",
   "buildCommand": "npm run build -w @arc/console",
   "outputDirectory": "apps/console/dist",
-  "framework": null,
+  "framework": "vite",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
   "headers": [
     {

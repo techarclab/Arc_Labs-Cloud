@@ -10,7 +10,8 @@ const run = (args) => {
   return r.status === 0;
 };
 
-if (process.env.VERCEL) {
+const onVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL) || process.cwd().startsWith('/vercel/');
+if (onVercel) {
   console.log('Vercel detected: building the web console only (apps/console).');
   run(['run', 'build', '-w', '@arc/console']);
 } else {
