@@ -1,5 +1,6 @@
 import { Controller, Get, Module, ServiceUnavailableException } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ApiTags } from '@nestjs/swagger';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth/auth.controller';
@@ -15,7 +16,14 @@ import { MqttPublisher } from './common/mqtt-publisher.service';
 import { MqttHooksController } from './internal/mqtt-hooks.controller';
 import { OrganizationsController } from './organizations/organizations.controller';
 import { ProjectsController } from './projects/projects.controller';
+import { AlertsController } from './alerts/alerts.controller';
+import { CommandsController } from './commands/commands.controller';
+import { CommandsService } from './commands/commands.service';
+import { FirmwareController } from './firmware/firmware.controller';
+import { ApiKeysController, LmsController, OAuthController, WebhooksController } from './integrations/integrations.controller';
+import { OrgOpsController, PlatformController } from './organizations/org-ops.controller';
 
+@ApiTags('Health')
 @Controller('health')
 class HealthController {
   constructor(private readonly db: Db) {}
@@ -47,12 +55,30 @@ class HealthController {
     }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
   ],
-  controllers: [HealthController, AuthController, OrganizationsController, ProjectsController, DevicesController, DeviceHttpController],
+  // DeviceHttpController before CommandsController: GET commands/next must win over commands/:id.
+  controllers: [
+    HealthController,
+    AuthController,
+    OrganizationsController,
+    OrgOpsController,
+    PlatformController,
+    ProjectsController,
+    DevicesController,
+    DeviceHttpController,
+    CommandsController,
+    AlertsController,
+    ApiKeysController,
+    OAuthController,
+    WebhooksController,
+    LmsController,
+    FirmwareController,
+  ],
   providers: [
     AccessService,
     AuditService,
     IngestService,
     MqttPublisher,
+    CommandsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],

@@ -23,6 +23,8 @@ const schema = z.object({
   /** Public base URL of this API, shown in HTTP examples (e.g. http://192.168.1.20:3000). */
   HTTP_PUBLIC_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default(''),
+  /** Comma-separated emails of ARC LABS staff who manage plans for every organization. */
+  PLATFORM_ADMIN_EMAILS: z.string().default(''),
 });
 
 export type AppConfig = z.infer<typeof schema>;
@@ -38,4 +40,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   cached = parsed.data;
   return cached;
+}
+
+/** True when the email is listed in PLATFORM_ADMIN_EMAILS. */
+export function isPlatformAdminEmail(email: string): boolean {
+  const list = loadConfig().PLATFORM_ADMIN_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return list.includes(email.toLowerCase());
 }

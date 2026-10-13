@@ -1,25 +1,44 @@
 # ARC Cloud
 
-Multi-tenant IoT platform from ARC LABS. This repository is the **V1 MVP backbone** from the developer design plan (phases 1–2): identity and tenancy, device registry and provisioning, MQTT-over-TLS ingestion, telemetry storage, device state, and audit, with a telemetry-only (no downlink) security model.
+Multi-tenant IoT platform from ARC LABS, built to the *ARC Cloud Complete Developer Design Plan* (phases 1–7): identity and tenancy, device registry and provisioning, MQTT-over-TLS and HTTP ingestion, telemetry storage, ThingSpeak/Blynk-style channels and dashboards, rules and alerts with email and webhooks, API keys, service accounts, ARC LMS integration, device commands with acknowledgement, signed OTA firmware rollouts, quotas, retention, backups and runbooks.
 
 ```
 ESP32 / Pi / gateway ──MQTT over TLS :8883──▶ EMQX ──auth + ACL hooks──▶ API :3001 (private)
+          └──────────HTTPS /api/v1/update────────────────────────────────▶ API :3000
                                                │
-                                               └─ shared subscription ─▶ ingestion-worker ──▶ PostgreSQL / TimescaleDB
-Web console / scripts ──HTTPS REST :3000──▶ API ─────────────────────────────────────────────┘
+                                               └─ shared subscription ─▶ worker ──▶ PostgreSQL / TimescaleDB
+                                                  (ingestion, rules, alerts, email/webhook delivery, commands, OTA, retention)
+Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 ```
 
 | Path | What it is |
 |---|---|
-| `apps/api` | NestJS REST API (`/api/v1`): auth, organizations, members/RBAC, projects, metric definitions, devices, credentials, telemetry and state queries, audit. Also serves the EMQX auth/ACL hooks on a separate private port. |
-| `apps/console` | Web console (React + Vite), served by nginx on port 3002 in Docker. `npm run dev -w @arc/console` for live reload. |
-| `apps/ingestion-worker` | Subscribes to device topics, validates payloads, dedupes by `messageId`, persists telemetry, tracks last-seen and connect/disconnect, records rejections. Exposes `/health/*` and `/metrics`. |
-| `packages/shared` | Topic convention, payload schemas, ACL rules and online/offline logic shared by every service. |
-| `infra/` | SQL migrations, EMQX config, dev TLS certs, bootstrap script. |
-| `firmware/esp32-arduino` | ESP32 example that connects over TLS and publishes telemetry. |
-| `tools/device-simulator` | Pretend device for testing without hardware. |
-| `tests/e2e` | 27 end-to-end checks (auth, ACL, ingestion, dedupe, tenant isolation, rotation, revocation). |
-| `docs/` | Device protocol, architecture decisions, AWS deployment path. |
+| `apps/api` | NestJS REST API (`/api/v1`, OpenAPI at `/api/docs`): auth, organizations, roles, channels, devices, telemetry, rules & alerts, commands, firmware/OTA, API keys, service accounts (OAuth2), webhooks, ARC LMS, quotas, platform admin. Also the EMQX auth/ACL hooks on a private port. |
+| `apps/ingestion-worker` | Ingests device messages; runs rules, alert notifications (email + signed webhooks with retries), command expiry, OTA rollout tracking and data retention. `/health/*`, `/metrics`. |
+| `apps/console` | Web console (React + Vite). |
+| `packages/shared` | Topic convention, payload schemas, ACL rules, rule evaluation, online/offline logic. |
+| `infra/` | SQL migrations, EMQX config, TLS certs, backup/restore scripts. |
+| `firmware/esp32-arduino` | `arc_device` (MQTT/TLS, controls, commands, OTA) and `arc_http` (HTTPS only, simplest). |
+| `tools/` | Device simulator, firmware signing, Railway deploy and diagnostics, local dev helper. |
+| `tests/` | `e2e` (60+ end-to-end checks), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
+| `docs/` | Device protocol, OpenAPI, architecture decisions, deployment (Railway/Vercel, staging, AWS), ARC LMS, runbooks, security review. |
+
+### Console
+
+| Screen | What it's for |
+|---|---|
+| Overview | Device counts by state, alerts needing attention, messages per hour, channel shortcuts |
+| Alerts | Open/acknowledged/resolved alerts; acknowledge or resolve with a note; full history and notification status |
+| Channel → Dashboard, Devices, Channel settings, API keys & export | Widgets, device fleet, fields, read key and CSV |
+| Channel → Rules | Threshold (“above 30 °C for 5 min”), no-data and offline rules with severity, quiet period and emails |
+| Channel → Commands | Allow-list of commands (with typed settings) devices in the channel accept |
+| Device page | Readings, history, details, activity, **commands** (send, track to “Done”/“Expired”), access controls |
+| Integrations (admins) | API keys & service accounts (scoped, expiring), webhooks (test, delivery log), ARC LMS lab links and learner preview |
+| Firmware & OTA | Signing keys, signed releases, staged rollouts (widen, pause, cancel) with per-device progress |
+| Usage & limits | Plan limits, messages per day, busiest devices, data retention |
+| Team, Rejected data, Audit log | People and roles, why messages were dropped, every change |
+| ARC LABS → All organizations | Platform admins (`PLATFORM_ADMIN_EMAILS`): every customer organization and its plan |
+| `/lab#…` | Read-only learner view opened from ARC LMS |
 
 ## Deploying
 
@@ -108,16 +127,19 @@ Worker metrics: `curl localhost:9100/metrics`. EMQX dashboard: http://127.0.0.1:
 
 ## API summary
 
-All routes are under `/api/v1` and need `Authorization: Bearer <token>` except register/login. Roles per organization: `org_admin` > `engineer` > `viewer`. Resources outside your organizations return **404**, not 403.
+Full interactive reference: **`/api/docs`** on the API (machine-readable: `/api/openapi.json`, also committed as `docs/api/openapi.json`). All routes are under `/api/v1` and need `Authorization: Bearer <token>` (a user token, an API key `arc_sk_…`, or a service-account token from `POST /api/v1/oauth/token`), except register/login and the device HTTP API. Roles per organization: `org_admin` > `engineer` > `viewer`. Resources outside your organizations return **404**, not 403. Requests are rate-limited, and plan quotas return `403 quota_exceeded`.
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST auth/register`, `POST auth/login`, `GET auth/me` |
-| Organizations | `POST/GET organizations`, `GET/PATCH organizations/:id`, `GET/POST organizations/:id/members`, `PATCH/DELETE organizations/:id/members/:userId`, `GET organizations/:id/audit-logs`, `GET organizations/:id/rejected-messages` |
-| Projects | `POST projects`, `GET projects?organizationId=`, `GET/PATCH projects/:id`, `GET/PUT projects/:id/metric-definitions` |
-| Devices | `POST devices`, `GET devices?projectId=&connectivity=&lifecycle=&tag=&search=`, `GET/PATCH devices/:id`, `POST devices/:id/rotate-credentials`, `POST devices/:id/revoke`, `POST devices/:id/lifecycle` |
-| Data | `GET devices/:id/state`, `GET devices/:id/telemetry/latest`, `GET devices/:id/telemetry?metric=a,b&from=&to=&bucket=1m\|5m\|15m\|1h\|6h\|1d&agg=avg\|min\|max\|sum\|count\|last`, `GET devices/:id/events` |
-| Health | `GET /health/live`, `GET /health/ready` |
+| Auth | `auth/register`, `auth/login`, `auth/me`, `oauth/token` (client credentials) |
+| Organizations | `organizations`, members, `audit-logs`, `rejected-messages`, `overview`, `usage`, `settings` (retention), `plan` (platform admins), `platform/organizations` |
+| Channels | `projects`, `fields`, `dashboard`, `read-key`, `command-types` |
+| Devices & data | `devices`, credentials, lifecycle, `state`, `telemetry`, `events`, `controls`, `commands`, `channels/:id/feeds.json\|csv` |
+| Device HTTP | `update?api_key=…&field1=…`, `controls`, next command + acknowledgement |
+| Rules & alerts | `rules`, `alerts`, `alerts/:id/acknowledge`, `alerts/:id/resolve` |
+| Integrations | `api-keys`, `webhooks` (+ `test`, `deliveries`), `lms/links` (+ `learner-tokens`) |
+| Firmware | `firmware/signing-keys`, `firmware/releases`, `firmware/rollouts` |
+| Health | `/health/live`, `/health/ready`; worker `/metrics` |
 
 ## Development without Docker
 
@@ -133,11 +155,11 @@ DATABASE_URL=postgres://user:pass@localhost:5432/empty_db npm run test:e2e   # f
 ## Security notes
 
 - Each device has its own credential, stored as an scrypt hash; the plaintext is returned once at provisioning or rotation.
-- Device identity comes from the authenticated connection (`clientId = username = device UUID`). The ACL lets a device publish only to its own `telemetry`/`state` topics and never subscribe. The worker re-checks topic vs. device as defence in depth.
+- Device identity comes from the authenticated connection (`clientId = username = device UUID`). The ACL lets a device publish only to its own `telemetry`, `state` and `cmd-ack` topics and subscribe only to its own `cmd` topic. The worker re-checks topic vs. device as defence in depth.
 - Broker hooks run on a separate port with a shared token; keep port 3001 off the public network.
 - Revoking or rotating takes effect on the next connect; the EMQX authorization cache (30 s) bounds how long an already-connected revoked device can keep publishing. Kick the client from EMQX for immediate effect (automating this is a planned follow-up).
 - Change `ALLOW_SIGNUP=false` once accounts exist. Review Indian DPDP Act obligations before production data.
 
-## What's next (from the plan)
+## Plan coverage
 
-Phase 3 console (Next.js), phase 4 rules/alerts, phase 5 webhooks/API keys/ARC LMS integration, phase 6 hardening and AWS. See `docs/aws/deployment.md` and `docs/architecture/decisions.md`.
+All roadmap phases in the design plan are implemented: 1 Foundation, 2 Ingestion, 3 Console, 4 Rules & alerts, 5 Integrations (REST/OpenAPI, webhooks, API keys, service accounts, ARC LMS), 6 Hardening (rate limits, quotas, retention, backup + verified restore in `infra/backup`, monitoring, load test, CI, staging, runbooks, security review), 7 Advanced (commands with acknowledgement, signed OTA with staged rollouts, usage analytics, plans). Still open, by design: billing/payments and a native mobile app (the console works on phones), and the kickoff decisions in `docs/architecture/kickoff-decisions.md` (scale, budget, uptime targets) that only ARC LABS can make.

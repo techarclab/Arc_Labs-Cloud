@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { buildTopic, controlMessage } from '@arc/shared';
+import { buildTopic, commandMessage, controlMessage } from '@arc/shared';
 import mqtt, { MqttClient } from 'mqtt';
 import { loadConfig } from '../config';
 
@@ -40,6 +40,17 @@ export class MqttPublisher implements OnModuleInit, OnModuleDestroy {
     if (!client?.connected) return Promise.resolve(false);
     const topic = buildTopic({ orgId: device.organization_id, projectId: device.project_id, deviceId: device.id }, 'cmd');
     return new Promise((resolve) => client.publish(topic, controlMessage(field, value), { qos: 1 }, (err) => resolve(!err)));
+  }
+
+  /** Publishes a command on the device's cmd topic. Resolves true when the broker accepted it. */
+  publishCommand(
+    device: { id: string; organization_id: string; project_id: string },
+    c: { id: string; name: string; payload: Record<string, unknown>; expiresAt: Date },
+  ): Promise<boolean> {
+    const client = this.client;
+    if (!client?.connected) return Promise.resolve(false);
+    const topic = buildTopic({ orgId: device.organization_id, projectId: device.project_id, deviceId: device.id }, 'cmd');
+    return new Promise((resolve) => client.publish(topic, commandMessage(c), { qos: 1 }, (err) => resolve(!err)));
   }
 
   async onModuleDestroy() {

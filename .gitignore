@@ -13,3 +13,6 @@ device-*.json
 railway-variables.txt
 .railway-cli/
 railway-doctor.txt
+backups/
+*-private.pem
+firmware-signing-private.pem

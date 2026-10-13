@@ -1,4 +1,6 @@
-import { All, BadRequestException, Controller, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { Doc } from '../common/docs';
+import { All, BadRequestException, Body, Post, Controller, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
 import { validateTelemetry } from '@arc/shared';
@@ -9,6 +11,8 @@ import { apiKeyHash, safeEqual, UUID_RE } from '../common/crypto';
 import { Public } from '../common/http';
 import { INGESTIBLE, IngestDevice, IngestService } from '../common/ingest.service';
 import { Db } from '../db/db.service';
+import { CommandsService, mapCommand } from '../commands/commands.service';
+import { parseCommandAck } from '@arc/shared';
 
 /** Per-device token bucket for the HTTP API (1 request/second sustained, burst 5). */
 class Buckets {
@@ -27,7 +31,7 @@ class Buckets {
   }
 }
 
-const RESERVED = new Set(['api_key', 'created_at', 'timestamp', 'status', 'format', 'message_id']);
+const RESERVED = new Set(['api_key', 'created_at', 'timestamp', 'status', 'format', 'message_id', 'firmware_version']);
 
 function toNumber(v: unknown): number | null {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -50,6 +54,7 @@ function toNumber(v: unknown): number | null {
  *
  * KEY is the device's password from registration. Use HTTPS in production: the key travels in the request.
  */
+@ApiTags('Device HTTP API')
 @Controller('api/v1')
 export class DeviceHttpController {
   private readonly buckets = new Buckets(1, 5);
@@ -59,7 +64,54 @@ export class DeviceHttpController {
     private readonly ingest: IngestService,
     private readonly jwt: JwtService,
     private readonly access: AccessService,
+    private readonly commands: CommandsService,
   ) {}
+
+  /**
+   * HTTP devices fetch their next pending command (oldest first) and must acknowledge it:
+   *   GET  /api/v1/commands/next?api_key=KEY        → 204 when none, else the command JSON
+   *   POST /api/v1/commands/{id}/ack?api_key=KEY     {"status":"ok"|"error","result":{...},"error":"..."}
+   */
+  @Doc('Next command')
+  @Public()
+  @Throttle({ default: { limit: 6000, ttl: 60_000 } })
+  @Get('commands/next')
+  async nextCommand(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const device = await this.deviceFor(this.apiKey(req));
+    if (!this.buckets.take(`cmd:${device.id}`)) throw new HttpException({ code: 'rate_limited' }, 429);
+    const c = await this.db.tx(async (t) => {
+      const row = (
+        await t.query(
+          `UPDATE commands SET status = 'published', published_at = COALESCE(published_at, now())
+           WHERE id = (SELECT id FROM commands WHERE device_id = $1 AND status IN ('queued', 'published') AND expires_at > now()
+                       ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+           RETURNING *`,
+          [device.id],
+        )
+      ).rows[0];
+      if (row) await t.query('SELECT arc_emit_event($1, $2, $3)', [row.organization_id, 'command.updated', JSON.stringify(mapCommand(row))]);
+      return row;
+    });
+    if (!c) {
+      res.status(204);
+      return;
+    }
+    return { commandId: c.id, name: c.name, payload: c.payload, expiresAt: c.expires_at };
+  }
+
+  @Doc('Ack command')
+  @Public()
+  @Throttle({ default: { limit: 6000, ttl: 60_000 } })
+  @Post('commands/:commandId/ack')
+  @HttpCode(200)
+  async ackCommand(@Req() req: Request, @Param('commandId') commandId: string, @Body() body: unknown) {
+    const device = await this.deviceFor(this.apiKey(req));
+    const ack = parseCommandAck(JSON.stringify({ ...(body && typeof body === 'object' ? body : {}), commandId, status: (body as any)?.status ?? req.query.status ?? 'ok' }));
+    if (!ack) throw new BadRequestException({ code: 'invalid_ack', message: 'Send {"status":"ok"} or {"status":"error","error":"..."}' });
+    const r = await this.commands.ack(device.id, ack.commandId, ack.status, ack.result, ack.error);
+    if (!r) throw new NotFoundException({ code: 'command_not_open', message: 'Unknown, finished or expired command.' });
+    return { status: r.status };
+  }
 
   private apiKey(req: Request): string {
     const q = req.query.api_key ?? (req.body && typeof req.body === 'object' ? (req.body as any).api_key : undefined);
@@ -83,6 +135,7 @@ export class DeviceHttpController {
     return d;
   }
 
+  @Doc('Update')
   @Public()
   @Throttle({ default: { limit: 6000, ttl: 60_000 } })
   @All('update')
@@ -131,10 +184,12 @@ export class DeviceHttpController {
       await this.ingest.rejected(device, source, v.reason, v.detail, excerpt);
       throw new BadRequestException({ code: v.reason, message: v.detail });
     }
-    const stored = await this.ingest.write(device, v.value.metrics, v.deviceTime ?? receivedAt, receivedAt, messageId, null);
+    const fw = typeof input.firmware_version === 'string' && /^[A-Za-z0-9._+-]{1,40}$/.test(input.firmware_version) ? input.firmware_version : null;
+    const stored = await this.ingest.write(device, v.value.metrics, v.deviceTime ?? receivedAt, receivedAt, messageId, fw);
     return { ok: true, duplicate: !stored, deviceId: device.id, receivedAt, values: v.value.metrics };
   }
 
+  @Doc('Controls')
   @Public()
   @Throttle({ default: { limit: 6000, ttl: 60_000 } })
   @Get('controls')
@@ -163,6 +218,7 @@ export class DeviceHttpController {
   }
 
   /** ThingSpeak-style channel feed. Auth: ?api_key=<channel read key> or a signed-in user's token. */
+  @Doc('Feeds')
   @Public()
   @Get(['channels/:id/feeds.json', 'channels/:id/feeds.csv'])
   async feeds(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {

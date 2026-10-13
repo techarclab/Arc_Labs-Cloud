@@ -12,6 +12,7 @@
 #define TOPIC_TELEMETRY  "arc/v1/<orgId>/<projectId>/<deviceId>/telemetry"
 #define TOPIC_STATE      "arc/v1/<orgId>/<projectId>/<deviceId>/state"
 #define TOPIC_COMMANDS   "arc/v1/<orgId>/<projectId>/<deviceId>/cmd"
+#define TOPIC_ACK        "arc/v1/<orgId>/<projectId>/<deviceId>/cmd-ack"
 
 #define FIRMWARE_VERSION "1.0.0"
 #define PUBLISH_INTERVAL_MS 10000   // keep in line with the device's expectedIntervalSeconds

@@ -5,7 +5,14 @@ export const API_ORIGIN = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || w
 
 const TOKEN_KEY = 'arc.token';
 
+// A learner link (/lab#token) uses its own short-lived token without touching the signed-in session.
+let tokenOverride: string | null = null;
+export function setTokenOverride(t: string | null) {
+  tokenOverride = t;
+}
+
 export function getToken(): string | null {
+  if (tokenOverride) return tokenOverride;
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch {
@@ -92,7 +99,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
     data = text;
   }
   if (!res.ok) {
-    if (res.status === 401 && token) {
+    if (res.status === 401 && token && !tokenOverride) {
       setToken(null);
       listeners.forEach((l) => l());
     }
@@ -138,7 +145,7 @@ export interface Credentials {
   clientId: string;
   username: string;
   password: string;
-  topics: { telemetry: string; state: string; commands?: string };
+  topics: { telemetry: string; state: string; commands?: string; commandAcks?: string };
   http?: { apiKey: string; updateUrl: string; controlsUrl: string };
 }
 export interface Reading { metric: string; value: number; ts: string }

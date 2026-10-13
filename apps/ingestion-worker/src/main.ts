@@ -4,6 +4,7 @@ import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, SYS_CLIENT_EVENT_FILTERS } fr
 import mqtt from 'mqtt';
 import { Pool } from 'pg';
 import { loadConfig } from './config';
+import { Jobs } from './jobs';
 import { Counters, Processor, RateLimiter } from './processor';
 
 const log = (level: string, msg: string, extra: Record<string, unknown> = {}) =>
@@ -71,6 +72,13 @@ async function main() {
   client.on('error', (err) => log('error', 'mqtt error', { error: err.message }));
   client.on('close', () => counters.inc('arc_ingest_disconnects_total'));
 
+  // Rules, notifications, webhooks, command expiry, rollouts and retention.
+  const jobs = new Jobs(pool, cfg, counters, log);
+  if (cfg.JOBS_ENABLED) {
+    await jobs.start();
+    log('info', 'background jobs started', { email: cfg.SMTP_URL ? 'enabled' : 'not configured (SMTP_URL)' });
+  }
+
   // Housekeeping: prune the idempotency table.
   const prune = setInterval(() => {
     processor
@@ -99,6 +107,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     log('info', 'shutting down', { signal });
     clearInterval(prune);
+    await jobs.stop();
     health.close();
     await new Promise<void>((r) => client.end(false, {}, () => r()));
     await pool.end();

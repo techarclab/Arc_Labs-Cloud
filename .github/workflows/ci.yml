@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: arc
+          POSTGRES_PASSWORD: arc
+          POSTGRES_DB: arc_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U arc" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build backend
+        run: npm run build:backend
+      - name: Type-check and build the web console
+        run: npm run build -w @arc/console
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end tests (all phases)
+        run: npx tsx tests/e2e/run.ts
+        env:
+          DATABASE_URL: postgres://arc:arc@127.0.0.1:5432/arc_ci
+      - name: Backup and verified restore
+        env:
+          PGPASSWORD: arc
+        run: |
+          sudo apt-get install -y -q postgresql-client >/dev/null
+          psql -h 127.0.0.1 -U arc -d arc_ci -c 'CREATE DATABASE arc_verify'
+          bash infra/backup/backup.sh postgres://arc:arc@127.0.0.1:5432/arc_ci
+          VERIFY_URL=postgres://arc:arc@127.0.0.1:5432/arc_verify bash infra/backup/verify.sh "$(ls -t backups/*.dump | head -1)"
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Dependency scan (fails on high/critical in production dependencies)
+        run: npm audit --omit=dev --audit-level=high
+      - name: No secrets committed
+        run: |
+          ! git ls-files | grep -E '(^|/)(\.env|device[^/]*\.json|railway-variables\.txt|.*-private\.pem)$|infra/certs/out/'

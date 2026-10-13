@@ -59,6 +59,12 @@ export function ChannelLayout() {
             <NavLink to={`${base}/devices`} className={tab}>
               Devices
             </NavLink>
+            <NavLink to={`${base}/rules`} className={tab}>
+              Rules
+            </NavLink>
+            <NavLink to={`${base}/commands`} className={tab}>
+              Commands
+            </NavLink>
             <NavLink to={`${base}/settings`} className={tab}>
               Channel settings
             </NavLink>

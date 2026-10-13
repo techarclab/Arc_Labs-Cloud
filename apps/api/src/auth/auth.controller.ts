@@ -1,3 +1,5 @@
+import { ApiTags } from '@nestjs/swagger';
+import { Doc } from '../common/docs';
 import { Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Post, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
@@ -27,6 +29,7 @@ const DUMMY_HASH = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAA
  * For production, put an OIDC provider (e.g. Amazon Cognito) in front and map
  * `identity_provider_id`; the rest of the API only depends on the JWT `sub`.
  */
+@ApiTags('Auth')
 @Controller('api/v1/auth')
 export class AuthController {
   constructor(
@@ -35,6 +38,7 @@ export class AuthController {
     private readonly audit: AuditService,
   ) {}
 
+  @Doc('Register', { body: registerBody })
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
@@ -56,6 +60,7 @@ export class AuthController {
     }
   }
 
+  @Doc('Login', { body: loginBody })
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
@@ -71,8 +76,18 @@ export class AuthController {
     return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
   }
 
+  @Doc('Me')
   @Get('me')
   async me(@CurrentUser() current: AuthUser) {
+    if (current.scope) {
+      // API keys, service accounts and LMS learners: describe the caller and its limits.
+      return {
+        user: { id: current.id, email: current.email, displayName: current.email, kind: current.kind },
+        memberships: [{ id: current.scope.orgId, role: current.scope.role }],
+        scope: current.scope,
+        isPlatformAdmin: false,
+      };
+    }
     const user = await this.db.one('SELECT id, email, display_name, created_at FROM users WHERE id = $1', [current.id]);
     const memberships = await this.db.query(
       `SELECT o.id, o.name, o.slug, m.role FROM organization_members m

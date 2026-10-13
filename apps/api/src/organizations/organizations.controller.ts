@@ -1,8 +1,10 @@
+import { ApiTags } from '@nestjs/swagger';
+import { Doc } from '../common/docs';
 import { Body, ConflictException, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
-import { AuthUser, CurrentUser, pageQuery, parse, Uuid } from '../common/http';
+import { actor, AuthUser, CurrentUser, pageQuery, parse, requirePerson, Uuid } from '../common/http';
 import { Db } from '../db/db.service';
 
 const createBody = z.object({
@@ -26,6 +28,7 @@ const mapOrg = (o: any, role?: string) => ({
   ...(role ? { role } : {}),
 });
 
+@ApiTags('Organizations')
 @Controller('api/v1/organizations')
 export class OrganizationsController {
   constructor(
@@ -34,14 +37,16 @@ export class OrganizationsController {
     private readonly audit: AuditService,
   ) {}
 
+  @Doc('Create', { body: createBody })
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    requirePerson(user);
     const input = parse(createBody, body);
     try {
       return await this.db.tx(async (c) => {
         const org = (await c.query('INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING *', [input.name, input.slug])).rows[0];
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'org_admin')`, [org.id, user.id]);
-        await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: org.id, action: 'organization.create', resourceType: 'organization', resourceId: org.id }, c);
+        await this.audit.record({ ...actor(user), organizationId: org.id, action: 'organization.create', resourceType: 'organization', resourceId: org.id }, c);
         return mapOrg(org, 'org_admin');
       });
     } catch (err: any) {
@@ -50,8 +55,13 @@ export class OrganizationsController {
     }
   }
 
+  @Doc('List')
   @Get()
   async list(@CurrentUser() user: AuthUser) {
+    if (user.scope) {
+      const o = await this.db.one('SELECT * FROM organizations WHERE id = $1', [user.scope.orgId]);
+      return { items: o ? [mapOrg(o, user.scope.role)] : [] };
+    }
     const rows = await this.db.query(
       `SELECT o.*, m.role FROM organizations o JOIN organization_members m ON m.organization_id = o.id
        WHERE m.user_id = $1 ORDER BY o.name`,
@@ -60,23 +70,26 @@ export class OrganizationsController {
     return { items: rows.map((r) => mapOrg(r, r.role)) };
   }
 
+  @Doc('Get')
   @Get(':id')
   async get(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
-    const role = await this.access.requireOrg(user, id, 'viewer');
+    const role = await this.access.requireOrg(user, id, 'viewer', { allowRestricted: true });
     return mapOrg(await this.db.one('SELECT * FROM organizations WHERE id = $1', [id]), role);
   }
 
+  @Doc('Update', { body: updateBody })
   @Patch(':id')
   async update(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     await this.access.requireOrg(user, id, 'org_admin');
     const input = parse(updateBody, body);
     const org = await this.db.one('UPDATE organizations SET name = $2 WHERE id = $1 RETURNING *', [id, input.name]);
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: id, action: 'organization.update', resourceType: 'organization', resourceId: id, metadata: input });
+    await this.audit.record({ ...actor(user), organizationId: id, action: 'organization.update', resourceType: 'organization', resourceId: id, metadata: input });
     return mapOrg(org);
   }
 
   // ---- members ----
 
+  @Doc('Members')
   @Get(':id/members')
   async members(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     await this.access.requireOrg(user, id, 'viewer');
@@ -89,6 +102,7 @@ export class OrganizationsController {
   }
 
   /** Adds an existing user. Email invitations are a later step (needs an email provider). */
+  @Doc('Add member', { body: memberBody })
   @Post(':id/members')
   async addMember(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     await this.access.requireOrg(user, id, 'org_admin');
@@ -100,10 +114,11 @@ export class OrganizationsController {
        ON CONFLICT (organization_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
       [id, target.id, input.role],
     );
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: id, action: 'member.upsert', resourceType: 'user', resourceId: target.id, metadata: { role: input.role } });
+    await this.audit.record({ ...actor(user), organizationId: id, action: 'member.upsert', resourceType: 'user', resourceId: target.id, metadata: { role: input.role } });
     return { userId: target.id, role: input.role };
   }
 
+  @Doc('Change role', { body: roleBody })
   @Patch(':id/members/:userId')
   async changeRole(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Param('userId', Uuid()) userId: string, @Body() body: unknown) {
     await this.access.requireOrg(user, id, 'org_admin');
@@ -111,21 +126,23 @@ export class OrganizationsController {
     await this.assertNotLastAdmin(id, userId, input.role);
     const row = await this.db.one('UPDATE organization_members SET role = $3 WHERE organization_id = $1 AND user_id = $2 RETURNING role', [id, userId, input.role]);
     if (!row) throw new NotFoundException({ code: 'not_found' });
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: id, action: 'member.role_change', resourceType: 'user', resourceId: userId, metadata: input });
+    await this.audit.record({ ...actor(user), organizationId: id, action: 'member.role_change', resourceType: 'user', resourceId: userId, metadata: input });
     return { userId, role: row.role };
   }
 
+  @Doc('Remove member')
   @Delete(':id/members/:userId')
   @HttpCode(204)
   async removeMember(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Param('userId', Uuid()) userId: string) {
     await this.access.requireOrg(user, id, 'org_admin');
     await this.assertNotLastAdmin(id, userId, null);
     await this.db.query('DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2', [id, userId]);
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: id, action: 'member.remove', resourceType: 'user', resourceId: userId });
+    await this.audit.record({ ...actor(user), organizationId: id, action: 'member.remove', resourceType: 'user', resourceId: userId });
   }
 
   // ---- operational views ----
 
+  @Doc('Audit logs', { query: pageQuery })
   @Get(':id/audit-logs')
   async auditLogs(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Query() q: unknown) {
     await this.access.requireOrg(user, id, 'org_admin');
@@ -139,6 +156,7 @@ export class OrganizationsController {
   }
 
   /** Recent ingestion rejections for this tenant — the first place to look when a device "isn't showing up". */
+  @Doc('Rejected', { query: pageQuery })
   @Get(':id/rejected-messages')
   async rejected(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Query() q: unknown) {
     await this.access.requireOrg(user, id, 'engineer');

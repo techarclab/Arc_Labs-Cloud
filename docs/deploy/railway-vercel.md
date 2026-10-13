@@ -141,6 +141,21 @@ Vercel built an old commit, or ran an install that skipped dev tools. Check:
 - **Settings → Build and Deployment:** turn off the Build, Install and Output overrides, and set **Root Directory** to the repository root (empty).
 - **Settings → Environment Variables:** delete `NODE_ENV` if it's there.
 
+### Alert emails (optional)
+
+Alerts always appear in the console and go to your webhooks. To also send emails, give the `worker` an SMTP server:
+
+```
+SMTP_URL=smtps://USER:APP_PASSWORD@smtp.gmail.com:465
+MAIL_FROM=ARC Cloud <you@gmail.com>
+```
+
+With Gmail, turn on 2-step verification and create an **App password** (Google Account → Security → App passwords); use that, not your normal password. Any provider works (Brevo, SendGrid, Zoho, Amazon SES) using its SMTP address. Set it in Railway → `worker` → Variables, or run `SMTP_URL='smtps://…' bash tools/railway-deploy.sh`.
+
+### ARC LABS admin
+
+People whose emails are in `PLATFORM_ADMIN_EMAILS` on the `api` service (comma-separated; the deploy script sets `techarclab@gmail.com`) see **ARC LABS → All organizations** in the console: every customer organization, its usage, and its plan and limits. They can't see other organizations' devices or data.
+
 ## 4. Use it
 
 1. Open the Vercel URL, create your account, then your organization and channel.

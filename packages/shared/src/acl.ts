@@ -16,7 +16,7 @@ export interface DeviceAclSubject {
 
 /**
  * Least-privilege ACL for a device identity.
- * - publish: only its own telemetry/state topics
+ * - publish: only its own telemetry, state and cmd-ack topics
  * - subscribe: only its own cmd topic (exact, no wildcards) to receive control values
  * The device identity comes from the authenticated connection, never the payload.
  */

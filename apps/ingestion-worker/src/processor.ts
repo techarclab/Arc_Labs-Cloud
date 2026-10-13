@@ -1,6 +1,8 @@
 import {
   buildTopic,
+  commandMessage,
   controlMessage,
+  parseCommandAck,
   MetricRule,
   parseTopic,
   RejectReason,
@@ -92,7 +94,7 @@ export class Processor {
    */
   async handle(topic: string, payload: Buffer, receivedAt = new Date()): Promise<Outcome> {
     const parsed = parseTopic(topic);
-    if (!parsed || (parsed.channel !== 'telemetry' && parsed.channel !== 'state')) {
+    if (!parsed || (parsed.channel !== 'telemetry' && parsed.channel !== 'state' && parsed.channel !== 'cmd-ack')) {
       return this.reject(null, topic, 'bad_topic', 'topic outside convention', payload);
     }
 
@@ -109,9 +111,42 @@ export class Processor {
       return this.reject(device, topic, 'rate_limited', 'per-device message rate exceeded', payload, false);
     }
 
+    if (parsed.channel === 'cmd-ack') return this.commandAck(device, topic, payload);
     return parsed.channel === 'telemetry'
       ? this.telemetry(device, topic, payload, receivedAt)
       : this.state(device, topic, payload, receivedAt);
+  }
+
+  /** Device confirms (or reports failure of) a command. Only open, unexpired commands of this device change. */
+  private async commandAck(device: DeviceRecord, topic: string, payload: Buffer): Promise<Outcome> {
+    const ack = parseCommandAck(payload);
+    if (!ack) return this.reject(device, topic, 'invalid_json', 'expected {"commandId":"…","status":"ok"|"error"}', payload);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const r = (
+        await client.query(
+          `UPDATE commands SET status = $3, completed_at = now(), result = $4, error = $5, published_at = COALESCE(published_at, now())
+           WHERE id = $1 AND device_id = $2 AND status IN ('queued', 'published') AND expires_at > now() RETURNING *`,
+          [ack.commandId, device.id, ack.status === 'ok' ? 'acknowledged' : 'failed', ack.result ?? null, ack.status === 'error' ? ack.error ?? 'device reported an error' : null],
+        )
+      ).rows[0];
+      if (r) {
+        await client.query('SELECT arc_emit_event($1, $2, $3)', [
+          r.organization_id,
+          'command.updated',
+          JSON.stringify({ id: r.id, deviceId: r.device_id, name: r.name, status: r.status, result: r.result, error: r.error, completedAt: r.completed_at }),
+        ]);
+      }
+      await client.query('COMMIT');
+      this.counters.inc(`arc_commands_acks_total|${r ? r.status : 'ignored'}`);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    return 'accepted';
   }
 
   private async telemetry(device: DeviceRecord, topic: string, payload: Buffer, receivedAt: Date): Promise<Outcome> {
@@ -150,6 +185,13 @@ export class Processor {
         params,
       );
       await this.touch(client, device, receivedAt, firmware);
+      // Wake the rules engine for this channel and fan out to telemetry webhooks.
+      await client.query(`SELECT pg_notify('arc_telemetry', $1)`, [device.project_id]);
+      await client.query('SELECT arc_emit_event($1, $2, $3)', [
+        device.organization_id,
+        'telemetry.received',
+        JSON.stringify({ deviceId: device.id, projectId: device.project_id, messageId: v.value.messageId, ts: ts.toISOString(), metrics: v.value.metrics }),
+      ]);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -236,14 +278,30 @@ export class Processor {
         [res.rows[0].organization_id, clientId, kind, at, kind === 'disconnected' ? { reason: data.reason ?? null } : { ipaddress: data.ipaddress ?? null }],
       );
       this.counters.inc(`arc_ingest_client_events_total|${kind}`);
+      await this.pool.query('SELECT arc_emit_event($1, $2, $3)', [
+        res.rows[0].organization_id,
+        `device.${kind}`,
+        JSON.stringify({ deviceId: clientId, projectId: res.rows[0].project_id, at: at.toISOString(), reason: kind === 'disconnected' ? data.reason ?? null : undefined }),
+      ]);
       if (kind === 'connected' && publish) {
         const controls = await this.pool.query('SELECT field_key, value FROM control_values WHERE device_id = $1', [clientId]);
-        if (controls.rowCount) {
+        const open = await this.pool.query(
+          `SELECT id, name, payload, expires_at FROM commands WHERE device_id = $1 AND status IN ('queued', 'published') AND expires_at > now() ORDER BY created_at`,
+          [clientId],
+        );
+        if (controls.rowCount || open.rowCount) {
           const topic = buildTopic({ orgId: res.rows[0].organization_id, projectId: res.rows[0].project_id, deviceId: clientId }, 'cmd');
-          // Give the device a moment to subscribe after connecting.
+          // Give the device a moment to subscribe after connecting, then restore controls and deliver open commands.
           setTimeout(() => {
             for (const c of controls.rows) publish(topic, controlMessage(c.field_key, c.value));
+            for (const c of open.rows) publish(topic, commandMessage({ id: c.id, name: c.name, payload: c.payload, expiresAt: new Date(c.expires_at) }));
+            if (open.rowCount) {
+              void this.pool
+                .query(`UPDATE commands SET status = 'published', published_at = COALESCE(published_at, now()) WHERE id = ANY($1) AND status = 'queued'`, [open.rows.map((c) => c.id)])
+                .catch(() => undefined);
+            }
             this.counters.inc('arc_ingest_controls_resent_total', controls.rowCount ?? 0);
+            this.counters.inc('arc_commands_redelivered_total', open.rowCount ?? 0);
           }, 2000);
         }
       }

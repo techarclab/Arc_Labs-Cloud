@@ -12,7 +12,9 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
 
 export function dateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const d = new Date(iso);
+  const otherYear = d.getFullYear() !== new Date().getFullYear();
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', ...(otherYear ? { year: 'numeric' } : {}), hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 export function num(v: number): string {

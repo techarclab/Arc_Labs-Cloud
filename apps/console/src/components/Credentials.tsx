@@ -17,6 +17,7 @@ function configH(device: Device, c: Credentials) {
 #define TOPIC_TELEMETRY  "${c.topics.telemetry}"
 #define TOPIC_STATE      "${c.topics.state}"
 #define TOPIC_COMMANDS   "${c.topics.commands ?? ''}"
+#define TOPIC_ACK        "${c.topics.commandAcks ?? ''}"
 
 #define FIRMWARE_VERSION    "1.0.0"
 #define PUBLISH_INTERVAL_MS ${device.expectedIntervalSeconds * 1000}

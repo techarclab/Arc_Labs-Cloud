@@ -34,7 +34,7 @@ describe('device ACL', () => {
     expect(authorizeDevice(dev, 'publish', 'arc/v1/org-1/proj-1/dev-2/telemetry')).toBe(false);
     expect(authorizeDevice(dev, 'publish', 'arc/v1/org-2/proj-1/dev-1/telemetry')).toBe(false);
     expect(authorizeDevice(dev, 'publish', 'arc/v1/org-1/proj-2/dev-1/telemetry')).toBe(false);
-    expect(authorizeDevice(dev, 'publish', 'arc/v1/org-1/proj-1/dev-1/cmd-ack')).toBe(false);
+    expect(authorizeDevice(dev, 'publish', 'arc/v1/org-1/proj-1/dev-1/cmd-ack')).toBe(true) // command acknowledgements (phase 7);
     expect(authorizeDevice(dev, 'subscribe', 'arc/v1/org-1/proj-1/dev-2/cmd')).toBe(false);
     expect(authorizeDevice(dev, 'subscribe', 'arc/v1/org-1/proj-1/+/cmd')).toBe(false);
     expect(authorizeDevice(dev, 'subscribe', 'arc/v1/org-1/proj-1/dev-1/telemetry')).toBe(false);

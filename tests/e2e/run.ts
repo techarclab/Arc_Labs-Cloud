@@ -1,31 +1,27 @@
 /**
- * End-to-end check of the V1 data path without Docker:
- *   API (real) + ingestion worker (real) + Postgres (DATABASE_URL, empty DB)
- *   + an in-process Aedes broker that calls the SAME /internal/mqtt hooks EMQX uses
- *     and emits EMQX-shaped $SYS client events.
- *
- *   DATABASE_URL=postgres://... npm run test:e2e
+ * End-to-end checks for every phase (DATABASE_URL=postgres://… empty DB):  npm run test:e2e
  */
 import assert from 'node:assert/strict';
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { createServer, Server } from 'node:net';
-import { resolve } from 'node:path';
-import { Aedes } from 'aedes';
-import mqtt, { MqttClient } from 'mqtt';
-
-const ROOT = resolve(__dirname, '../..');
-const DB = process.env.DATABASE_URL;
-if (!DB) throw new Error('DATABASE_URL (an empty database) is required');
-
-const API = 'http://127.0.0.1:3100';
-const HOOKS = 'http://127.0.0.1:3101';
-const BROKER_PORT = 18830;
-const SECRETS = {
-  JWT_SECRET: 'e2e-jwt-secret-0123456789abcdef0123456789',
-  INTERNAL_HOOK_TOKEN: 'e2e-internal-hook-token-0123456789',
-  MQTT_SERVICE_PASSWORD: 'e2e-service-password-0123456789',
-};
+import { MqttClient } from 'mqtt';
+import {
+  ROOT,
+  DB,
+  API,
+  HOOKS,
+  BROKER_PORT,
+  SECRETS,
+  sleep,
+  http,
+  hook,
+  spawnSvc,
+  waitFor,
+  startBroker,
+  connectDevice,
+  pub,
+  telemetry,
+} from './harness';
 
 const results: { name: string; ok: boolean; err?: string }[] = [];
 async function check(name: string, fn: () => Promise<void> | void) {
@@ -39,110 +35,10 @@ async function check(name: string, fn: () => Promise<void> | void) {
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function http(method: string, path: string, token?: string, body?: unknown) {
-  const res = await fetch(API + path, {
-    method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
-
-async function hook(path: string, body: unknown) {
-  const res = await fetch(HOOKS + path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-internal-token': SECRETS.INTERNAL_HOOK_TOKEN },
-    body: JSON.stringify(body),
-  });
-  return (await res.json()) as { result: string };
-}
-
-function spawnSvc(name: string, script: string, env: Record<string, string>): ChildProcess {
-  const p = spawn(process.execPath, [script], { cwd: ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-  const out = (d: Buffer) => process.env.E2E_VERBOSE && process.stdout.write(`[${name}] ${d}`);
-  p.stdout!.on('data', out);
-  p.stderr!.on('data', (d) => process.stdout.write(`[${name}:err] ${d}`));
-  return p;
-}
-
-async function waitFor(fn: () => Promise<boolean>, what: string, timeoutMs = 20000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (await fn().catch(() => false)) return;
-    await sleep(250);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
-
-async function startBroker(): Promise<{ server: Server; broker: Aedes }> {
-  const broker = await Aedes.createBroker({ id: 'e2e' });
-  broker.authenticate = (client, username, password, cb) => {
-    (client as any)._arcUser = username; // EMQX passes ${username} to the authz hook; mirror that
-    hook('/internal/mqtt/authenticate', { username, password: password?.toString() ?? '', clientid: client.id })
-      .then((r) => {
-        if (r.result === 'allow') return cb(null, true);
-        const e: any = new Error('denied');
-        e.returnCode = 5;
-        cb(e, false);
-      })
-      .catch((err) => cb(err, false));
-  };
-  const authz = (client: any, action: string, topic: string, cb: (e: Error | null) => void) =>
-    hook('/internal/mqtt/authorize', { username: client?.id ? (client as any)._arcUser ?? client.id : '', clientid: client?.id, topic, action })
-      .then((r) => cb(r.result === 'allow' ? null : new Error('not authorized')))
-      .catch((e) => cb(e));
-  broker.authorizePublish = (client, packet, cb) => authz(client, 'publish', packet.topic, cb);
-  broker.authorizeSubscribe = (client, sub, cb) =>
-    authz(client, 'subscribe', sub.topic, (e) => (e ? cb(e, null) : cb(null, sub)));
-  // Emulate EMQX system client events.
-  broker.on('client', (c) => {
-    if ((c as any).id?.startsWith('svc-')) return;
-    broker.publish({ topic: `$SYS/brokers/e2e/clients/${c.id}/connected`, payload: Buffer.from(JSON.stringify({ clientid: c.id, username: c.id, connected_at: Date.now(), ipaddress: '127.0.0.1' })), qos: 0, retain: false, cmd: 'publish', dup: false }, () => undefined);
-  });
-  broker.on('clientDisconnect', (c) => {
-    if ((c as any).id?.startsWith('svc-')) return;
-    broker.publish({ topic: `$SYS/brokers/e2e/clients/${c.id}/disconnected`, payload: Buffer.from(JSON.stringify({ clientid: c.id, username: c.id, disconnected_at: Date.now(), reason: 'normal' })), qos: 0, retain: false, cmd: 'publish', dup: false }, () => undefined);
-  });
-  const server = createServer(broker.handle);
-  await new Promise<void>((r) => server.listen(BROKER_PORT, r));
-  return { server, broker };
-}
-
-function connectDevice(creds: { clientId: string; username: string; password: string }): Promise<MqttClient> {
-  return new Promise((resolveP, reject) => {
-    const c = mqtt.connect(`mqtt://127.0.0.1:${BROKER_PORT}`, {
-      protocolVersion: 4,
-      clientId: creds.clientId,
-      username: creds.username,
-      password: creds.password,
-      reconnectPeriod: 0,
-      connectTimeout: 5000,
-    });
-    c.once('connect', () => resolveP(c));
-    c.once('error', (e) => {
-      c.end(true);
-      reject(e);
-    });
-  });
-}
-
-const pub = (c: MqttClient, topic: string, payload: unknown) =>
-  new Promise<void>((r, j) => c.publish(topic, typeof payload === 'string' ? payload : JSON.stringify(payload), { qos: 1 }, (e) => (e ? j(e) : r())));
-
-const telemetry = (metrics: Record<string, unknown>, messageId = randomUUID()) => ({
-  schemaVersion: 1,
-  messageId,
-  timestamp: new Date().toISOString(),
-  metrics,
-  metadata: { firmwareVersion: '1.0.0' },
-});
-
 async function main() {
   const procs: ChildProcess[] = [];
   const { server, broker } = await startBroker();
+  const sinks = await startSinks();
   try {
     const env = {
       ...SECRETS,
@@ -155,6 +51,8 @@ async function main() {
       MQTT_URL: `mqtt://127.0.0.1:${BROKER_PORT}`,
       HTTP_PUBLIC_URL: API.replace('/api/v1', ''),
       NODE_ENV: 'test',
+      ALLOW_PRIVATE_WEBHOOKS: 'true',
+      CONSOLE_URL: 'http://console.test',
     };
     procs.push(spawnSvc('api', 'apps/api/dist/main.js', env));
     await waitFor(async () => (await fetch(`${API}/health/ready`)).ok, 'API');
@@ -167,6 +65,15 @@ async function main() {
         MQTT_SERVICE_PASSWORD: SECRETS.MQTT_SERVICE_PASSWORD,
         HEALTH_PORT: '19100',
         CACHE_TTL_SECONDS: '1',
+        RULES_INTERVAL_SECONDS: '2',
+        DELIVERIES_INTERVAL_SECONDS: '1',
+        COMMANDS_INTERVAL_SECONDS: '1',
+        ROLLOUTS_INTERVAL_SECONDS: '1',
+        RETENTION_INTERVAL_SECONDS: '2',
+        SMTP_URL: `smtp://127.0.0.1:${SMTP_PORT}/?ignoreTLS=true`,
+        MAIL_FROM: 'ARC Cloud <alerts@arclabs.test>',
+        CONSOLE_URL: 'http://console.test',
+        ALLOW_PRIVATE_WEBHOOKS: 'true',
       }),
     );
     await waitFor(async () => (await fetch('http://127.0.0.1:19100/health/ready')).ok, 'worker');
@@ -243,13 +150,14 @@ async function main() {
       const r = await fetch(`${HOOKS}/internal/mqtt/authenticate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       assert.equal(r.status, 401);
     });
-    await check('ACL: own telemetry allowed; other device / other tenant / cmd / subscribe denied', async () => {
+    await check('ACL: own telemetry/state/cmd-ack allowed; other device / other tenant / publishing cmd / wildcard subscribe denied', async () => {
       const t = (topic: string, action = 'publish') => hook('/internal/mqtt/authorize', { username: dev.id, clientid: dev.id, topic, action });
       assert.equal((await t(creds.topics.telemetry)).result, 'allow');
       assert.equal((await t(creds.topics.state)).result, 'allow');
       assert.equal((await t(`arc/v1/${orgA.id}/${proj.id}/${randomUUID()}/telemetry`)).result, 'deny');
       assert.equal((await t(`arc/v1/${orgB.id}/${proj.id}/${dev.id}/telemetry`)).result, 'deny');
-      assert.equal((await t(`arc/v1/${orgA.id}/${proj.id}/${dev.id}/cmd-ack`)).result, 'deny');
+      assert.equal((await t(`arc/v1/${orgA.id}/${proj.id}/${dev.id}/cmd-ack`)).result, 'allow');
+      assert.equal((await t(`arc/v1/${orgA.id}/${proj.id}/${dev.id}/cmd`)).result, 'deny');
       assert.equal((await t('#', 'subscribe')).result, 'deny');
     });
 
@@ -471,15 +379,448 @@ async function main() {
       assert.match(m, /arc_ingest_accepted_total 4/);
       assert.match(m, /arc_ingest_duplicates_total 1/);
     });
+
+    await phases4to7({ tA, tB, orgA, orgB, proj, dev2, key2, sinks });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
     server.close();
+    await sinks.close();
   }
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
   process.exit(failed.length ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// Phases 4–7 (rules & alerts, integrations, hardening, commands & OTA)
+// ---------------------------------------------------------------------------------------
+
+const SMTP_PORT = 18925;
+const SINK_PORT = 18926;
+const SINK = `http://127.0.0.1:${SINK_PORT}`;
+
+interface Sinks {
+  emails: { to: string; raw: string }[];
+  hooks: { path: string; headers: Record<string, string>; body: string }[];
+  close: () => Promise<void>;
+}
+
+async function startSinks(): Promise<Sinks> {
+  const { SMTPServer } = await import('smtp-server');
+  const { createServer: createHttp } = await import('node:http');
+  const emails: Sinks['emails'] = [];
+  const hooks: Sinks['hooks'] = [];
+  const smtp = new SMTPServer({
+    authOptional: true,
+    disabledCommands: ['STARTTLS', 'AUTH'],
+    logger: false,
+    onData(stream, session, cb) {
+      let raw = '';
+      stream.on('data', (d) => (raw += d));
+      stream.on('end', () => {
+        for (const r of session.envelope.rcptTo) emails.push({ to: r.address, raw });
+        cb();
+      });
+    },
+  });
+  await new Promise<void>((r) => smtp.listen(SMTP_PORT, '127.0.0.1', r));
+  const web = createHttp((req, res) => {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      hooks.push({ path: req.url ?? '', headers: req.headers as Record<string, string>, body });
+      res.writeHead(req.url?.startsWith('/fail') ? 500 : 204).end();
+    });
+  });
+  await new Promise<void>((r) => web.listen(SINK_PORT, '127.0.0.1', r));
+  return {
+    emails,
+    hooks,
+    close: async () => {
+      await new Promise<void>((r) => smtp.close(() => r()));
+      await new Promise<void>((r) => web.close(() => r()));
+    },
+  };
+}
+
+async function sql(text: string, params: unknown[] = []) {
+  const { Client } = await import('pg');
+  const c = new Client({ connectionString: DB });
+  await c.connect();
+  try {
+    return (await c.query(text, params)).rows;
+  } finally {
+    await c.end();
+  }
+}
+
+async function eventually<T>(fn: () => Promise<T | undefined | null | false>, what: string, timeoutMs = 15000): Promise<T> {
+  const end = Date.now() + timeoutMs;
+  let last: unknown;
+  while (Date.now() < end) {
+    try {
+      const v = await fn();
+      if (v) return v as T;
+    } catch (e) {
+      last = e;
+    }
+    await sleep(300);
+  }
+  throw new Error(`timed out waiting for ${what}${last ? `: ${(last as Error).message}` : ''}`);
+}
+
+async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; proj: any; dev2: any; key2: string; sinks: Sinks }) {
+  const { tA, tB, orgA, orgB, proj, dev2, key2, sinks } = ctx;
+  const { createHmac, generateKeyPairSync, sign, createHash } = await import('node:crypto');
+  const httpSend = async (q: string) => {
+    await sleep(1100); // per-device HTTP rate limit (1/s)
+    const r = await fetch(`${API}/api/v1/update?api_key=${encodeURIComponent(key2)}&${q}`);
+    assert.equal(r.status, 200, await r.text());
+  };
+  const activeAlerts = async (ruleId: string) =>
+    (await http('GET', `/api/v1/alerts?organizationId=${orgA.id}&status=active`, tA)).body.items.filter((a: any) => a.ruleId === ruleId);
+
+  console.log('\nRules & alerts (phase 4)');
+  const hook = await http('POST', '/api/v1/webhooks', tA, { organizationId: orgA.id, name: 'Ops', url: `${SINK}/hook`, events: ['alert.triggered', 'alert.resolved', 'command.updated'] });
+  let rule: any;
+  await check('rules: validation, roles and creation', async () => {
+    assert.equal(hook.status, 201, JSON.stringify(hook.body));
+    assert.match(hook.body.secret, /^whsec_/);
+    assert.equal((await http('POST', '/api/v1/rules', tA, { projectId: proj.id, name: 'Bad', ruleType: 'threshold', metricKey: 'temperatureC' })).status, 400);
+    assert.equal((await http('POST', '/api/v1/rules', tB, { projectId: proj.id, name: 'Hot', ruleType: 'offline' })).status, 403);
+    const r = await http('POST', '/api/v1/rules', tA, {
+      projectId: proj.id, name: 'Too hot', ruleType: 'threshold', metricKey: 'temperatureC', operator: '>', threshold: 30,
+      severity: 'critical', cooldownSeconds: 0, notifyEmails: ['alice@arclabs.test'],
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    rule = r.body;
+  });
+  await check('threshold breach triggers one alert (deduplicated) with email + signed webhook', async () => {
+    await httpSend('field1=35');
+    const [a] = await eventually(async () => (await activeAlerts(rule.id)).length === 1 && activeAlerts(rule.id), 'alert');
+    assert.equal(a.status, 'triggered');
+    assert.equal(a.severity, 'critical');
+    assert.equal(a.value, 35);
+    await httpSend('field1=36');
+    await sleep(2500);
+    assert.equal((await activeAlerts(rule.id)).length, 1, 'still one active alert');
+    const email = await eventually(async () => sinks.emails.find((e) => e.to === 'alice@arclabs.test'), 'email');
+    assert.match(email.raw, /CRITICAL(:|=3A)[ _]Too[ _]hot/);
+    assert.match(email.raw, /Temperature is 35/);
+    const wh = await eventually(async () => sinks.hooks.find((h) => h.headers['x-arc-event'] === 'alert.triggered'), 'webhook');
+    const [, t, v1] = /t=(\d+),v1=([0-9a-f]+)/.exec(wh.headers['x-arc-signature'])!;
+    assert.equal(createHmac('sha256', hook.body.secret).update(`${t}.${wh.body}`).digest('hex'), v1, 'valid HMAC signature');
+    assert.equal(JSON.parse(wh.body).data.ruleName, 'Too hot');
+  });
+  let alertId = '';
+  await check('acknowledge: viewer refused; engineer/admin records history', async () => {
+    const [a] = await activeAlerts(rule.id);
+    alertId = a.id;
+    assert.equal((await http('POST', `/api/v1/alerts/${a.id}/acknowledge`, tB, {})).status, 403);
+    const ack = await http('POST', `/api/v1/alerts/${a.id}/acknowledge`, tA, { note: 'Opening the vents' });
+    assert.equal(ack.status, 200);
+    assert.equal(ack.body.status, 'acknowledged');
+    assert.equal((await http('POST', `/api/v1/alerts/${a.id}/acknowledge`, tA, {})).status, 409);
+    const d = await eventually(async () => {
+      const r = (await http('GET', `/api/v1/alerts/${a.id}`, tA)).body;
+      return r.notifications.some((n: any) => n.status === 'sent') && r;
+    }, 'notification recorded');
+    assert.deepEqual(d.history.map((h: any) => h.event).filter((e: string) => e !== 'notified'), ['triggered', 'acknowledged']);
+    assert.equal(d.notifications.find((n: any) => n.kind === 'email').recipient, 'alice@arclabs.test');
+  });
+  await check('recovery resolves the alert automatically', async () => {
+    await httpSend('field1=22');
+    const a = await eventually(async () => {
+      const r = (await http('GET', `/api/v1/alerts/${alertId}`, tA)).body;
+      return r.status === 'resolved' && r;
+    }, 'recovery');
+    assert.equal(a.resolution, 'recovered');
+    await eventually(async () => sinks.hooks.some((h) => h.headers['x-arc-event'] === 'alert.resolved'), 'resolved webhook');
+  });
+  await check('manual resolve with audit; cooldown suppresses re-trigger', async () => {
+    await httpSend('field1=41');
+    const [a] = await eventually(async () => (await activeAlerts(rule.id)).length === 1 && activeAlerts(rule.id), 'second alert');
+    const res = await http('POST', `/api/v1/alerts/${a.id}/resolve`, tA, { note: 'fixed' });
+    assert.equal(res.body.resolution, 'manual');
+    assert.equal((await http('PATCH', `/api/v1/rules/${rule.id}`, tA, { cooldownSeconds: 3600 })).status, 200);
+    await httpSend('field1=42');
+    await sleep(3000);
+    assert.equal((await activeAlerts(rule.id)).length, 0, 'cooldown holds');
+    const audit = await http('GET', `/api/v1/organizations/${orgA.id}/audit-logs`, tA);
+    assert.ok(audit.body.items.some((e: any) => e.action === 'alert.resolve'));
+  });
+
+  // MQTT device for offline rules, commands and OTA.
+  const d3 = (await http('POST', '/api/v1/devices', tA, { projectId: proj.id, displayName: 'Pump controller', deviceType: 'esp32-pump', expectedIntervalSeconds: 5 })).body;
+  const d4 = (await http('POST', '/api/v1/devices', tA, { projectId: proj.id, displayName: 'Pump controller 2', deviceType: 'esp32-pump', expectedIntervalSeconds: 5 })).body;
+  const received: any[] = [];
+  const connect3 = async () => {
+    const c = await connectDevice(d3.credentials);
+    await new Promise<void>((r, j) => c.subscribe(d3.credentials.topics.commands, { qos: 1 }, (e) => (e ? j(e) : r())));
+    c.on('message', (_t, p) => received.push(JSON.parse(p.toString())));
+    return c;
+  };
+  await check('offline rule alerts when a device disconnects', async () => {
+    const off = await http('POST', '/api/v1/rules', tA, { projectId: proj.id, deviceId: d3.device.id, name: 'Pump offline', ruleType: 'offline', severity: 'warning' });
+    assert.equal(off.status, 201);
+    const c = await connect3();
+    await pub(c, d3.credentials.topics.telemetry, telemetry({ temperatureC: 20 }));
+    await sleep(1000);
+    await new Promise<void>((r) => c.end(false, {}, () => r()));
+    const [a] = await eventually(async () => {
+      const l = await activeAlerts(off.body.id);
+      return l.length === 1 && l;
+    }, 'offline alert');
+    assert.equal(a.deviceId, d3.device.id);
+    assert.match(a.message, /disconnected/i);
+  });
+
+  await check('stale rule: waits for silence after connecting, alerts once readings stop, recovers', async () => {
+    const d5 = (await http('POST', '/api/v1/devices', tA, { projectId: proj.id, displayName: 'Quiet sensor', expectedIntervalSeconds: 5 })).body;
+    const st = await http('POST', '/api/v1/rules', tA, { projectId: proj.id, deviceId: d5.device.id, name: 'Quiet', ruleType: 'stale', staleSeconds: 60, severity: 'warning', cooldownSeconds: 0 });
+    assert.equal(st.status, 201, JSON.stringify(st.body));
+    const c = await connectDevice(d5.credentials);
+    await sleep(5000); // several rule passes: connected, no reading yet, under the limit → no alert
+    assert.equal((await activeAlerts(st.body.id)).length, 0, 'no alert right after connecting');
+    await sql(`UPDATE devices SET last_seen_at = now() - interval '5 minutes', last_connected_at = now() - interval '5 minutes' WHERE id = $1`, [d5.device.id]);
+    const [a] = await eventually(async () => {
+      const l = await activeAlerts(st.body.id);
+      return l.length === 1 && l;
+    }, 'stale alert');
+    assert.match(a.message, /No data for/);
+    await pub(c, d5.credentials.topics.telemetry, telemetry({ temperatureC: 21 }));
+    await eventually(async () => (await activeAlerts(st.body.id)).length === 0, 'stale alert recovers');
+    await new Promise<void>((r) => c.end(false, {}, () => r()));
+  });
+
+  console.log('\nAPI keys, service accounts, webhooks, ARC LMS (phase 5)');
+  const proj2 = (await http('POST', '/api/v1/projects', tA, { organizationId: orgA.id, name: 'Cold store' })).body;
+  await check('scoped API key: channel-limited, read-only, revocable', async () => {
+    const k = await http('POST', '/api/v1/api-keys', tA, { organizationId: orgA.id, name: 'Grafana', role: 'viewer', projectIds: [proj.id] });
+    assert.equal(k.status, 201, JSON.stringify(k.body));
+    assert.match(k.body.secret, /^arc_sk_/);
+    const key = k.body.secret;
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, key)).status, 200);
+    assert.equal((await http('GET', `/api/v1/devices/${dev2.device.id}/telemetry/latest`, key)).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${proj2.id}`, key)).status, 404, 'other channel hidden');
+    assert.equal((await http('GET', `/api/v1/projects?organizationId=${orgA.id}`, key)).body.items.length, 1);
+    assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}`, key)).status, 404, 'other tenant hidden');
+    assert.equal((await http('POST', '/api/v1/devices', key, { projectId: proj.id, displayName: 'x' })).status, 403, 'viewer key cannot write');
+    assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}/members`, key)).status, 404, 'restricted key cannot list members');
+    assert.equal((await http('POST', '/api/v1/organizations', key, { name: 'Nope', slug: 'nope-co' })).status, 403);
+    assert.equal((await http('POST', '/api/v1/api-keys', key, { organizationId: orgA.id, name: 'escalate', role: 'engineer' })).status, 403);
+    assert.equal((await http('GET', `/api/v1/api-keys?organizationId=${orgA.id}`, tB)).status, 403, 'viewer cannot list keys');
+    const list = await http('GET', `/api/v1/api-keys?organizationId=${orgA.id}`, tA);
+    assert.ok(list.body.items[0].lastUsedAt, 'last used recorded');
+    assert.ok(!JSON.stringify(list.body).includes(key), 'secret never listed');
+    assert.equal((await http('DELETE', `/api/v1/api-keys/${k.body.id}`, tA)).status, 204);
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, key)).status, 401);
+  });
+  let svcToken = '';
+  await check('service account: OAuth2 client-credentials token', async () => {
+    const sa = await http('POST', '/api/v1/api-keys', tA, { organizationId: orgA.id, name: 'ARC LMS', kind: 'service_account', role: 'viewer' });
+    assert.equal(sa.status, 201);
+    assert.equal((await http('POST', '/api/v1/oauth/token', undefined, { grant_type: 'client_credentials', client_id: sa.body.id, client_secret: 'arc_sk_wrong-wrong-wrong' })).status, 401);
+    const form = await fetch(`${API}/api/v1/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id: sa.body.id, client_secret: sa.body.secret }),
+    });
+    const tok = await form.json();
+    assert.equal(form.status, 200, JSON.stringify(tok));
+    assert.equal(tok.token_type, 'Bearer');
+    svcToken = tok.access_token;
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj2.id}`, svcToken)).status, 200);
+    assert.equal((await http('POST', `/api/v1/devices/${dev2.device.id}/controls`, svcToken, { field: 'relay', value: 1 })).status, 403);
+  });
+  await check('webhooks: test delivery, delivery log, retries on failure', async () => {
+    const t = await http('POST', `/api/v1/webhooks/${hook.body.id}/test`, tA);
+    assert.equal(t.status, 202);
+    await eventually(async () => sinks.hooks.some((h) => h.headers['x-arc-event'] === 'webhook.test'), 'test delivery');
+    const log = await http('GET', `/api/v1/webhooks/${hook.body.id}/deliveries`, tA);
+    assert.ok(log.body.items.some((d: any) => d.eventType === 'webhook.test' && d.status === 'sent' && d.responseCode === 204));
+    const bad = await http('POST', '/api/v1/webhooks', tA, { organizationId: orgA.id, name: 'Broken', url: `${SINK}/fail`, events: ['*'] });
+    await http('POST', `/api/v1/webhooks/${bad.body.id}/test`, tA);
+    const d = await eventually(async () => {
+      const items = (await http('GET', `/api/v1/webhooks/${bad.body.id}/deliveries`, tA)).body.items;
+      return items[0]?.attempts >= 1 && items[0].lastError && items[0];
+    }, 'failed attempt');
+    assert.equal(d.status, 'pending', 'scheduled for retry');
+    assert.equal(d.responseCode, 500);
+    assert.ok(new Date(d.nextAttemptAt).getTime() > Date.now() + 10_000, 'backoff applied');
+    assert.equal((await http('POST', '/api/v1/webhooks', tB, { organizationId: orgA.id, name: 'x', url: `${SINK}/x`, events: ['*'] })).status, 403);
+    await http('DELETE', `/api/v1/webhooks/${bad.body.id}`, tA);
+  });
+  await check('ARC LMS: learner token limited to linked devices, read-only, revocable', async () => {
+    const link = await http('POST', '/api/v1/lms/links', tA, { projectId: proj.id, lmsRef: 'iot-101/lab-3', title: 'Lab 3: sensors', deviceIds: [dev2.device.id], maxTokenMinutes: 60 });
+    assert.equal(link.status, 201, JSON.stringify(link.body));
+    const lt = await http('POST', `/api/v1/lms/links/${link.body.id}/learner-tokens`, svcToken, { learnerRef: 'student-42', minutes: 600 });
+    assert.equal(lt.status, 201, JSON.stringify(lt.body));
+    assert.equal(lt.body.expiresIn, 3600, 'capped at the link maximum');
+    assert.match(lt.body.viewerUrl, /^http:\/\/console\.test\/lab#/);
+    const learner = lt.body.accessToken;
+    assert.equal((await http('GET', `/api/v1/devices/${dev2.device.id}/telemetry/latest`, learner)).status, 200);
+    assert.equal((await http('GET', `/api/v1/devices/${d3.device.id}`, learner)).status, 404, 'unlinked device hidden');
+    const list = await http('GET', `/api/v1/devices?projectId=${proj.id}`, learner);
+    assert.deepEqual(list.body.items.map((d: any) => d.id), [dev2.device.id]);
+    assert.equal((await http('POST', `/api/v1/devices/${dev2.device.id}/controls`, learner, { field: 'relay', value: 1 })).status, 403);
+    assert.equal((await http('POST', `/api/v1/lms/links/${link.body.id}/learner-tokens`, learner, { learnerRef: 'x' })).status, 404, 'learners cannot mint tokens');
+    assert.ok(JSON.stringify((await http('GET', `/api/v1/auth/me`, learner)).body).includes('student-42'));
+    assert.equal((await http('DELETE', `/api/v1/lms/links/${link.body.id}`, tA)).status, 204);
+    assert.equal((await http('GET', `/api/v1/devices/${dev2.device.id}/telemetry/latest`, learner)).status, 401, 'revoked link ends access');
+    const audit = await http('GET', `/api/v1/organizations/${orgA.id}/audit-logs`, tA);
+    assert.ok(audit.body.items.some((e: any) => e.action === 'lms.learner_token'), 'cross-platform access logged');
+  });
+  await check('OpenAPI documentation is published', async () => {
+    const spec = await (await fetch(`${API}/api/openapi.json`)).json();
+    for (const p of ['/api/v1/rules', '/api/v1/alerts/{id}/acknowledge', '/api/v1/api-keys', '/api/v1/webhooks', '/api/v1/oauth/token', '/api/v1/devices/{id}/commands', '/api/v1/firmware/releases']) {
+      assert.ok(spec.paths[p], `missing ${p}`);
+    }
+    assert.ok(spec.paths['/api/v1/rules'].post.requestBody, 'request bodies documented');
+    assert.equal((await fetch(`${API}/api/docs`)).status, 200);
+  });
+
+  console.log('\nCommands & OTA (phase 7)');
+  await check('command allow-list: admin defines, others refused, reserved names blocked', async () => {
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/command-types/blink`, tB, { params: [] })).status, 403);
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/command-types/ota.update`, tA, { params: [] })).status, 400);
+    const t = await http('PUT', `/api/v1/projects/${proj.id}/command-types/blink`, tA, {
+      description: 'Blink the LED', params: [{ key: 'seconds', type: 'number', min: 1, max: 10, required: true }], ttlSeconds: 120,
+    });
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.equal((await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'reboot' })).status, 400);
+    assert.equal((await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 99 } })).status, 400);
+    assert.equal((await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tB, { name: 'blink', payload: { seconds: 2 } })).status, 403);
+  });
+  let c3: MqttClient | null = null;
+  await check('MQTT command: queued while offline, delivered on reconnect, acknowledged by device', async () => {
+    const sent = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 2 } });
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    c3 = await connect3();
+    const msg = await eventually(async () => received.find((m) => m.commandId === sent.body.id), 'command delivered');
+    assert.deepEqual(msg.payload, { seconds: 2 });
+    assert.equal((await http('GET', `/api/v1/commands/${sent.body.id}`, tA)).body.status !== 'acknowledged', true, 'not acknowledged before the device says so');
+    await pub(c3, d3.credentials.topics.telemetry.replace(/telemetry$/, 'cmd-ack'), { commandId: sent.body.id, status: 'ok', result: { blinked: true } });
+    const done = await eventually(async () => {
+      const r = (await http('GET', `/api/v1/commands/${sent.body.id}`, tA)).body;
+      return r.status === 'acknowledged' && r;
+    }, 'ack');
+    assert.deepEqual(done.result, { blinked: true });
+    await eventually(async () => sinks.hooks.some((h) => h.headers['x-arc-event'] === 'command.updated' && JSON.parse(h.body).data.status === 'acknowledged'), 'command webhook');
+  });
+  await check('commands expire when not acknowledged; failures recorded', async () => {
+    const s1 = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 1 } });
+    await sql(`UPDATE commands SET expires_at = now() - interval '1 second' WHERE id = $1`, [s1.body.id]);
+    await eventually(async () => (await http('GET', `/api/v1/commands/${s1.body.id}`, tA)).body.status === 'expired', 'expired');
+    const s2 = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 1 } });
+    await pub(c3!, d3.credentials.topics.telemetry.replace(/telemetry$/, 'cmd-ack'), { commandId: s2.body.id, status: 'error', error: 'LED broken' });
+    const f = await eventually(async () => {
+      const r = (await http('GET', `/api/v1/commands/${s2.body.id}`, tA)).body;
+      return r.status === 'failed' && r;
+    }, 'failed');
+    assert.equal(f.error, 'LED broken');
+  });
+  await check('HTTP device: fetch next command and acknowledge it', async () => {
+    const s = await http('POST', `/api/v1/devices/${dev2.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 3 } });
+    await sleep(1100);
+    const next = await fetch(`${API}/api/v1/commands/next?api_key=${encodeURIComponent(key2)}`);
+    const body = await next.json();
+    assert.equal(body.commandId, s.body.id);
+    const ack = await fetch(`${API}/api/v1/commands/${s.body.id}/ack?api_key=${encodeURIComponent(key2)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"status":"ok"}' });
+    assert.equal(ack.status, 200);
+    assert.equal((await http('GET', `/api/v1/commands/${s.body.id}`, tA)).body.status, 'acknowledged');
+    await sleep(1100);
+    assert.equal((await fetch(`${API}/api/v1/commands/next?api_key=${encodeURIComponent(key2)}`)).status, 204);
+    const again = await fetch(`${API}/api/v1/commands/${s.body.id}/ack?api_key=${encodeURIComponent(key2)}`, { method: 'POST' });
+    assert.equal(again.status, 404, 'cannot ack twice');
+  });
+  await check('OTA: unsigned/mis-signed releases refused; signed staged rollout completes', async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const pem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const key = await http('POST', '/api/v1/firmware/signing-keys', tA, { organizationId: orgA.id, name: 'Release key', publicKeyPem: pem });
+    assert.equal(key.status, 201, JSON.stringify(key.body));
+    const m = { deviceType: 'esp32-pump', version: '2.0.0', url: 'https://firmware.arclabs.test/pump-2.0.0.bin', sha256: createHash('sha256').update('fw').digest('hex'), sizeBytes: 1048576 };
+    const canonical = JSON.stringify({ deviceType: m.deviceType, sha256: m.sha256, sizeBytes: m.sizeBytes, url: m.url, version: m.version });
+    const signature = sign(null, Buffer.from(canonical), privateKey).toString('base64');
+    const badSig = sign(null, Buffer.from(canonical.replace('2.0.0', '2.0.1')), privateKey).toString('base64');
+    assert.equal((await http('POST', '/api/v1/firmware/releases', tA, { organizationId: orgA.id, ...m, signature: badSig, signingKeyId: key.body.id })).status, 400);
+    const rel = await http('POST', '/api/v1/firmware/releases', tA, { organizationId: orgA.id, ...m, signature, signingKeyId: key.body.id });
+    assert.equal(rel.status, 201, JSON.stringify(rel.body));
+    const ro = await http('POST', '/api/v1/firmware/rollouts', tA, { releaseId: rel.body.id, projectId: proj.id, percent: 50 });
+    assert.equal(ro.status, 201, JSON.stringify(ro.body));
+    assert.equal(ro.body.devices.length, 1, '50% of 2 devices');
+    // Whichever device was picked: if it's d3, it receives the OTA command over MQTT.
+    const widen = await http('PATCH', `/api/v1/firmware/rollouts/${ro.body.id}`, tA, { percent: 100 });
+    assert.equal(widen.body.devices.length, 2);
+    const ota = await eventually(async () => received.find((x) => x.name === 'ota.update'), 'OTA command');
+    assert.equal(ota.payload.version, '2.0.0');
+    assert.equal(ota.payload.signature, signature);
+    await pub(c3!, d3.credentials.topics.telemetry.replace(/telemetry$/, 'cmd-ack'), { commandId: ota.commandId, status: 'ok' });
+    await pub(c3!, d3.credentials.topics.telemetry, { ...telemetry({ temperatureC: 21 }), metadata: { firmwareVersion: '2.0.0' } });
+    // d4 updates over the same rails (simulate its report).
+    await sql(`UPDATE devices SET firmware_version = '2.0.0' WHERE id = $1`, [d4.device.id]);
+    const final = await eventually(async () => {
+      const r = (await http('GET', `/api/v1/firmware/rollouts/${ro.body.id}`, tA)).body;
+      return r.status === 'completed' && r;
+    }, 'rollout completed');
+    assert.deepEqual(final.devices.map((d: any) => d.status), ['succeeded', 'succeeded']);
+  });
+
+  console.log('\nHardening (phase 6)');
+  await check('quotas enforced from the organization plan', async () => {
+    await sql('UPDATE organizations SET max_devices = 1 WHERE id = $1', [orgA.id]);
+    const r = await http('POST', '/api/v1/devices', tA, { projectId: proj.id, displayName: 'Over quota' });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.code, 'quota_exceeded');
+    await sql('UPDATE organizations SET max_devices = 50 WHERE id = $1', [orgA.id]);
+  });
+  await check('retention removes telemetry older than the organization setting', async () => {
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/settings`, tB, { retentionDays: 30 })).status, 403);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/settings`, tA, { retentionDays: 5000 })).status, 400);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/settings`, tA, { retentionDays: 365 })).status, 403, 'above the free plan');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/settings`, tA, { retentionDays: 30 })).status, 200);
+    await sql(
+      `INSERT INTO telemetry_measurements (organization_id, project_id, device_id, metric_key, metric_value, ts, received_at, message_id)
+       VALUES ($1, $2, $3, 'temperatureC', 1, now() - interval '40 days', now() - interval '40 days', 'old-msg')`,
+      [orgA.id, proj.id, dev2.device.id],
+    );
+    await eventually(async () => (await sql(`SELECT 1 FROM telemetry_measurements WHERE message_id = 'old-msg'`)).length === 0, 'old row purged');
+    assert.ok((await sql('SELECT count(*)::int AS n FROM telemetry_measurements WHERE organization_id = $1', [orgA.id]))[0].n > 0, 'recent data kept');
+  });
+  await check('plans: only platform admins change limits', async () => {
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/plan`, tA, { plan: 'pro' })).status, 403);
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+    const p = await http('PATCH', `/api/v1/organizations/${orgA.id}/plan`, tA, { plan: 'pro' });
+    assert.equal(p.status, 200);
+    assert.equal(p.body.maxDevices, 1000);
+    const all = await http('GET', '/api/v1/platform/organizations', tA);
+    assert.equal(all.status, 200);
+    assert.ok(all.body.items.some((o: any) => o.id === orgA.id && o.plan === 'pro' && o.ownerEmail === 'alice@arclabs.test'));
+    assert.ok(all.body.items.some((o: any) => o.id === orgB.id), 'sees every organization');
+    await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+    assert.equal((await http('GET', '/api/v1/platform/organizations', tA)).status, 403);
+  });
+  await check('overview and usage analytics', async () => {
+    const o = await http('GET', `/api/v1/organizations/${orgA.id}/overview`, tB);
+    assert.equal(o.status, 200);
+    assert.ok(o.body.devices.total >= 4);
+    assert.ok(o.body.recentAlerts.length >= 1);
+    assert.ok(o.body.projects.some((p: any) => p.name === 'Greenhouse'));
+    const u = await http('GET', `/api/v1/organizations/${orgA.id}/usage`, tA);
+    assert.equal(u.body.plan, 'pro');
+    assert.ok(u.body.used.devices >= 3);
+    assert.ok(u.body.messagesPerDay.length >= 1);
+    assert.ok(u.body.topDevices.length >= 1);
+  });
+  await check('worker exposes job metrics', async () => {
+    const m = await (await fetch('http://127.0.0.1:19100/metrics')).text();
+    assert.match(m, /arc_alerts_triggered_total \d+/);
+    assert.match(m, /arc_deliveries_sent_total\{reason="webhook"\} \d+/);
+    assert.match(m, /arc_deliveries_retried_total\{reason="webhook"\} \d+/);
+  });
+  if (c3) await new Promise<void>((r) => c3!.end(false, {}, () => r()));
 }
 
 main().catch((err) => {

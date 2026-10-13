@@ -1,9 +1,11 @@
+import { ApiTags } from '@nestjs/swagger';
+import { Doc } from '../common/docs';
 import { BadRequestException, Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
-import { AuthUser, CurrentUser, parse, Uuid } from '../common/http';
+import { actor, AuthUser, CurrentUser, parse, userRef, Uuid } from '../common/http';
 import { Db } from '../db/db.service';
 
 const createBody = z.object({
@@ -73,6 +75,7 @@ const mapProject = (p: any) => ({
 
 const newReadKey = () => randomBytes(12).toString('base64url').replace(/[-_]/g, 'X').slice(0, 16).toUpperCase();
 
+@ApiTags('Channels (projects)')
 @Controller('api/v1/projects')
 export class ProjectsController {
   constructor(
@@ -81,36 +84,41 @@ export class ProjectsController {
     private readonly audit: AuditService,
   ) {}
 
+  @Doc('Create', { body: createBody })
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const input = parse(createBody, body);
     await this.access.requireOrg(user, input.organizationId, 'org_admin');
+    await this.access.requireQuota(input.organizationId, 'projects');
     await this.assertTimezone(input.timezone);
     const project = await this.db.one(
       'INSERT INTO projects (organization_id, name, description, timezone, read_api_key) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [input.organizationId, input.name, input.description, input.timezone, newReadKey()],
     );
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: input.organizationId, action: 'project.create', resourceType: 'project', resourceId: project.id });
+    await this.audit.record({ ...actor(user), organizationId: input.organizationId, action: 'project.create', resourceType: 'project', resourceId: project.id });
     return mapProject(project);
   }
 
+  @Doc('List', { query: listQuery })
   @Get()
   async list(@CurrentUser() user: AuthUser, @Query() q: unknown) {
     const { organizationId } = parse(listQuery, q);
-    await this.access.requireOrg(user, organizationId, 'viewer');
+    await this.access.requireOrg(user, organizationId, 'viewer', { allowRestricted: true });
     const rows = await this.db.query(
       `SELECT p.*, (SELECT count(*)::int FROM devices d WHERE d.project_id = p.id) AS device_count
-       FROM projects p WHERE p.organization_id = $1 ORDER BY p.name`,
-      [organizationId],
+       FROM projects p WHERE p.organization_id = $1 AND ($2::uuid[] IS NULL OR p.id = ANY($2)) ORDER BY p.name`,
+      [organizationId, user.scope?.projectIds ?? null],
     );
     return { items: rows.map((r) => ({ ...mapProject(r), deviceCount: r.device_count })) };
   }
 
+  @Doc('Get')
   @Get(':id')
   async get(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     return mapProject(await this.access.requireProject(user, id, 'viewer'));
   }
 
+  @Doc('Update', { body: updateBody })
   @Patch(':id')
   async update(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     const project = await this.access.requireProject(user, id, 'engineer');
@@ -121,11 +129,12 @@ export class ProjectsController {
        WHERE id = $1 RETURNING *`,
       [id, input.name ?? null, input.description ?? null, input.timezone ?? null],
     );
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: project.organization_id, action: 'project.update', resourceType: 'project', resourceId: id, metadata: input });
+    await this.audit.record({ ...actor(user), organizationId: project.organization_id, action: 'project.update', resourceType: 'project', resourceId: id, metadata: input });
     return mapProject(updated);
   }
 
   /** Fields (ThingSpeak "fields", Blynk "datastreams"). `metric-definitions` is kept as an alias. */
+  @Doc('Fields')
   @Get([':id/fields', ':id/metric-definitions'])
   async fields(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     await this.access.requireProject(user, id, 'viewer');
@@ -138,6 +147,7 @@ export class ProjectsController {
    * field names (or field1…fieldN over HTTP), and values outside min/max are rejected.
    * Empty list = accept any numeric reading.
    */
+  @Doc('Set fields', { body: fieldsBody })
   @Put([':id/fields', ':id/metric-definitions'])
   async setFields(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     const project = await this.access.requireProject(user, id, 'engineer');
@@ -170,21 +180,23 @@ export class ProjectsController {
           [id, m.metricKey, m.label, m.unit, m.minValue, m.maxValue, m.position, m.kind, m.decimals, m.step],
         );
       }
-      await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: project.organization_id, action: 'project.metric_definitions.set', resourceType: 'project', resourceId: id, metadata: { count: metrics.length } }, c);
+      await this.audit.record({ ...actor(user), organizationId: project.organization_id, action: 'project.metric_definitions.set', resourceType: 'project', resourceId: id, metadata: { count: metrics.length } }, c);
       return (await c.query('SELECT * FROM metric_definitions WHERE project_id = $1 ORDER BY position', [id])).rows;
     });
     return { items: rows.map(mapField) };
   }
 
+  @Doc('Regenerate read key')
   @Post(':id/read-key')
   @HttpCode(200)
   async regenerateReadKey(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     const project = await this.access.requireProject(user, id, 'org_admin');
     const updated = await this.db.one('UPDATE projects SET read_api_key = $2 WHERE id = $1 RETURNING *', [id, newReadKey()]);
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: project.organization_id, action: 'project.read_key.regenerate', resourceType: 'project', resourceId: id });
+    await this.audit.record({ ...actor(user), organizationId: project.organization_id, action: 'project.read_key.regenerate', resourceType: 'project', resourceId: id });
     return mapProject(updated);
   }
 
+  @Doc('Dashboard')
   @Get(':id/dashboard')
   async dashboard(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     await this.access.requireProject(user, id, 'viewer');
@@ -192,6 +204,7 @@ export class ProjectsController {
     return { widgets: row?.widgets ?? [], updatedAt: row?.updated_at ?? null };
   }
 
+  @Doc('Save dashboard', { body: dashboardBody })
   @Put(':id/dashboard')
   async saveDashboard(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     const project = await this.access.requireProject(user, id, 'engineer');
@@ -202,9 +215,9 @@ export class ProjectsController {
       `INSERT INTO dashboards (project_id, widgets, updated_at, updated_by) VALUES ($1, $2, now(), $3)
        ON CONFLICT (project_id) DO UPDATE SET widgets = EXCLUDED.widgets, updated_at = now(), updated_by = EXCLUDED.updated_by
        RETURNING widgets, updated_at`,
-      [id, JSON.stringify(widgets), user.id],
+      [id, JSON.stringify(widgets), userRef(user)],
     );
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: project.organization_id, action: 'project.dashboard.save', resourceType: 'project', resourceId: id, metadata: { widgets: widgets.length } });
+    await this.audit.record({ ...actor(user), organizationId: project.organization_id, action: 'project.dashboard.save', resourceType: 'project', resourceId: id, metadata: { widgets: widgets.length } });
     return { widgets: row.widgets, updatedAt: row.updated_at };
   }
 

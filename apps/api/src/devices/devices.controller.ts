@@ -1,3 +1,5 @@
+import { ApiTags } from '@nestjs/swagger';
+import { Doc } from '../common/docs';
 import { BadRequestException, Body, ConflictException, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { buildTopic, computeConnectivity } from '@arc/shared';
 import { PoolClient } from 'pg';
@@ -7,7 +9,8 @@ import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
 import { apiKeyHash, generateSecret, hashSecret } from '../common/crypto';
 import { MqttPublisher } from '../common/mqtt-publisher.service';
-import { AuthUser, CurrentUser, pageQuery, parse, Uuid } from '../common/http';
+import { emitEvent } from '../common/events';
+import { actor, AuthUser, CurrentUser, pageQuery, parse, userRef, Uuid } from '../common/http';
 import { Db } from '../db/db.service';
 
 const tag = z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/);
@@ -70,6 +73,7 @@ const controlBody = z.object({
 /** Devices in these states may authenticate to MQTT. */
 export const CONNECTABLE = ['provisioned', 'active', 'maintenance'];
 
+@ApiTags('Devices')
 @Controller('api/v1/devices')
 export class DevicesController {
   constructor(
@@ -80,10 +84,12 @@ export class DevicesController {
   ) {}
 
   /** Registers a device and issues its unique MQTT credential. The password is returned only once. */
+  @Doc('Create', { body: createBody })
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const input = parse(createBody, body);
     const project = await this.access.requireProject(user, input.projectId, 'engineer');
+    await this.access.requireQuota(project.organization_id, 'devices');
     const password = generateSecret();
     const secretHash = await hashSecret(password);
 
@@ -97,12 +103,14 @@ export class DevicesController {
       ).rows[0];
       await c.query('INSERT INTO device_credentials (device_id, secret_hash, api_key_hash) VALUES ($1, $2, $3)', [d.id, secretHash, apiKeyHash(password)]);
       await this.event(c, d, 'provisioned', { by: user.id });
-      await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: d.organization_id, action: 'device.create', resourceType: 'device', resourceId: d.id }, c);
+      await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.create', resourceType: 'device', resourceId: d.id }, c);
+      await emitEvent(c, d.organization_id, 'device.created', { deviceId: d.id, projectId: d.project_id, name: d.display_name });
       return d;
     });
     return { device: this.map(device), credentials: this.credentials(device, password) };
   }
 
+  @Doc('List', { query: listQuery })
   @Get()
   async list(@CurrentUser() user: AuthUser, @Query() q: unknown) {
     const input = parse(listQuery, q);
@@ -117,6 +125,10 @@ export class DevicesController {
       params.push(input.tag);
       where += ` AND $${params.length} = ANY(tags)`;
     }
+    if (user.scope?.deviceIds) {
+      params.push(user.scope.deviceIds);
+      where += ` AND id = ANY($${params.length})`;
+    }
     if (input.search) {
       params.push(`%${input.search.replace(/[\\%_]/g, (m) => '\\' + m)}%`);
       where += ` AND display_name ILIKE $${params.length}`;
@@ -127,11 +139,13 @@ export class DevicesController {
     return { items: items.slice(input.offset, input.offset + input.limit), total: items.length, limit: input.limit, offset: input.offset };
   }
 
+  @Doc('Get')
   @Get(':id')
   async get(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     return this.map(await this.access.requireDevice(user, id, 'viewer'));
   }
 
+  @Doc('Update', { body: updateBody })
   @Patch(':id')
   async update(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     const device = await this.access.requireDevice(user, id, 'engineer');
@@ -143,11 +157,12 @@ export class DevicesController {
        WHERE id = $1 RETURNING *`,
       [id, input.displayName ?? null, input.deviceType ?? null, input.model ?? null, input.tags ?? null, input.metadata ?? null, input.expectedIntervalSeconds ?? null],
     );
-    await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: device.organization_id, action: 'device.update', resourceType: 'device', resourceId: id, metadata: { fields: Object.keys(input) } });
+    await this.audit.record({ ...actor(user), organizationId: device.organization_id, action: 'device.update', resourceType: 'device', resourceId: id, metadata: { fields: Object.keys(input) } });
     return this.map(updated);
   }
 
   /** Issues a new credential and revokes the old one. The device must be re-flashed/re-configured. */
+  @Doc('Rotate')
   @Post(':id/rotate-credentials')
   @HttpCode(200)
   async rotate(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
@@ -160,13 +175,14 @@ export class DevicesController {
       await c.query(`UPDATE device_credentials SET status = 'revoked', revoked_at = now() WHERE device_id = $1 AND status = 'active'`, [id]);
       await c.query('INSERT INTO device_credentials (device_id, secret_hash, api_key_hash) VALUES ($1, $2, $3)', [id, secretHash, apiKeyHash(password)]);
       await this.event(c, d, 'credentials_rotated', { by: user.id });
-      await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: d.organization_id, action: 'device.credentials.rotate', resourceType: 'device', resourceId: id }, c);
+      await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.credentials.rotate', resourceType: 'device', resourceId: id }, c);
       return d;
     });
     return { device: this.map(device), credentials: this.credentials(device, password) };
   }
 
   /** Permanently revokes the device and its credentials. Existing sessions are rejected on next auth/ACL check. */
+  @Doc('Revoke', { body: z.object({ reason: z.string().max(500).optional() }) })
   @Post(':id/revoke')
   @HttpCode(200)
   async revoke(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
@@ -176,13 +192,15 @@ export class DevicesController {
       const updated = (await c.query(`UPDATE devices SET lifecycle_status = 'revoked' WHERE id = $1 RETURNING *`, [id])).rows[0];
       await c.query(`UPDATE device_credentials SET status = 'revoked', revoked_at = now() WHERE device_id = $1 AND status = 'active'`, [id]);
       await this.event(c, d, 'revoked', { by: user.id, reason });
-      await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: d.organization_id, action: 'device.revoke', resourceType: 'device', resourceId: id, metadata: { reason } }, c);
+      await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.revoke', resourceType: 'device', resourceId: id, metadata: { reason } }, c);
+      await emitEvent(c, d.organization_id, 'device.revoked', { deviceId: id, projectId: d.project_id, name: d.display_name, reason: reason ?? null });
       return updated;
     });
     return this.map(device);
   }
 
   /** Lifecycle changes short of revocation (maintenance, suspend, resume, retire). */
+  @Doc('Lifecycle', { body: lifecycleBody })
   @Post(':id/lifecycle')
   @HttpCode(200)
   async lifecycle(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
@@ -195,18 +213,20 @@ export class DevicesController {
         await c.query(`UPDATE device_credentials SET status = 'revoked', revoked_at = now() WHERE device_id = $1 AND status = 'active'`, [id]);
       }
       await this.event(c, d, 'lifecycle_changed', { from: d.lifecycle_status, to: input.status, by: user.id, reason: input.reason });
-      await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: d.organization_id, action: 'device.lifecycle', resourceType: 'device', resourceId: id, metadata: input }, c);
+      await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.lifecycle', resourceType: 'device', resourceId: id, metadata: input }, c);
       return updated;
     });
     return this.map(device);
   }
 
+  @Doc('State')
   @Get(':id/state')
   async state(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     const d = this.map(await this.access.requireDevice(user, id, 'viewer'));
     return { deviceId: d.id, connectivity: d.connectivity, lastSeenAt: d.lastSeenAt, lastConnectedAt: d.lastConnectedAt, lastDisconnectedAt: d.lastDisconnectedAt, reportedState: d.reportedState, firmwareVersion: d.firmwareVersion };
   }
 
+  @Doc('Latest')
   @Get(':id/telemetry/latest')
   async latest(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     const d = await this.access.requireDevice(user, id, 'viewer');
@@ -219,6 +239,7 @@ export class DevicesController {
     return { deviceId: id, items: rows.map((r) => ({ metric: r.metric_key, value: r.metric_value, ts: r.ts, receivedAt: r.received_at })) };
   }
 
+  @Doc('Telemetry', { query: telemetryQuery })
   @Get(':id/telemetry')
   async telemetry(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Query() q: unknown) {
     const d = await this.access.requireDevice(user, id, 'viewer');
@@ -260,6 +281,7 @@ export class DevicesController {
   }
 
   /** Current control values (switches, sliders) for this device. */
+  @Doc('Controls')
   @Get(':id/controls')
   async controls(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
     await this.access.requireDevice(user, id, 'viewer');
@@ -268,6 +290,7 @@ export class DevicesController {
   }
 
   /** Sets a control value and pushes it to the device over MQTT (HTTP devices poll /api/v1/controls). */
+  @Doc('Set control', { body: controlBody })
   @Post(':id/controls')
   @HttpCode(200)
   async setControl(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
@@ -285,12 +308,13 @@ export class DevicesController {
       `INSERT INTO control_values (device_id, field_key, value, updated_at, updated_by) VALUES ($1, $2, $3, now(), $4)
        ON CONFLICT (device_id, field_key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by
        RETURNING field_key, value, updated_at`,
-      [id, input.field, value, user.id],
+      [id, input.field, value, userRef(user)],
     );
     const delivered = await this.mqtt.publishControl(d, input.field, value);
     return { field: row.field_key, value: row.value, updatedAt: row.updated_at, pushedOverMqtt: delivered };
   }
 
+  @Doc('Events', { query: pageQuery })
   @Get(':id/events')
   async events(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Query() q: unknown) {
     await this.access.requireDevice(user, id, 'viewer');
@@ -324,7 +348,7 @@ export class DevicesController {
       clientId: d.id,
       username: d.id,
       password,
-      topics: { telemetry: buildTopic(ids, 'telemetry'), state: buildTopic(ids, 'state'), commands: buildTopic(ids, 'cmd') },
+      topics: { telemetry: buildTopic(ids, 'telemetry'), state: buildTopic(ids, 'state'), commands: buildTopic(ids, 'cmd'), commandAcks: buildTopic(ids, 'cmd-ack') },
       http: {
         apiKey: password,
         updateUrl: `${cfg.HTTP_PUBLIC_URL}/api/v1/update`,

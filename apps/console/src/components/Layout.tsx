@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { isAdmin, ROLE_LABEL } from '../api';
+import { api, isAdmin, ROLE_LABEL } from '../api';
 import { useSession } from '../session';
-import { ArcMark } from './ui';
+import { ArcMark, usePoll } from './ui';
 
 export function Layout() {
   const { orgId = '', projectId } = useParams();
@@ -10,6 +10,18 @@ export function Layout() {
   const nav = useNavigate();
   const org = orgs.find((o) => o.id === orgId);
   const list = projects[orgId];
+  const link = ({ isActive }: { isActive: boolean }) => `side-link${isActive ? ' active' : ''}`;
+  const [openAlerts, setOpenAlerts] = useState(0);
+  usePoll(
+    () =>
+      orgId
+        ? api<{ alerts: { triggered: number } }>('GET', `/organizations/${orgId}/overview`)
+            .then((o) => setOpenAlerts(o.alerts.triggered))
+            .catch(() => undefined)
+        : undefined,
+    30_000,
+    [orgId],
+  );
 
   useEffect(() => {
     if (orgId && !list) void refreshProjects(orgId).catch(() => undefined);
@@ -88,8 +100,26 @@ export function Layout() {
 
         <nav className="side-group" aria-label="Organization">
           <div className="side-heading">Organization</div>
-          <NavLink to={`/o/${orgId}/team`} className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
+          <NavLink to={`/o/${orgId}`} end className={link}>
+            Overview
+          </NavLink>
+          <NavLink to={`/o/${orgId}/alerts`} className={link}>
+            <span>Alerts</span>
+            {openAlerts > 0 && <span className="count alert-count">{openAlerts}</span>}
+          </NavLink>
+          <NavLink to={`/o/${orgId}/team`} className={link}>
             Team
+          </NavLink>
+          {isAdmin(org?.role) && (
+            <NavLink to={`/o/${orgId}/integrations`} className={link}>
+              Integrations
+            </NavLink>
+          )}
+          <NavLink to={`/o/${orgId}/firmware`} className={link}>
+            Firmware &amp; OTA
+          </NavLink>
+          <NavLink to={`/o/${orgId}/usage`} className={link}>
+            Usage &amp; limits
           </NavLink>
           <NavLink to={`/o/${orgId}/rejected`} className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
             Rejected data
@@ -100,6 +130,15 @@ export function Layout() {
             </NavLink>
           )}
         </nav>
+
+        {user?.isPlatformAdmin && (
+          <nav className="side-group" aria-label="ARC LABS">
+            <div className="side-heading">ARC LABS</div>
+            <NavLink to={`/o/${orgId}/platform`} className={link}>
+              All organizations
+            </NavLink>
+          </nav>
+        )}
 
         <div className="side-foot">
           <span>{user?.displayName}</span>

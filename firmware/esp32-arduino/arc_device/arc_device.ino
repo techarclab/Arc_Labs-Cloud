@@ -11,6 +11,9 @@
  *  - publishes a state message after each (re)connect
  *  - receives control values (dashboard switches/sliders) on its cmd topic;
  *    a control field named "relay" drives RELAY_PIN (the on-board LED by default)
+ *  - receives commands on the same topic and confirms each one on TOPIC_ACK
+ *    ({"commandId":"…","status":"ok"|"error"}); the cloud only marks a command
+ *    "acknowledged" after this. Example commands: "blink" {seconds}, "ota.update" (firmware update)
  */
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -18,6 +21,11 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "config.h"
+#include "arc_ota.h"
+
+#ifndef TOPIC_ACK
+#error "Add TOPIC_ACK (…/cmd-ack) to config.h - copy it from the device page"
+#endif
 
 WiFiClientSecure net;
 PubSubClient mqtt(net);
@@ -61,10 +69,51 @@ void publishState() {
   mqtt.publish(TOPIC_STATE, (const uint8_t *)out, n, false);
 }
 
-// Called for every control value the cloud sends: {"schemaVersion":1,"field":"relay","value":1,"ts":"..."}
+void ackCommand(const char *commandId, const char *error, JsonObject result = JsonObject()) {
+  JsonDocument ack;
+  ack["commandId"] = commandId;
+  ack["status"] = error ? "error" : "ok";
+  if (error) ack["error"] = error;
+  if (!result.isNull()) ack["result"] = result;
+  char out[256];
+  size_t n = serializeJson(ack, out);
+  mqtt.publish(TOPIC_ACK, (const uint8_t *)out, n, false);
+  Serial.printf("ack %s %s\n", commandId, error ? error : "ok");
+}
+
+// Commands: {"type":"command","commandId":"…","name":"blink","payload":{"seconds":3},"expiresAt":"…"}
+// Define allowed commands in ARC Cloud: Channel settings → Commands.
+void onCommand(JsonDocument &doc) {
+  const char *id = doc["commandId"] | "";
+  const char *name = doc["name"] | "";
+  JsonObject p = doc["payload"];
+  Serial.printf("command %s (%s)\n", name, id);
+
+  if (strcmp(name, "blink") == 0) {
+    int seconds = p["seconds"] | 3;
+    for (int i = 0; i < seconds * 2; i++) { digitalWrite(RELAY_PIN, i % 2 ? LOW : HIGH); delay(250); }
+    ackCommand(id, nullptr);
+  } else if (strcmp(name, "ota.update") == 0) {
+    const char *version = p["version"] | "";
+    if (strcmp(version, FIRMWARE_VERSION) == 0) { ackCommand(id, nullptr); return; }  // already up to date
+    Serial.printf("OTA to %s from %s\n", version, (const char *)(p["url"] | ""));
+    String err = arcOtaInstall(p["url"] | "", p["sha256"] | "", p["sizeBytes"] | 0);
+    if (err.length()) { ackCommand(id, err.c_str()); return; }
+    ackCommand(id, nullptr);
+    mqtt.loop();
+    delay(500);
+    ESP.restart();  // boots the new image; it reports its FIRMWARE_VERSION, completing the rollout
+  } else {
+    ackCommand(id, "unknown command");
+  }
+}
+
+// Called for every message on the cmd topic: control values or commands.
+// Control value: {"schemaVersion":1,"field":"relay","value":1,"ts":"..."}
 void onControl(char *topic, byte *payload, unsigned int length) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, length)) return;
+  if (strcmp(doc["type"] | "", "command") == 0) { onCommand(doc); return; }
   const char *field = doc["field"] | "";
   float value = doc["value"] | 0.0;
   Serial.printf("control %s = %.2f\n", field, value);
@@ -120,7 +169,7 @@ void setup() {
 
   net.setCACert(CA_CERT);          // verifies the broker certificate
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setBufferSize(512);
+  mqtt.setBufferSize(1024);   // room for OTA manifests
   mqtt.setCallback(onControl);
   pinMode(RELAY_PIN, OUTPUT);
   mqtt.setKeepAlive(30);

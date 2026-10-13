@@ -7,6 +7,7 @@ import { CredentialsDialog } from '../components/Credentials';
 import { ErrorBox, Lifecycle, LIFECYCLE_TEXT, Modal, Status, Strip, useNow, usePoll, useToast } from '../components/ui';
 import { ago, dateTime, metricLabel, num } from '../format';
 import { useSession } from '../session';
+import { DeviceCommands } from './Commands';
 
 const RANGES = {
   '1h': { ms: 3600e3, bucket: '1m', label: '1 hour' },
@@ -318,6 +319,8 @@ export function DeviceDetail() {
               </dl>
             </div>
           </section>
+
+          <DeviceCommands deviceId={deviceId} projectId={projectId} role={org?.role} inactive={dead || device.lifecycleStatus === 'suspended'} />
 
           <section className="panel">
             <div className="panel-head">

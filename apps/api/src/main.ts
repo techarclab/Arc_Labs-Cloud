@@ -2,6 +2,8 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { SwaggerModule } from '@nestjs/swagger';
+import { buildOpenApi } from './openapi';
 import { AppModule, InternalModule } from './app.module';
 import { loadConfig } from './config';
 import { migrate } from './db/migrate';
@@ -20,6 +22,10 @@ async function bootstrap() {
   const origins = cfg.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
   if (origins.length) api.enableCors({ origin: origins, credentials: false });
   api.getHttpAdapter().getInstance().disable('x-powered-by');
+
+  // OpenAPI: interactive docs at /api/docs, machine-readable spec at /api/openapi.json.
+  const spec = buildOpenApi(api);
+  SwaggerModule.setup('api/docs', api, spec, { jsonDocumentUrl: 'api/openapi.json', customSiteTitle: 'ARC Cloud API' });
   await api.listen(cfg.PORT, '0.0.0.0');
   log.log(`API listening on :${cfg.PORT}`);
 

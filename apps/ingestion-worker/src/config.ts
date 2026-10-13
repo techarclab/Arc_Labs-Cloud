@@ -18,11 +18,27 @@ const schema = z.object({
   DEVICE_BURST: z.coerce.number().int().positive().default(20),
   DEDUPE_WINDOW_HOURS: z.coerce.number().int().positive().default(168),
   CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(30),
+  /** Background jobs (rules, notifications, webhooks, command expiry, rollouts, retention). */
+  JOBS_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  RULES_INTERVAL_SECONDS: z.coerce.number().int().min(2).default(15),
+  DELIVERIES_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(5),
+  COMMANDS_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(15),
+  ROLLOUTS_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(30),
+  RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(21600),
+  /** e.g. smtps://user:pass@smtp.example.com:465 — without it, email notifications are recorded as skipped. */
+  SMTP_URL: z.string().optional(),
+  MAIL_FROM: z.string().default('ARC Cloud <alerts@arclabs.in>'),
+  /** Web console address, used for links in emails. */
+  CONSOLE_URL: z.string().optional(),
+  /** Allow webhooks to private addresses (local development only). */
+  ALLOW_PRIVATE_WEBHOOKS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
 });
 
 export type WorkerConfig = z.infer<typeof schema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
+  // With several Railway replicas and no explicit WORKER_ID, give each replica its own MQTT client id.
+  if (!env.WORKER_ID && env.RAILWAY_REPLICA_ID) env = { ...env, WORKER_ID: `ingest-${env.RAILWAY_REPLICA_ID.replace(/[^A-Za-z0-9]/g, '').slice(0, 12)}` };
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     throw new Error('Invalid configuration:\n' + parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n'));

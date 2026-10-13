@@ -2,15 +2,15 @@
  * MQTT topic convention (docs/device-protocol/README.md):
  *   arc/v1/{orgId}/{projectId}/{deviceId}/{channel}
  *
- * V1 is telemetry-only: devices may publish `telemetry` and `state`.
- * `cmd` / `cmd-ack` are reserved for a later phase and are denied by the ACL.
+ * Devices publish `telemetry`, `state` and `cmd-ack` (command acknowledgements) and
+ * subscribe to their own `cmd` topic (control values and commands).
  */
 
 export const TOPIC_ROOT = 'arc';
 export const TOPIC_VERSION = 'v1';
 
-export const DEVICE_PUBLISH_CHANNELS = ['telemetry', 'state'] as const;
-export const RESERVED_CHANNELS = ['cmd', 'cmd-ack'] as const;
+export const DEVICE_PUBLISH_CHANNELS = ['telemetry', 'state', 'cmd-ack'] as const;
+export const RESERVED_CHANNELS = ['cmd'] as const;
 
 export type DevicePublishChannel = (typeof DEVICE_PUBLISH_CHANNELS)[number];
 export type TopicChannel = DevicePublishChannel | (typeof RESERVED_CHANNELS)[number];
@@ -72,4 +72,42 @@ export interface ControlMessage {
 export function controlMessage(field: string, value: number, ts = new Date()): string {
   const msg: ControlMessage = { schemaVersion: 1, field, value, ts: ts.toISOString() };
   return JSON.stringify(msg);
+}
+
+/** Command published on .../cmd (distinguished from control values by `type`). */
+export interface CommandMessage {
+  schemaVersion: 1;
+  type: 'command';
+  commandId: string;
+  name: string;
+  payload: Record<string, unknown>;
+  expiresAt: string;
+}
+
+export function commandMessage(c: { id: string; name: string; payload: Record<string, unknown>; expiresAt: Date }): string {
+  const msg: CommandMessage = { schemaVersion: 1, type: 'command', commandId: c.id, name: c.name, payload: c.payload, expiresAt: c.expiresAt.toISOString() };
+  return JSON.stringify(msg);
+}
+
+/** What a device publishes on .../cmd-ack. */
+export interface CommandAck {
+  commandId: string;
+  status: 'ok' | 'error';
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export function parseCommandAck(payload: Buffer | string): CommandAck | null {
+  let j: any;
+  try {
+    j = JSON.parse(payload.toString());
+  } catch {
+    return null;
+  }
+  if (!j || typeof j !== 'object') return null;
+  if (typeof j.commandId !== 'string' || !/^[0-9a-f-]{36}$/i.test(j.commandId)) return null;
+  if (j.status !== 'ok' && j.status !== 'error') return null;
+  const result = j.result && typeof j.result === 'object' && !Array.isArray(j.result) ? j.result : undefined;
+  const error = typeof j.error === 'string' ? j.error.slice(0, 500) : undefined;
+  return { commandId: j.commandId, status: j.status, result, error };
 }

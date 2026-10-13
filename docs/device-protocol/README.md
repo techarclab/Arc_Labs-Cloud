@@ -20,11 +20,11 @@ Connection is refused when the password is wrong, the credential was rotated or 
 ```
 arc/v1/{orgId}/{projectId}/{deviceId}/telemetry   publish, QoS 1   measurements
 arc/v1/{orgId}/{projectId}/{deviceId}/state       publish, QoS 1   reported state (firmware, uptime, config)
-arc/v1/{orgId}/{projectId}/{deviceId}/cmd         subscribe, QoS 1 control values from the dashboard
-arc/v1/{orgId}/{projectId}/{deviceId}/cmd-ack     reserved
+arc/v1/{orgId}/{projectId}/{deviceId}/cmd         subscribe, QoS 1 control values and commands from the cloud
+arc/v1/{orgId}/{projectId}/{deviceId}/cmd-ack     publish, QoS 1   command acknowledgements
 ```
 
-A device may publish only to its own telemetry and state topics, and subscribe only to its own cmd topic. Anything else disconnects the client. Retained messages are disabled.
+A device may publish only to its own telemetry, state and cmd-ack topics, and subscribe only to its own cmd topic. Anything else disconnects the client. Retained messages are disabled.
 
 ## Control values (cmd)
 
@@ -36,6 +36,34 @@ When someone flips a switch or moves a slider on the dashboard, the cloud publis
 
 `field` is the control field's name from Channel settings. Values are kept inside the field's min/max. Every time the device connects, the cloud re-sends all current control values about 2 seconds later, so subscribe right after connecting.
 
+## Commands (cmd → cmd-ack)
+
+Commands are allow-listed per channel (Channel settings → Commands: name, parameters with type/min/max, time-to-live, who may send). The cloud publishes on `cmd`:
+
+```json
+{ "schemaVersion": 1, "type": "command", "commandId": "7f1c…", "name": "blink", "payload": { "seconds": 3 }, "expiresAt": "2026-10-12T06:16:50Z" }
+```
+
+The device runs it and publishes on `cmd-ack`:
+
+```json
+{ "commandId": "7f1c…", "status": "ok", "result": { "blinked": true } }
+{ "commandId": "7f1c…", "status": "error", "error": "LED broken" }
+```
+
+Status in the cloud: `queued` (device offline) → `published` (sent) → `acknowledged` / `failed` (only from the device's ack) or `expired` (no ack before `expiresAt`). Queued commands are delivered when the device reconnects. Acks for unknown, finished or expired commands are ignored. Tell control values and commands apart by `type`.
+
+### Firmware update (`ota.update`)
+
+A reserved command sent by firmware rollouts:
+
+```json
+{ "type": "command", "name": "ota.update", "commandId": "…",
+  "payload": { "deviceType": "esp32", "version": "1.2.0", "url": "https://…/fw.bin", "sha256": "…", "sizeBytes": 1048576, "signature": "…", "rolloutId": "…" } }
+```
+
+The cloud has already verified the Ed25519 `signature` over the manifest. The device downloads `url`, checks size and SHA-256, installs, acks `ok`, restarts and reports the new `firmwareVersion` (telemetry `metadata` or `state`). The rollout counts a device as succeeded only when it reports the new version. On any mismatch the device acks `error` and keeps its current firmware. Example: `firmware/esp32-arduino/arc_device/arc_ota.h`.
+
 ## HTTP API (ThingSpeak-style)
 
 For devices that don't use MQTT. The key is the device password (shown once when the device is added).
@@ -46,6 +74,10 @@ For devices that don't use MQTT. The key is the device password (shown once when
 | `GET /api/v1/controls?api_key=KEY` | All control values as JSON, e.g. `{"relay":1,"fanSpeed":40}`. Also marks the device as seen. |
 | `GET /api/v1/controls?api_key=KEY&field=relay` | One control value as plain text (`1`). `field=field3` works too. |
 | `GET /api/v1/channels/{channelId}/feeds.json?api_key=READ_KEY&results=100` | Read the channel's data (also `feeds.csv`). Optional `device`, `start`, `end`. |
+| `GET /api/v1/commands/next?api_key=KEY` | Oldest pending command (`{commandId,name,payload,expiresAt}`), or `204` when there is none. |
+| `POST /api/v1/commands/{commandId}/ack?api_key=KEY` | Body `{"status":"ok"}` or `{"status":"error","error":"…"}`. |
+
+Add `&firmware_version=1.2.0` to `/update` so firmware rollouts can confirm HTTP devices.
 
 The key can also be sent as an `X-API-Key` header. Use HTTPS in production.
 

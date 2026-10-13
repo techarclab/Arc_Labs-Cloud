@@ -58,6 +58,13 @@ export class IngestService {
           [device.id, receivedAt, firmware],
         )
       ).rows[0];
+      // Wake the rules engine for this channel and fan out to telemetry webhooks.
+      await c.query(`SELECT pg_notify('arc_telemetry', $1)`, [device.project_id]);
+      await c.query('SELECT arc_emit_event($1, $2, $3)', [
+        device.organization_id,
+        'telemetry.received',
+        JSON.stringify({ deviceId: device.id, projectId: device.project_id, messageId, ts: ts.toISOString(), metrics }),
+      ]);
       if (prev?.previous_status === 'provisioned') {
         await c.query(`INSERT INTO device_events (organization_id, device_id, event_type, event_time, details) VALUES ($1, $2, 'first_message', $3, '{"via":"http"}')`, [
           device.organization_id,

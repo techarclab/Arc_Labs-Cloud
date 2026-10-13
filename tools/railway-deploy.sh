@@ -15,6 +15,11 @@ PROJECT_ID="${RAILWAY_PROJECT_ID:-41619fd2-2193-4924-8628-0ea60750a7d7}"
 ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
 REPO="${GITHUB_REPO:-techarclab/Arc_Labs-Cloud}"
 CONSOLE_URL="${CONSOLE_URL:-https://arc-labs-cloud.vercel.app}"
+# ARC LABS staff who manage every organization's plan (comma-separated).
+PLATFORM_ADMIN_EMAILS="${PLATFORM_ADMIN_EMAILS:-techarclab@gmail.com}"
+# Optional: email server for alert emails, e.g. smtps://user:app-password@smtp.gmail.com:465
+SMTP_URL="${SMTP_URL:-}"
+MAIL_FROM="${MAIL_FROM:-ARC Cloud <alerts@arclabs.in>}"
 CLI_VERSION="5.64.2"
 
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
@@ -108,6 +113,8 @@ create_or_update api \
   'MQTT_URL=mqtt://${{emqx.RAILWAY_PRIVATE_DOMAIN}}:1883' \
   'HTTP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}' \
   "CORS_ORIGINS=$CONSOLE_URL" \
+  "CONSOLE_URL=$CONSOLE_URL" \
+  "PLATFORM_ADMIN_EMAILS=$PLATFORM_ADMIN_EMAILS" \
   ALLOW_SIGNUP=true
 R environment edit --service-config api deploy.healthcheckPath /health/ready >/dev/null 2>&1 \
   && ok "health check: /health/ready" || warn "set Healthcheck Path /health/ready in api -> Settings -> Deploy"
@@ -161,7 +168,14 @@ create_or_update worker \
   'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
   'MQTT_URL=mqtt://${{emqx.RAILWAY_PRIVATE_DOMAIN}}:1883' \
   "MQTT_SERVICE_PASSWORD=$MQTT_SERVICE_PASSWORD" \
+  "CONSOLE_URL=$CONSOLE_URL" \
+  "MAIL_FROM=$MAIL_FROM" \
   WORKER_ID=ingest-1
+if [ -n "$SMTP_URL" ]; then
+  R variable set --service worker --skip-deploys "SMTP_URL=$SMTP_URL" >/dev/null && ok "alert emails go through your mail server"
+else
+  warn "no SMTP_URL: alerts show in the console and webhooks, but no emails are sent (see docs/deploy/railway-vercel.md)"
+fi
 
 reset_build worker
 

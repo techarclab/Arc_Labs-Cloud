@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { api, getToken, onUnauthorized, Org, Project, setToken } from './api';
 
-interface User { id: string; email: string; displayName: string }
+interface User { id: string; email: string; displayName: string; isPlatformAdmin?: boolean }
 interface SessionValue {
   user: User | null;
   orgs: Org[];
@@ -41,7 +41,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       const me = await api('GET', '/auth/me');
-      setUser(me.user);
+      setUser({ ...me.user, isPlatformAdmin: !!me.isPlatformAdmin });
       await refreshOrgs();
     } catch {
       setUser(null);
