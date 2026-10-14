@@ -85,6 +85,9 @@ export function LoginPage() {
             ARC Cloud <small>by ARC LABS</small>
           </span>
         </div>
+        <video className="auth-video" autoPlay muted loop playsInline preload="auto" aria-hidden="true">
+          <source src="/arc-labs-ident.mp4" type="video/mp4" />
+        </video>
         <div className="auth-copy">
           <h1>Every device, reporting in.</h1>
           <p>Connect ESP32s and gateways over secure MQTT or simple HTTP, watch their readings live, and get told the moment one goes quiet.</p>
