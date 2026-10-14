@@ -24,6 +24,13 @@ import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
 import { PlatformPage } from './pages/Platform';
 import { SessionProvider, useSession } from './session';
+import '@fontsource-variable/bricolage-grotesque/opsz.css';
+import '@fontsource/instrument-sans/400.css';
+import '@fontsource/instrument-sans/500.css';
+import '@fontsource/instrument-sans/600.css';
+import '@fontsource/instrument-sans/700.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
 import './styles.css';
 
 /** Sends a signed-in user to their first project, or to setup if they have none. */

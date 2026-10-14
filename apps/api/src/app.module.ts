@@ -46,6 +46,26 @@ class HealthController {
   }
 }
 
+/** Friendly answer for anyone who opens the API's bare address in a browser. */
+@ApiTags('Health')
+@Controller()
+class RootController {
+  @Public()
+  @Get()
+  root() {
+    const console = (process.env.CONSOLE_URL ?? '').replace(/\/+$/, '');
+    return {
+      service: 'ARC Cloud API',
+      status: 'running',
+      message: 'This is the API that devices and the web console talk to. Open the console to sign in.',
+      console: console || null,
+      docs: '/api/docs',
+      health: '/health/ready',
+      deviceUpdate: '/api/v1/update?api_key=DEVICE_KEY&field1=23.5',
+    };
+  }
+}
+
 /** Public management API (port 3000). */
 @Module({
   imports: [
@@ -57,6 +77,7 @@ class HealthController {
   ],
   // DeviceHttpController before CommandsController: GET commands/next must win over commands/:id.
   controllers: [
+    RootController,
     HealthController,
     AuthController,
     OrganizationsController,

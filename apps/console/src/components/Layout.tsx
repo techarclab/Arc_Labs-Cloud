@@ -3,6 +3,12 @@ import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
 import { api, isAdmin, ROLE_LABEL } from '../api';
 import { useSession } from '../session';
 import { ArcMark, usePoll } from './ui';
+import { Icon } from './icons';
+
+function initials(name?: string) {
+  const words = (name ?? '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).filter(Boolean);
+  return (words.length ? words.map((w) => w[0]).slice(0, 2).join('') : '?').toUpperCase();
+}
 
 export function Layout() {
   const { orgId = '', projectId } = useParams();
@@ -55,8 +61,8 @@ export function Layout() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <ArcMark />
-          ARC Cloud
+          <ArcMark size={28} />
+          <span>ARC Cloud</span>
         </div>
 
         {orgs.length > 1 ? (
@@ -76,7 +82,7 @@ export function Layout() {
             ))}
           </select>
         ) : (
-          <div className="side-heading" style={{ color: '#fff', fontSize: 15, padding: '0 8px' }}>
+          <div className="org-name">
             {org?.name}
           </div>
         )}
@@ -92,7 +98,7 @@ export function Layout() {
           </div>
           {list?.map((p) => (
             <NavLink key={p.id} to={`/o/${orgId}/p/${p.id}`} end={false} className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
-              <span>{p.name}</span>
+              <span className="nav-label"><Icon name="channel" />{p.name}</span>
               <span className="count">{p.deviceCount ?? ''}</span>
             </NavLink>
           ))}
@@ -101,32 +107,32 @@ export function Layout() {
         <nav className="side-group" aria-label="Organization">
           <div className="side-heading">Organization</div>
           <NavLink to={`/o/${orgId}`} end className={link}>
-            Overview
+            <span className="nav-label"><Icon name="overview" />Overview</span>
           </NavLink>
           <NavLink to={`/o/${orgId}/alerts`} className={link}>
-            <span>Alerts</span>
+            <span className="nav-label"><Icon name="alerts" />Alerts</span>
             {openAlerts > 0 && <span className="count alert-count">{openAlerts}</span>}
           </NavLink>
           <NavLink to={`/o/${orgId}/team`} className={link}>
-            Team
+            <span className="nav-label"><Icon name="team" />Team</span>
           </NavLink>
           {isAdmin(org?.role) && (
             <NavLink to={`/o/${orgId}/integrations`} className={link}>
-              Integrations
+              <span className="nav-label"><Icon name="integrations" />Integrations</span>
             </NavLink>
           )}
           <NavLink to={`/o/${orgId}/firmware`} className={link}>
-            Firmware &amp; OTA
+            <span className="nav-label"><Icon name="firmware" />Firmware &amp; OTA</span>
           </NavLink>
           <NavLink to={`/o/${orgId}/usage`} className={link}>
-            Usage &amp; limits
+            <span className="nav-label"><Icon name="usage" />Usage &amp; limits</span>
           </NavLink>
-          <NavLink to={`/o/${orgId}/rejected`} className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
-            Rejected data
+          <NavLink to={`/o/${orgId}/rejected`} className={link}>
+            <span className="nav-label"><Icon name="rejected" />Rejected data</span>
           </NavLink>
           {isAdmin(org?.role) && (
-            <NavLink to={`/o/${orgId}/audit`} className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
-              Audit log
+            <NavLink to={`/o/${orgId}/audit`} className={link}>
+              <span className="nav-label"><Icon name="audit" />Audit log</span>
             </NavLink>
           )}
         </nav>
@@ -135,14 +141,21 @@ export function Layout() {
           <nav className="side-group" aria-label="ARC LABS">
             <div className="side-heading">ARC LABS</div>
             <NavLink to={`/o/${orgId}/platform`} className={link}>
-              All organizations
+              <span className="nav-label"><Icon name="admin" />All organizations</span>
             </NavLink>
           </nav>
         )}
 
         <div className="side-foot">
-          <span>{user?.displayName}</span>
-          <span>{org?.role ? ROLE_LABEL[org.role] : ''}</span>
+          <div className="me">
+            <span className="avatar" aria-hidden="true">
+              {initials(user?.displayName)}
+            </span>
+            <span>
+              <b>{user?.displayName}</b>
+              <span>{org?.role ? ROLE_LABEL[org.role] : ''}</span>
+            </span>
+          </div>
           <button
             onClick={() => {
               signOut();

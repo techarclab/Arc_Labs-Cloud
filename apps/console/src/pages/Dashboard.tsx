@@ -237,7 +237,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      {editing && shown.length > 0 && <p className="small muted" style={{ marginBottom: 10 }}>Drag widgets (or use the arrows) to reorder them. Changes aren’t saved until you press Save dashboard.</p>}
+      {editing && shown.length > 0 && <p className="small muted" style={{ marginBottom: 10 }}>Drag widgets (or use the arrows) to reorder them. Changes aren’t saved until you press Save dashboard. Switches and sliders work again after you save.</p>}
 
       <div className="dash-grid">
         {shown.map((w, idx) => {

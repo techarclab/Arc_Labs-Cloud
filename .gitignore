@@ -16,3 +16,4 @@ railway-doctor.txt
 backups/
 *-private.pem
 firmware-signing-private.pem
+firmware/esp32-arduino/my_*/

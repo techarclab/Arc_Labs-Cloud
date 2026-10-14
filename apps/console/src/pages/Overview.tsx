@@ -100,12 +100,11 @@ export function OverviewPage() {
             <Link key={p.id} to={`/o/${orgId}/p/${p.id}`} className="channel-card">
               <b>{p.name}</b>
               {p.description && <span className="muted small">{p.description}</span>}
+              <span className="fleet-bar" aria-hidden="true">
+                <span style={{ width: `${p.devices ? (p.online / p.devices) * 100 : 0}%` }} />
+              </span>
               <span className="small">
-                <span className="status online">
-                  <span className="dot" />
-                  {p.online}
-                </span>{' '}
-                <span className="muted">of {p.devices} online</span>
+                <b>{p.online}</b> <span className="muted">of {p.devices} device{p.devices === 1 ? '' : 's'} online</span>
               </span>
             </Link>
           ))}

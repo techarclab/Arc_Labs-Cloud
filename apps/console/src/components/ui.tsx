@@ -4,8 +4,9 @@ import { Connectivity } from '../api';
 export function ArcMark({ size = 26 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M5 24 A11 11 0 0 1 27 24" fill="none" stroke="#6b7ee8" strokeWidth="4" strokeLinecap="round" />
-      <circle cx="16" cy="24" r="3" fill="#0E9F8A" />
+      <path d="M5 24 A11 11 0 0 1 27 24" fill="none" stroke="#6E8BFF" strokeWidth="4" strokeLinecap="round" />
+      <path d="M10 24 A6 6 0 0 1 22 24" fill="none" stroke="#3157F6" strokeWidth="3" strokeLinecap="round" opacity="0.55" />
+      <circle cx="16" cy="24" r="3" fill="#17B39B" />
     </svg>
   );
 }

@@ -18,7 +18,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 | `apps/console` | Web console (React + Vite). |
 | `packages/shared` | Topic convention, payload schemas, ACL rules, rule evaluation, online/offline logic. |
 | `infra/` | SQL migrations, EMQX config, TLS certs, backup/restore scripts. |
-| `firmware/esp32-arduino` | `arc_device` (MQTT/TLS, controls, commands, OTA) and `arc_http` (HTTPS only, simplest). |
+| `firmware/esp32-arduino` | `arc_hardware_test` (no-sensor test, see `docs/hardware-test.md`), `arc_http` (HTTPS) and `arc_device` (MQTT/TLS), with controls, commands and OTA. |
 | `tools/` | Device simulator, firmware signing, Railway deploy and diagnostics, local dev helper. |
 | `tests/` | `e2e` (60+ end-to-end checks), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
 | `docs/` | Device protocol, OpenAPI, architecture decisions, deployment (Railway/Vercel, staging, AWS), ARC LMS, runbooks, security review. |
