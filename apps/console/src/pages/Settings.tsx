@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { api, canEdit, Field, Reading } from '../api';
-import { ErrorBox, useToast } from '../components/ui';
+import { useNavigate, useParams } from 'react-router-dom';
+import { api, canEdit, Field, isAdmin, Reading } from '../api';
+import { ErrorBox, Modal, useToast } from '../components/ui';
 import { metricLabel } from '../format';
 import { useSession } from '../session';
 import { useChannel } from './Channel';
@@ -48,6 +48,8 @@ export function SettingsPage() {
   const [error, setError] = useState<unknown>(null);
   const [fieldError, setFieldError] = useState<unknown>(null);
   const [dirty, setDirty] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (project) {
@@ -274,29 +276,129 @@ export function SettingsPage() {
         </form>
       </section>
 
-      <section className="panel" style={{ marginTop: 20, maxWidth: 720 }}>
-        <div className="panel-head">
-          <h2>Channel</h2>
-        </div>
-        <form className="panel-body form" onSubmit={saveChannel}>
-          <label className="field">
-            Name
-            <input required value={name} onChange={(e) => setName(e.target.value)} disabled={!editable} />
-          </label>
-          <label className="field">
-            Description
-            <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} disabled={!editable} />
-          </label>
-          <ErrorBox error={error} />
-          {editable && (
+      <div className="settings-pair">
+        <section className="panel">
+          <div className="panel-head">
             <div>
-              <button className="btn primary" type="submit">
-                Save channel
-              </button>
+              <h2>Channel details</h2>
+              <p className="small muted">The name and description shown in the sidebar and on the dashboard.</p>
             </div>
-          )}
-        </form>
-      </section>
+          </div>
+          <form className="panel-body form" onSubmit={saveChannel}>
+            <label className="field">
+              Name
+              <input required value={name} onChange={(e) => setName(e.target.value)} disabled={!editable} />
+            </label>
+            <label className="field">
+              Description
+              <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} disabled={!editable} />
+            </label>
+            <ErrorBox error={error} />
+            {editable && (
+              <div>
+                <button className="btn primary" type="submit">
+                  Save channel
+                </button>
+              </div>
+            )}
+          </form>
+        </section>
+
+        <section className="panel danger-zone">
+          <div className="panel-head">
+            <div>
+              <h2>Delete this channel</h2>
+              <p className="small muted">Removes the channel and everything in it. This can’t be undone.</p>
+            </div>
+          </div>
+          <div className="panel-body">
+            <ul className="danger-list">
+              <li>
+                <b>{devices?.length ?? 0}</b> device{devices?.length === 1 ? '' : 's'} and their keys: they stop working right away
+              </li>
+              <li>
+                <b>{fields?.length ?? 0}</b> field{fields?.length === 1 ? '' : 's'}, the dashboard, all stored readings
+              </li>
+              <li>Rules, alerts, commands and LMS links of this channel</li>
+            </ul>
+            {isAdmin(org?.role) ? (
+              <button className="btn danger solid" type="button" onClick={() => setDeleting(true)}>
+                Delete channel…
+              </button>
+            ) : (
+              <p className="small muted">Only organization admins can delete a channel.</p>
+            )}
+            <p className="small muted" style={{ marginTop: 12 }}>
+              Want to keep the data? Download it first from <b>API keys &amp; export → Download CSV</b>.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      {deleting && project && (
+        <DeleteChannelDialog
+          name={project.name}
+          deviceCount={devices?.length ?? 0}
+          onClose={() => setDeleting(false)}
+          onDeleted={async () => {
+            await refreshProjects(orgId);
+            toast(`Channel “${project.name}” deleted`);
+            navigate(`/o/${orgId}`, { replace: true });
+          }}
+          projectId={projectId}
+        />
+      )}
     </>
+  );
+}
+
+function DeleteChannelDialog({ name, deviceCount, projectId, onClose, onDeleted }: { name: string; deviceCount: number; projectId: string; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const matches = typed.trim() === name;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!matches) return;
+    setBusy(true);
+    try {
+      await api('DELETE', `/projects/${projectId}`, { confirmName: typed.trim() });
+      await onDeleted();
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Delete channel"
+      footer={
+        <>
+          <button className="btn quiet" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn danger solid" type="submit" form="delete-channel" disabled={!matches || busy}>
+            {busy ? 'Deleting…' : 'Delete forever'}
+          </button>
+        </>
+      }
+    >
+      <form id="delete-channel" className="form" onSubmit={submit}>
+        <p>
+          This permanently deletes <b>{name}</b>
+          {deviceCount > 0 ? `, its ${deviceCount} device${deviceCount === 1 ? '' : 's'}` : ''} and all of its readings, dashboard, rules and alerts.
+          {deviceCount > 0 && ' Boards still running with these device keys will get “401” errors.'}
+        </p>
+        <label className="field">
+          Type the channel name to confirm
+          <input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={name} autoComplete="off" spellCheck={false} />
+        </label>
+        <ErrorBox error={error} />
+      </form>
+    </Modal>
   );
 }

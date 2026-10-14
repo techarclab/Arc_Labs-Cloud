@@ -10,14 +10,16 @@ import { ago, num } from '../format';
 import { usePoll } from './ui';
 import { Battery, HBarChart, Heatmap, Histogram, Legend, Meter, Pt, Ring, Scatter, SERIES, Sparkline, Tank, Thermometer, TimeChart, TimeStyle } from './viz';
 import { fmt, GaugeWidget, IndicatorWidget, SliderWidget, SwitchWidget, ValueWidget } from './widgets';
+import { BOARD_TEMPLATES, BoardFrame } from './customBoard';
 
 // ------------------------------------------------------------------ types
 
-export type Group = 'Values' | 'Charts' | 'Controls' | 'Other';
+export type Group = 'Values' | 'Charts' | 'Controls' | 'Templates' | 'Other';
 export const GROUPS: { id: Group; help: string }[] = [
   { id: 'Values', help: 'Show the latest reading' },
   { id: 'Charts', help: 'Show readings over time' },
   { id: 'Controls', help: 'Send values to the device' },
+  { id: 'Templates', help: 'Your own board designed in HTML and CSS' },
   { id: 'Other', help: 'Notes and labels' },
 ];
 
@@ -40,6 +42,7 @@ export interface Ctx {
   reading?: Reading;
   latest: Map<string, Reading>;
   control: number | null;
+  controls: Map<string, number>;
   canControl: boolean;
   setControl: (field: string, value: number) => void;
   now: number;
@@ -751,6 +754,29 @@ export const WIDGETS: WidgetSpec[] = [
     type: 'color', name: 'Colour picker', group: 'Controls', help: 'Pick a colour for an RGB LED. Sends it as one number (0xRRGGBB).', fieldKind: 'control', size: 's', options: [],
     icon: I(<><circle cx="18" cy="14" r="7" fill="#e34948" opacity="0.85" /><circle cx="30" cy="14" r="7" fill="#1baf7a" opacity="0.85" /><circle cx="24" cy="22" r="7" fill="#2a78d6" opacity="0.85" /></>),
     render: (w, c) => <ColorPicker w={w} c={c} />,
+  },
+
+  // ---- Templates
+  {
+    type: 'custom', name: 'Custom board (HTML & CSS)', group: 'Templates',
+    help: 'Design your own board in HTML and CSS. Start from a template, then put live values in with placeholders like {{temperature}}.',
+    fieldKind: 'none', size: 'l',
+    options: [
+      { key: 'template', label: 'Template', kind: 'text', def: () => 'hero' },
+      { key: 'html', label: 'HTML', kind: 'longtext', def: () => '' },
+      { key: 'css', label: 'CSS', kind: 'longtext', def: () => '' },
+      { key: 'height', label: 'Height (pixels)', kind: 'number', def: () => BOARD_TEMPLATES[0].height },
+    ],
+    icon: I(<><rect x="4" y="5" width="40" height="22" rx="4" fill="#3157f6" /><path d="M14 11l-5 5 5 5M34 11l5 5-5 5" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M27 10l-6 12" stroke="#bfe9ff" strokeWidth="2.2" strokeLinecap="round" /></>),
+    render: (w, c) => (
+      <BoardFrame
+        title={w.title}
+        html={sOpt(w, 'html', '')}
+        css={sOpt(w, 'css', '')}
+        height={nOpt(w, 'height', 220)}
+        data={{ fields: c.fields, latest: c.latest, controls: c.controls, device: c.devices.find((d) => d.id === c.deviceId), now: c.now }}
+      />
+    ),
   },
 
   // ---- Other

@@ -20,7 +20,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 | `infra/` | SQL migrations, EMQX config, TLS certs, backup/restore scripts. |
 | `firmware/esp32-arduino` | `arc_hardware_test` (no-sensor test, see `docs/hardware-test.md`), `arc_http` (HTTPS) and `arc_device` (MQTT/TLS), with controls, commands and OTA. |
 | `tools/` | Device simulator, firmware signing, Railway deploy and diagnostics, local dev helper. |
-| `tests/` | `e2e` (60+ end-to-end checks), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
+| `tests/` | `e2e` (62 end-to-end checks), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
 | `docs/` | Device protocol, OpenAPI, architecture decisions, deployment (Railway/Vercel, staging, AWS), ARC LMS, runbooks, security review. |
 
 ### Console
@@ -29,7 +29,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 |---|---|
 | Overview | Device counts by state, alerts needing attention, messages per hour, channel shortcuts |
 | Alerts | Open/acknowledged/resolved alerts; acknowledge or resolve with a note; full history and notification status |
-| Channel → Dashboard, Devices, Channel settings, API keys & export | Widgets, device fleet, fields, read key and CSV |
+| Channel → Dashboard, Devices, Channel settings, API keys & export | Widgets (including **custom HTML & CSS boards** under Templates, see [docs/custom-boards.md](docs/custom-boards.md)), device fleet, fields, delete channel, read key and CSV |
 | Channel → Rules | Threshold (“above 30 °C for 5 min”), no-data and offline rules with severity, quiet period and emails |
 | Channel → Commands | Allow-list of commands (with typed settings) devices in the channel accept |
 | Device page | Readings, history, details, activity, **commands** (send, track to “Done”/“Expired”), access controls |

@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { BadRequestException, Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
@@ -45,11 +45,15 @@ const widgetSchema = z.object({
   field: z.union([z.literal(''), z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/)]).default(''),
   size: z.enum(['s', 'm', 'l', 'xl']).default('m'),
   options: z
-    .record(z.string().max(32), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null()]))
+    .record(z.string().max(32), z.union([z.string().max(20000), z.number().finite(), z.boolean(), z.null()]))
     .refine((o) => Object.keys(o).length <= 24, 'too many options')
     .default({}),
 });
-const dashboardBody = z.object({ widgets: z.array(widgetSchema).max(64) });
+const dashboardBody = z
+  .object({ widgets: z.array(widgetSchema).max(64) })
+  // Custom HTML/CSS boards allow long options; keep a whole dashboard under ~400 KB.
+  .refine((d) => JSON.stringify(d.widgets).length <= 400_000, 'dashboard is too large (keep custom HTML/CSS shorter)');
+const deleteBody = z.object({ confirmName: z.string() });
 
 const mapField = (r: any) => ({
   metricKey: r.metric_key,
@@ -131,6 +135,42 @@ export class ProjectsController {
     );
     await this.audit.record({ ...actor(user), organizationId: project.organization_id, action: 'project.update', resourceType: 'project', resourceId: id, metadata: input });
     return mapProject(updated);
+  }
+
+  /**
+   * Deletes a channel and everything in it: devices (and their credentials), readings, fields,
+   * dashboard, rules, alerts, commands and LMS links. Admins only; the caller must repeat the
+   * channel's exact name. Devices of this channel are refused on their next connect or request.
+   */
+  @Doc('Delete', { body: deleteBody })
+  @Delete(':id')
+  async remove(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
+    const project = await this.access.requireProject(user, id, 'org_admin');
+    if (user.scope) throw new BadRequestException({ code: 'not_allowed_for_api_keys' });
+    const { confirmName } = parse(deleteBody, body ?? {});
+    if (confirmName.trim() !== project.name) throw new BadRequestException({ code: 'name_mismatch', message: 'Type the channel name exactly to delete it.' });
+    const counts = await this.db.tx(async (c) => {
+      const devices = (await c.query('SELECT id FROM devices WHERE project_id = $1', [id])).rows.map((r) => r.id);
+      const readings = (await c.query('DELETE FROM telemetry_measurements WHERE project_id = $1', [id])).rowCount ?? 0;
+      if (devices.length) {
+        await c.query('DELETE FROM ingested_messages WHERE device_id = ANY($1::uuid[])', [devices]);
+        await c.query('DELETE FROM rejected_messages WHERE device_id = ANY($1::uuid[])', [devices]);
+      }
+      // API keys limited to channels: drop this one; a key left with no channels is revoked.
+      await c.query(
+        `UPDATE api_keys SET project_ids = array_remove(project_ids, $1::uuid),
+                revoked_at = CASE WHEN project_ids = ARRAY[$1::uuid] THEN COALESCE(revoked_at, now()) ELSE revoked_at END
+         WHERE organization_id = $2 AND $1::uuid = ANY(project_ids)`,
+        [id, project.organization_id],
+      );
+      await c.query('DELETE FROM projects WHERE id = $1', [id]); // cascades to devices, fields, dashboard, rules, alerts, commands
+      await this.audit.record(
+        { ...actor(user), organizationId: project.organization_id, action: 'project.delete', resourceType: 'project', resourceId: id, metadata: { name: project.name, devices: devices.length, readings } },
+        c,
+      );
+      return { devices: devices.length, readings };
+    });
+    return { deleted: true, id, name: project.name, ...counts };
   }
 
   /** Fields (ThingSpeak "fields", Blynk "datastreams"). `metric-definitions` is kept as an alias. */

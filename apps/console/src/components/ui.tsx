@@ -50,7 +50,7 @@ export function Strip({ counts, expected, size = 'mini', label }: { counts: numb
   );
 }
 
-export function Modal({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+export function Modal({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; wide?: boolean | number }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -59,7 +59,7 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="modal" onClose={onClose} onCancel={onClose} style={wide ? { width: 'min(680px, calc(100vw - 32px))' } : undefined}>
+    <dialog ref={ref} className="modal" onClose={onClose} onCancel={onClose} style={wide ? { width: `min(${typeof wide === 'number' ? wide : 680}px, calc(100vw - 32px))` } : undefined}>
       {open && (
         <>
           <div className="modal-head">

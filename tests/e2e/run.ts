@@ -820,6 +820,34 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     assert.match(m, /arc_deliveries_sent_total\{reason="webhook"\} \d+/);
     assert.match(m, /arc_deliveries_retried_total\{reason="webhook"\} \d+/);
   });
+  await check('custom HTML/CSS board widgets save with long options', async () => {
+    const html = '<div class="hero">{{temperatureC}}</div>'.repeat(200);
+    const widgets = [{ id: 'cb1', type: 'custom', title: 'My board', field: '', size: 'l', options: { template: 'hero', html, css: '.hero{color:red}', height: 240 } }];
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/dashboard`, tA, { widgets })).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}/dashboard`, tA)).body.widgets[0].options.html.length, html.length);
+    const huge = { ...widgets[0], options: { html: 'x'.repeat(20001) } };
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/dashboard`, tA, { widgets: [huge] })).status, 400);
+  });
+  await check('delete channel: admins only, name must match, removes devices and readings', async () => {
+    const scrap = (await http('POST', '/api/v1/projects', tA, { organizationId: orgA.id, name: 'Scrap bench' })).body;
+    await http('PUT', `/api/v1/projects/${scrap.id}/fields`, tA, { metrics: [{ metricKey: 'temp', label: 'Temp', position: 1 }, { metricKey: 'led', label: 'LED', kind: 'control', position: 2, minValue: 0, maxValue: 1 }] });
+    const d = (await http('POST', '/api/v1/devices', tA, { projectId: scrap.id, displayName: 'Scrap ESP32' })).body;
+    const k = d.credentials.http.apiKey as string;
+    assert.equal((await fetch(`${API}/api/v1/update?api_key=${encodeURIComponent(k)}&field1=21.5`)).status, 200);
+    const scoped = await http('POST', '/api/v1/api-keys', tA, { organizationId: orgA.id, name: 'scrap only', role: 'viewer', projectIds: [scrap.id] });
+    assert.equal((await http('DELETE', `/api/v1/projects/${scrap.id}`, tB, { confirmName: 'Scrap bench' })).status, 403, 'viewer');
+    assert.equal((await http('DELETE', `/api/v1/projects/${scrap.id}`, tA, { confirmName: 'Scrap' })).status, 400, 'wrong name');
+    assert.equal((await http('DELETE', `/api/v1/projects/${scrap.id}`, scoped.body.secret, { confirmName: 'Scrap bench' })).status, 403, 'API key');
+    const del = await http('DELETE', `/api/v1/projects/${scrap.id}`, tA, { confirmName: 'Scrap bench' });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.devices, 1);
+    assert.equal((await http('GET', `/api/v1/projects/${scrap.id}`, tA)).status, 404);
+    assert.equal((await http('GET', `/api/v1/devices/${d.device.id}`, tA)).status, 404);
+    assert.equal((await fetch(`${API}/api/v1/update?api_key=${encodeURIComponent(k)}&field1=22`)).status, 401, 'device key stops working');
+    assert.equal(Number((await sql(`SELECT count(*) FROM telemetry_measurements WHERE project_id = '${scrap.id}'`))[0].count), 0);
+    assert.ok((await sql(`SELECT revoked_at FROM api_keys WHERE id = '${scoped.body.id}'`))[0].revoked_at, 'channel-only key revoked');
+    assert.ok((await http('GET', `/api/v1/organizations/${orgA.id}/audit-logs?limit=5`, tA)).body.items.some((e: any) => e.action === "project.delete"));
+  });
   if (c3) await new Promise<void>((r) => c3!.end(false, {}, () => r()));
 }
 
