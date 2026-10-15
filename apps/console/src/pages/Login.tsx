@@ -203,9 +203,10 @@ export function LoginPage() {
       </section>
       <section className="auth-form">
         <form className="auth-card form" onSubmit={submit}>
-          <div>
+          <div className="auth-card-heading">
+            <p className="auth-kicker"><span aria-hidden="true" /> ARC CLOUD CONSOLE</p>
             <h2 className="auth-title">{mode === 'signin' ? 'Sign in' : 'Create your account'}</h2>
-            <p className="muted" style={{ marginTop: 6 }}>
+            <p className="muted">
               {mode === 'signin' ? 'Use the email and password you signed up with.' : 'You’ll set up your organization and first project next.'}
             </p>
           </div>
@@ -265,6 +266,7 @@ export function LoginPage() {
             </a>
           </p>
         </form>
+        <p className="auth-footnote"><span aria-hidden="true">✦</span> Secure access to your connected devices</p>
       </section>
     </div>
   );
