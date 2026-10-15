@@ -100,10 +100,8 @@ export function LoginPage() {
         </ul>
       </section>
       <section className="auth-form">
+        <img className="auth-logo" src="/arc-labs-logo.jpg" alt="ARC Labs — communicate, collaborate, create" />
         <form className="auth-card form" onSubmit={submit}>
-          <div className="auth-mobile-brand">
-            <ArcMark size={28} /> ARC Cloud
-          </div>
           <div>
             <h2 className="auth-title">{mode === 'signin' ? 'Sign in' : 'Create your account'}</h2>
             <p className="muted" style={{ marginTop: 6 }}>
