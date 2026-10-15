@@ -599,6 +599,9 @@ dialog.modal { border-radius: 16px; box-shadow: 0 30px 80px -20px rgba(14, 23, 3
   min-height: clamp(160px, 22vh, 230px);
   max-height: 250px;
   flex: 1 1 0;
+  object-fit: contain;
+  object-position: center;
+  background-color: #050607;
   border: 1px solid rgba(255,255,255,.09);
   box-shadow: 0 24px 60px -36px rgba(0,0,0,.8);
 }
