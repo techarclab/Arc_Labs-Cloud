@@ -17,6 +17,7 @@
     "@nestjs/platform-express": "^11.1.0",
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/throttler": "^6.4.0",
+    "google-auth-library": "^11.3.0",
     "mqtt": "^5.13.0",
     "pg": "^8.16.0",
     "reflect-metadata": "^0.2.2",

@@ -8,6 +8,8 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
+  /** Google OAuth Web client ID; also published to the console for Google Identity Services. */
+  GOOGLE_CLIENT_ID: z.string().trim().optional().transform((value) => value || undefined),
   ALLOW_SIGNUP: z
     .enum(['true', 'false'])
     .default('true')

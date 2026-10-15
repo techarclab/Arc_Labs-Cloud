@@ -8,7 +8,7 @@ export function buildOpenApi(app: INestApplication): OpenAPIObject {
       .setTitle('ARC Cloud API')
       .setVersion('1.0')
       .setDescription(
-        'Multi-tenant IoT platform API. Authenticate with `Authorization: Bearer <token>`: a user token from /api/v1/auth/login, ' +
+        'Multi-tenant IoT platform API. Authenticate with `Authorization: Bearer <token>`: a user token from /api/v1/auth/login or /api/v1/auth/google, ' +
           'an organization API key (arc_sk_…), or a service-account token from /api/v1/oauth/token. ' +
           'Device endpoints (/update, /controls, /commands/next) use the device key in `api_key`. Errors are JSON with a stable `code`. ' +
           'Lists take `limit` (max 200) and `offset`.',

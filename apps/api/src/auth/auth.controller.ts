@@ -1,8 +1,9 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
+import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
@@ -21,17 +22,27 @@ const loginBody = z.object({
   password: z.string().min(1).max(256),
 });
 
+const googleLoginBody = z.object({ credential: z.string().min(1).max(8192) });
+
+type GoogleUserRow = {
+  [column: string]: any;
+  id: string;
+  email: string;
+  display_name: string;
+  identity_provider_id: string | null;
+  status: string;
+  created_at: Date;
+};
+
 // A fixed hash so login spends the same time whether or not the email exists.
 const DUMMY_HASH = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
-/**
- * Built-in email/password auth for local development and early pilots.
- * For production, put an OIDC provider (e.g. Amazon Cognito) in front and map
- * `identity_provider_id`; the rest of the API only depends on the JWT `sub`.
- */
+/** Email/password and Google Identity Services sign-in; the rest of the API uses the ARC Cloud JWT subject. */
 @ApiTags('Auth')
 @Controller('api/v1/auth')
 export class AuthController {
+  private readonly google = new OAuth2Client();
+
   constructor(
     private readonly db: Db,
     private readonly jwt: JwtService,
@@ -73,6 +84,108 @@ export class AuthController {
     );
     const ok = await verifySecret(input.password, user?.password_hash ?? DUMMY_HASH);
     if (!user || !ok || user.status !== 'active') throw new UnauthorizedException({ code: 'invalid_credentials' });
+    return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+  }
+
+  @Doc('Google sign-in configuration')
+  @Public()
+  @Get('google/config')
+  googleConfig() {
+    return { clientId: loadConfig().GOOGLE_CLIENT_ID ?? null };
+  }
+
+  @Doc('Sign in with Google', { body: googleLoginBody })
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('google')
+  @HttpCode(200)
+  async loginWithGoogle(@Body() body: unknown) {
+    const config = loadConfig();
+    if (!config.GOOGLE_CLIENT_ID) throw new ServiceUnavailableException({ code: 'google_signin_unconfigured' });
+    const input = parse(googleLoginBody, body);
+
+    let payload: { sub?: string; email?: string; email_verified?: boolean; name?: string } | undefined;
+    try {
+      const ticket = await this.google.verifyIdToken({ idToken: input.credential, audience: config.GOOGLE_CLIENT_ID });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException({ code: 'invalid_google_credential' });
+    }
+    const email = payload?.email?.trim();
+    if (!payload?.sub || !email || payload.email_verified !== true) {
+      throw new UnauthorizedException({ code: 'invalid_google_credential' });
+    }
+
+    const identityProviderId = `google:${payload.sub}`;
+    const displayName = payload.name?.trim().slice(0, 120) || email.split('@')[0];
+    const user = await this.db.tx(async (client) => {
+      const byProvider = await client.query<GoogleUserRow>(
+        `SELECT id, email, display_name, identity_provider_id, status, created_at
+         FROM users WHERE identity_provider_id = $1 FOR UPDATE`,
+        [identityProviderId],
+      );
+      let account = byProvider.rows[0];
+
+      if (!account) {
+        const byEmail = await client.query<GoogleUserRow>(
+          `SELECT id, email, display_name, identity_provider_id, status, created_at
+           FROM users WHERE email = $1 FOR UPDATE`,
+          [email],
+        );
+        account = byEmail.rows[0];
+        if (account) {
+          if (account.identity_provider_id && account.identity_provider_id !== identityProviderId) {
+            throw new ConflictException({ code: 'google_account_link_conflict' });
+          }
+          if (!account.identity_provider_id) {
+            const linked = await client.query<GoogleUserRow>(
+              `UPDATE users SET identity_provider_id = $1 WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
+               RETURNING id, email, display_name, identity_provider_id, status, created_at`,
+              [identityProviderId, account.id],
+            );
+            account = linked.rows[0] ?? account;
+          }
+        } else {
+          if (!config.ALLOW_SIGNUP) throw new ForbiddenException({ code: 'signup_disabled' });
+          const created = await client.query<GoogleUserRow>(
+            `INSERT INTO users (email, display_name, password_hash, identity_provider_id)
+             VALUES ($1, $2, NULL, $3) ON CONFLICT DO NOTHING
+             RETURNING id, email, display_name, identity_provider_id, status, created_at`,
+            [email, displayName, identityProviderId],
+          );
+          account = created.rows[0];
+
+          // Another sign-in may have created the same email or Google identity concurrently.
+          if (!account) {
+            const raced = await client.query<GoogleUserRow>(
+              `SELECT id, email, display_name, identity_provider_id, status, created_at
+               FROM users WHERE identity_provider_id = $1 OR email = $2 FOR UPDATE`,
+              [identityProviderId, email],
+            );
+            account = raced.rows.find((row) => row.identity_provider_id === identityProviderId) ?? raced.rows[0];
+            if (!account || (account.identity_provider_id && account.identity_provider_id !== identityProviderId)) {
+              throw new ConflictException({ code: 'google_account_link_conflict' });
+            }
+            if (!account.identity_provider_id) {
+              const linked = await client.query<GoogleUserRow>(
+                `UPDATE users SET identity_provider_id = $1 WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
+                 RETURNING id, email, display_name, identity_provider_id, status, created_at`,
+                [identityProviderId, account.id],
+              );
+              account = linked.rows[0] ?? account;
+            }
+          }
+        }
+      }
+
+      if (!account || account.identity_provider_id !== identityProviderId) {
+        throw new ConflictException({ code: 'google_account_link_conflict' });
+      }
+      if (account.status !== 'active') throw new UnauthorizedException({ code: 'account_disabled' });
+      return account;
+    });
+
+    await this.audit.record({ actorType: 'user', actorId: user.id, action: 'user.google_login', resourceType: 'user', resourceId: user.id });
     return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
   }
 

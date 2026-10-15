@@ -49,6 +49,10 @@ export const onUnauthorized = (fn: () => void) => {
 
 const MESSAGES: Record<string, string> = {
   invalid_credentials: 'That email and password don’t match an account.',
+  invalid_google_credential: 'Google could not verify this sign-in. Please try again.',
+  google_account_link_conflict: 'This Google account is linked to a different ARC Cloud account.',
+  google_signin_unconfigured: 'Google sign-in is not configured on this server yet.',
+  account_disabled: 'This account has been disabled. Contact an administrator.',
   email_taken: 'An account with this email already exists. Sign in instead.',
   slug_taken: 'That short name is already used by another organization. Try a different one.',
   insufficient_role: 'Your role in this organization doesn’t allow this. Ask an admin.',

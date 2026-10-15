@@ -66,8 +66,11 @@ MQTT_PUBLIC_HOST=${{emqx.RAILWAY_TCP_PROXY_DOMAIN}}
 MQTT_PUBLIC_PORT=${{emqx.RAILWAY_TCP_PROXY_PORT}}
 HTTP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
 CORS_ORIGINS=https://CHANGE-ME.vercel.app
+GOOGLE_CLIENT_ID=<Google OAuth Web client ID>
 ALLOW_SIGNUP=true
 ```
+
+To enable Google sign-in, configure the app’s OAuth consent/branding and create a client of type **Web application** in Google Cloud Console. Add your console URL under **Authorized JavaScript origins** (also add `http://localhost:3002` for local development), then set its client ID as `GOOGLE_CLIENT_ID` on the Railway `api` service (and in `.env` for local Docker). The client ID is public; no client secret is needed for this sign-in flow. Redeploy the API after setting it.
 
 **Settings:**
 - **Networking → Generate Domain**, port **3000**. Note the URL, for example `https://arc-cloud-api.up.railway.app`.

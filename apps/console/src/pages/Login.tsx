@@ -1,7 +1,79 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { useSession } from '../session';
+
+type GoogleCredentialResponse = { credential?: string };
+type GoogleIdentityApi = {
+  initialize: (options: { client_id: string; callback: (response: GoogleCredentialResponse) => void }) => void;
+  renderButton: (
+    element: HTMLElement,
+    options: { type: 'standard'; theme: 'outline'; size: 'large'; text: 'signin_with'; shape: 'rectangular'; width: number },
+  ) => void;
+};
+
+declare global {
+  interface Window {
+    google?: { accounts?: { id?: GoogleIdentityApi } };
+  }
+}
+
+function GoogleSignInButton({ clientId, onCredential }: { clientId: string; onCredential: (credential: string) => void }) {
+  const button = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const container = button.current;
+    if (!container) return;
+    let active = true;
+    const render = () => {
+      const identity = window.google?.accounts?.id;
+      if (!active || !identity) return;
+      identity.initialize({
+        client_id: clientId,
+        callback: ({ credential }) => {
+          if (credential) onCredential(credential);
+        },
+      });
+      identity.renderButton(container, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        width: Math.min(400, Math.max(200, Math.floor(container.getBoundingClientRect().width))),
+      });
+    };
+    const fail = () => active && setFailed(true);
+    let script = document.querySelector<HTMLScriptElement>('script[data-google-identity-services]');
+    if (window.google?.accounts?.id) {
+      render();
+      return () => { active = false; };
+    }
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.dataset.googleIdentityServices = 'true';
+    }
+    script.addEventListener('load', render, { once: true });
+    script.addEventListener('error', fail, { once: true });
+    if (!script.isConnected) document.head.appendChild(script);
+    return () => {
+      active = false;
+      script?.removeEventListener('load', render);
+      script?.removeEventListener('error', fail);
+    };
+  }, [clientId, onCredential]);
+
+  return (
+    <>
+      <div className="google-signin-button" ref={button} />
+      {failed && <p className="google-auth-status">Could not load Google sign-in. You can still use your email and password.</p>}
+    </>
+  );
+}
 
 /** A smooth, deterministic trace for the hero (no randomness, so it renders the same every time). */
 function trace(seed: number, amp: number, base: number, w = 560, n = 48) {
@@ -59,6 +131,36 @@ export function LoginPage() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+  const [googleConfigLoaded, setGoogleConfigLoaded] = useState(false);
+  const [googleConfigFailed, setGoogleConfigFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api<{ clientId: string | null }>('GET', '/auth/google/config')
+      .then(({ clientId }) => {
+        if (active) setGoogleClientId(clientId);
+      })
+      .catch(() => {
+        if (active) setGoogleConfigFailed(true);
+      })
+      .finally(() => {
+        if (active) setGoogleConfigLoaded(true);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const signInWithGoogle = useCallback(async (credential: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api('POST', '/auth/google', { credential });
+      await signIn(r.accessToken);
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }, [signIn]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -100,7 +202,6 @@ export function LoginPage() {
         </ul>
       </section>
       <section className="auth-form">
-        <img className="auth-logo" src="/arc-labs-logo.jpg" alt="ARC Labs — communicate, collaborate, create" />
         <form className="auth-card form" onSubmit={submit}>
           <div>
             <h2 className="auth-title">{mode === 'signin' ? 'Sign in' : 'Create your account'}</h2>
@@ -108,6 +209,22 @@ export function LoginPage() {
               {mode === 'signin' ? 'Use the email and password you signed up with.' : 'You’ll set up your organization and first project next.'}
             </p>
           </div>
+          {mode === 'signin' && (
+            <div className="google-auth-section">
+              {googleClientId ? (
+                <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogle} />
+              ) : (
+                <p className="google-auth-status" role="status">
+                  {!googleConfigLoaded
+                    ? 'Loading Google sign-in…'
+                    : googleConfigFailed
+                      ? 'Google sign-in settings could not be loaded.'
+                      : 'Google sign-in is not configured on this server yet.'}
+                </p>
+              )}
+              <div className="auth-divider"><span>or use email</span></div>
+            </div>
+          )}
           {mode === 'signup' && (
             <label className="field">
               Your name

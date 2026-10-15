@@ -20,8 +20,8 @@ The worker acks a QoS 1 message only after it is stored (or deliberately rejecte
 **6. Tenant scope is resolved server-side on every request.**
 Controllers never trust an organization ID from the client for authorization: they load the resource, read its `organization_id`, and check membership. Non-members get 404. Telemetry queries always include `organization_id` in the predicate.
 
-**7. Built-in email/password auth for now; OIDC later.**
-Keeps local development self-contained. The rest of the API only reads the JWT `sub`, and `users.identity_provider_id` exists for mapping an external provider (e.g. Amazon Cognito) without schema changes.
+**7. Email/password plus Google Identity Services for console sign-in.**
+Google ID tokens are verified by the API against the configured Web client ID, then mapped to `users.identity_provider_id`; the rest of the API continues to use ARC Cloud JWTs and only reads the JWT `sub`.
 
 ## Known gaps (tracked for later phases)
 
