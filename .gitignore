@@ -17,3 +17,4 @@ backups/
 *-private.pem
 firmware-signing-private.pem
 firmware/esp32-arduino/my_*/
+.aws-copy/

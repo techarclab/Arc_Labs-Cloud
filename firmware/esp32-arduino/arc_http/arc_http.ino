@@ -12,8 +12,8 @@
  * Fill in the settings below. KEY is the device password shown when you added the device
  * (Devices → Add device → "HTTP API" tab). Field numbers match Channel settings → Fields.
  *
- * SERVER is the API address shown on the device's "HTTP API" tab, e.g.
- *   https://arcapi-production-30bb.up.railway.app      (ARC Cloud on Railway)
+ * SERVER is the AWS API Gateway address shown on the device's "HTTP API" tab, e.g.
+ *   https://lku7dufiw0.execute-api.ap-southeast-1.amazonaws.com
  *   http://192.168.1.20:3000                            (local Docker on your PC)
  * https:// is encrypted. By default the sketch does not verify the server's certificate
  * (fine for getting started); paste a root CA into ROOT_CA to verify it as well.
@@ -26,7 +26,7 @@
 
 const char *WIFI_SSID     = "your-wifi";
 const char *WIFI_PASSWORD = "your-wifi-password";
-const char *SERVER        = "https://arcapi-production-30bb.up.railway.app";
+const char *SERVER        = "https://lku7dufiw0.execute-api.ap-southeast-1.amazonaws.com";
 const char *API_KEY       = "paste-the-device-key";
 
 const char *ROOT_CA = nullptr;                 // optional: PEM root certificate of SERVER

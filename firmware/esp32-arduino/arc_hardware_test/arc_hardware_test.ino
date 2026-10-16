@@ -22,7 +22,7 @@
 // ---------------- your settings ----------------
 const char *WIFI_SSID     = "your-wifi-name";        // 2.4 GHz network (ESP32 can't join 5 GHz)
 const char *WIFI_PASSWORD = "your-wifi-password";
-const char *SERVER        = "https://arcapi-production-30bb.up.railway.app";  // from the device's "HTTP API" tab
+const char *SERVER        = "https://lku7dufiw0.execute-api.ap-southeast-1.amazonaws.com";  // AWS API Gateway
 const char *API_KEY       = "paste-the-device-key";  // shown once when you add the device
 // ------------------------------------------------
 
@@ -45,7 +45,7 @@ void explain(int code, const String &body) {
   else if (code == 404) Serial.println(F("   404: wrong address, or the control field \"led\" doesn't exist in Channel settings."));
   else if (code == 429) Serial.println(F("   429: sending too often. Use at least 1 second between messages."));
   else if (code == 400) Serial.printf("   400: the server rejected the data: %s\n", body.c_str());
-  else if (code >= 500) Serial.println(F("   5xx: the server had a problem. Check that the api service is running on Railway."));
+  else if (code >= 500) Serial.println(F("   5xx: the server had a problem. Check the AWS API and CloudWatch logs."));
   else Serial.printf("   HTTP %d %s\n", code, body.c_str());
 }
 

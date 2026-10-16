@@ -1,0 +1,669 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ARC Cloud AWS backend. Deploys API + worker + EMQX on ECS/Fargate, private PostgreSQL,
+  API Gateway HTTPS, and an MQTT Network Load Balancer. Railway/Vercel are not modified.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0bd0364ae3d786319
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0a12c883c22522ec9
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-096d4f01528d3dc6f
+  BackendImage:
+    Type: String
+    Default: 682849161227.dkr.ecr.ap-southeast-1.amazonaws.com/arc-cloud/backend:aws-staging-20261016
+  EmqxImage:
+    Type: String
+    Default: 682849161227.dkr.ecr.ap-southeast-1.amazonaws.com/arc-cloud/emqx:aws-staging-20261015
+  ConsoleOrigin:
+    Type: String
+    Default: https://arc-labs-cloud.vercel.app
+    Description: Exact Vercel console origin, without a trailing slash.
+  GoogleClientId:
+    Type: String
+    Default: 802315256717-shk2guvs4el8rj1j19b08kjphhk6h4p8.apps.googleusercontent.com
+    Description: Public Google OAuth Web client ID.
+  ProtectDatabase:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Enable after the AWS database has been restored and verified.
+
+Conditions:
+  EnableDatabaseProtection: !Equals [!Ref ProtectDatabase, 'true']
+
+Resources:
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      AvailabilityZone: ap-southeast-1a
+      CidrBlock: 172.31.48.0/20
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: arc-cloud-private-a}]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      AvailabilityZone: ap-southeast-1b
+      CidrBlock: 172.31.64.0/20
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: arc-cloud-private-b}]
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-private}]
+
+  PrivateRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: ARC Cloud private database subnets
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Tags: [{Key: Name, Value: arc-cloud-db}]
+
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/JWT_SECRET
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+  HookTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/INTERNAL_HOOK_TOKEN
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+  MqttPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/MQTT_SERVICE_PASSWORD
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+  DashboardPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/EMQX_DASHBOARD_PASSWORD
+      GenerateSecretString:
+        PasswordLength: 40
+        ExcludePunctuation: true
+  DbPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/DB_PASSWORD
+      GenerateSecretString:
+        PasswordLength: 40
+        ExcludePunctuation: true
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL access only from ARC Cloud API and worker tasks
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-db}]
+
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ARC Cloud API; port 3000 accepts only NLB traffic and hooks only EMQX
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-api}]
+
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ARC Cloud ingestion worker; no inbound connections
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-worker}]
+
+  BrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EMQX only via MQTT NLB and private VPC clients
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-emqx}]
+
+  ApiGatewayLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: API Gateway VPC link to private ARC Cloud tasks
+      VpcId: !Ref VpcId
+      Tags: [{Key: Name, Value: arc-cloud-apigw-link}]
+
+  ApiNlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private API load balancer accepts traffic only from API Gateway VPC link
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ApiGatewayLinkSecurityGroup
+      Tags: [{Key: Name, Value: arc-cloud-api-nlb}]
+
+  MqttNlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # Keep the established description so the existing MQTT security group is not replaced.
+      GroupDescription: Public MQTT TLS and API Gateway VPC link listeners
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8883
+          ToPort: 8883
+          CidrIp: 0.0.0.0/0
+      Tags: [{Key: Name, Value: arc-cloud-mqtt-nlb}]
+
+  DatabaseFromApi:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ApiSecurityGroup
+  DatabaseFromWorker:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref WorkerSecurityGroup
+  ApiFromNlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ApiSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3000
+      ToPort: 3000
+      SourceSecurityGroupId: !Ref ApiNlbSecurityGroup
+  ApiHooksFromBroker:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ApiSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3001
+      ToPort: 3001
+      SourceSecurityGroupId: !Ref BrokerSecurityGroup
+  BrokerPlainMqttFromApi:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BrokerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1883
+      ToPort: 1883
+      SourceSecurityGroupId: !Ref ApiSecurityGroup
+  BrokerPlainMqttFromWorker:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BrokerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1883
+      ToPort: 1883
+      SourceSecurityGroupId: !Ref WorkerSecurityGroup
+  BrokerTlsFromNlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BrokerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8883
+      ToPort: 8883
+      SourceSecurityGroupId: !Ref MqttNlbSecurityGroup
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: '16.15'
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: arc_cloud
+      MasterUsername: arc
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbPasswordSecret}:SecretString}}'
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DeletionProtection: !If [EnableDatabaseProtection, true, false]
+      EnableCloudwatchLogsExports: [postgresql]
+      AutoMinorVersionUpgrade: true
+      Tags: [{Key: Name, Value: arc-cloud-db}]
+
+  DatabaseUrlSecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: Database
+    Properties:
+      Name: arc-cloud/prod/DATABASE_URL
+      SecretString: !Sub 'postgresql://arc:{{resolve:secretsmanager:${DbPasswordSecret}:SecretString}}@${Database.Endpoint.Address}:5432/arc_cloud?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem'
+
+  MqttTlsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: arc-cloud/prod/MQTT_TLS
+      SecretString: '{"ca":"REPLACE_AFTER_STACK_CREATION","cert":"REPLACE_AFTER_STACK_CREATION","key":"REPLACE_AFTER_STACK_CREATION"}'
+
+  ArcNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: arc.internal
+      Vpc: !Ref VpcId
+      Description: Private DNS for ARC Cloud services
+
+  ApiDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: api
+      NamespaceId: !Ref ArcNamespace
+      DnsConfig:
+        NamespaceId: !Ref ArcNamespace
+        DnsRecords: [{Type: A, TTL: 10}]
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig: {FailureThreshold: 1}
+
+  BrokerDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: broker
+      NamespaceId: !Ref ArcNamespace
+      DnsConfig:
+        NamespaceId: !Ref ArcNamespace
+        DnsRecords: [{Type: A, TTL: 10}]
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig: {FailureThreshold: 1}
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: arc-cloud
+      ClusterSettings: [{Name: containerInsights, Value: enabled}]
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/arc-cloud/api
+      RetentionInDays: 14
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/arc-cloud/worker
+      RetentionInDays: 14
+  BrokerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/arc-cloud/emqx
+      RetentionInDays: 14
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadArcCloudRuntimeSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref JwtSecret
+                  - !Ref HookTokenSecret
+                  - !Ref MqttPasswordSecret
+                  - !Ref DashboardPasswordSecret
+                  - !Ref DbPasswordSecret
+                  - !Ref DatabaseUrlSecret
+                  - !Ref MqttTlsSecret
+
+  ApiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: arc-cloud-api
+      Cpu: '256'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Ref BackendImage
+          Essential: true
+          Environment:
+            - {Name: NODE_ENV, Value: production}
+            - {Name: ARC_ROLE, Value: api}
+            - {Name: PORT, Value: '3000'}
+            - {Name: INTERNAL_PORT, Value: '3001'}
+            - {Name: RUN_MIGRATIONS, Value: 'true'}
+            - {Name: ALLOW_SIGNUP, Value: 'true'}
+            - {Name: MQTT_SERVICE_USERNAME, Value: arc-ingest}
+            - {Name: MQTT_URL, Value: mqtt://broker.arc.internal:1883}
+            - {Name: MQTT_PUBLIC_HOST, Value: !GetAtt MqttNlb.DNSName}
+            - {Name: MQTT_PUBLIC_PORT, Value: '8883'}
+            - {Name: HTTP_PUBLIC_URL, Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'}
+            - {Name: CORS_ORIGINS, Value: !Ref ConsoleOrigin}
+            - {Name: CONSOLE_URL, Value: !Ref ConsoleOrigin}
+            - {Name: GOOGLE_CLIENT_ID, Value: !Ref GoogleClientId}
+          Secrets:
+            - {Name: DATABASE_URL, ValueFrom: !Ref DatabaseUrlSecret}
+            - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecret}
+            - {Name: INTERNAL_HOOK_TOKEN, ValueFrom: !Ref HookTokenSecret}
+            - {Name: MQTT_SERVICE_PASSWORD, ValueFrom: !Ref MqttPasswordSecret}
+          PortMappings:
+            - {Name: api, ContainerPort: 3000, Protocol: tcp}
+            - {Name: broker-hooks, ContainerPort: 3001, Protocol: tcp}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApiLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: api
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: arc-cloud-worker
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref BackendImage
+          Essential: true
+          Environment:
+            - {Name: NODE_ENV, Value: production}
+            - {Name: ARC_ROLE, Value: worker}
+            - {Name: MQTT_URL, Value: mqtt://broker.arc.internal:1883}
+            - {Name: MQTT_SERVICE_USERNAME, Value: arc-ingest}
+            - {Name: WORKER_ID, Value: aws-ingest-1}
+            - {Name: DEVICE_RATE_PER_SEC, Value: '5'}
+            - {Name: DEVICE_BURST, Value: '20'}
+            - {Name: CONSOLE_URL, Value: !Ref ConsoleOrigin}
+          Secrets:
+            - {Name: DATABASE_URL, ValueFrom: !Ref DatabaseUrlSecret}
+            - {Name: MQTT_SERVICE_PASSWORD, ValueFrom: !Ref MqttPasswordSecret}
+          PortMappings:
+            - {Name: worker-health, ContainerPort: 9100, Protocol: tcp}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+
+  BrokerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: arc-cloud-emqx
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: emqx
+          Image: !Ref EmqxImage
+          Essential: true
+          Environment:
+            - {Name: API_HOOKS_URL, Value: http://api.arc.internal:3001}
+            - {Name: EMQX_NODE__NAME, Value: emqx@127.0.0.1}
+          Secrets:
+            - {Name: INTERNAL_HOOK_TOKEN, ValueFrom: !Ref HookTokenSecret}
+            - {Name: EMQX_DASHBOARD__DEFAULT_PASSWORD, ValueFrom: !Ref DashboardPasswordSecret}
+            - {Name: MQTT_TLS_CA_B64, ValueFrom: !Sub '${MqttTlsSecret}:ca::'}
+            - {Name: MQTT_TLS_CERT_B64, ValueFrom: !Sub '${MqttTlsSecret}:cert::'}
+            - {Name: MQTT_TLS_KEY_B64, ValueFrom: !Sub '${MqttTlsSecret}:key::'}
+          PortMappings:
+            - {Name: mqtt-tls, ContainerPort: 8883, Protocol: tcp}
+            - {Name: mqtt-internal, ContainerPort: 1883, Protocol: tcp}
+            - {Name: emqx-dashboard, ContainerPort: 18083, Protocol: tcp}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref BrokerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: emqx
+
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn: ApiNlbListener
+    Properties:
+      ServiceName: api
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref ApiTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref ApiSecurityGroup]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ApiDiscovery.Arn
+      LoadBalancers:
+        - {ContainerName: api, ContainerPort: 3000, TargetGroupArn: !Ref ApiPrivateTargetGroup}
+
+  ApiVpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: arc-cloud-api-link
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref ApiGatewayLinkSecurityGroup]
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: arc-cloud-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref ConsoleOrigin]
+        AllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+        AllowHeaders: [authorization, content-type]
+        MaxAge: 3600
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref ApiNlbListener
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref ApiVpcLink
+      PayloadFormatVersion: '1.0'
+      RequestParameters:
+        'overwrite:path': '$request.path'
+      TimeoutInMillis: 30000
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${HttpApiIntegration}'
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn: HttpApiRoute
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/arc-cloud'
+        Format: '$context.requestId $context.httpMethod $context.routeKey status=$context.status integration=$context.integrationStatus latency=$context.integrationLatency error=$context.integrationErrorMessage'
+
+  MqttTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: arc-cloud-mqtt
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: TCP
+      Port: 8883
+      HealthCheckEnabled: true
+      HealthCheckProtocol: TCP
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: '30'}
+
+  ApiPrivateTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: arc-cloud-api-int
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: TCP
+      Port: 3000
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health/ready
+      Matcher: {HttpCode: '200-399'}
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: '30'}
+
+  MqttNlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: arc-cloud-mqtt
+      Scheme: internet-facing
+      Type: network
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref MqttNlbSecurityGroup]
+      LoadBalancerAttributes:
+        - {Key: load_balancing.cross_zone.enabled, Value: 'true'}
+
+  ApiNlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: arc-cloud-api-int
+      Scheme: internal
+      Type: network
+      Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroups: [!Ref ApiNlbSecurityGroup]
+      LoadBalancerAttributes:
+        - {Key: load_balancing.cross_zone.enabled, Value: 'true'}
+
+  MqttNlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MqttNlb
+      Port: 8883
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MqttTargetGroup
+
+  ApiNlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApiNlb
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ApiPrivateTargetGroup
+
+  BrokerService:
+    Type: AWS::ECS::Service
+    DependsOn: MqttNlbListener
+    Properties:
+      ServiceName: emqx
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref BrokerTaskDefinition
+      DesiredCount: 0
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref BrokerSecurityGroup]
+      LoadBalancers:
+        - {ContainerName: emqx, ContainerPort: 8883, TargetGroupArn: !Ref MqttTargetGroup}
+      ServiceRegistries:
+        - RegistryArn: !GetAtt BrokerDiscovery.Arn
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: worker
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref WorkerTaskDefinition
+      DesiredCount: 0
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref WorkerSecurityGroup]
+
+Outputs:
+  HttpApiUrl:
+    Description: HTTPS API URL. Keep Railway as the active client endpoint until AWS validation is complete.
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  MqttHost:
+    Description: AWS MQTT host; its TLS certificate must include this exact hostname.
+    Value: !GetAtt MqttNlb.DNSName
+  MqttPort:
+    Value: '8883'
+  EcsClusterName:
+    Value: !Ref EcsCluster
+  DatabaseEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+  ApiInternalNlbDnsName:
+    Description: Internal API load balancer used only by the API Gateway VPC link.
+    Value: !GetAtt ApiNlb.DNSName
+  MqttTlsSecretArn:
+    Description: JSON secret with ca, cert, and key base64 fields. Populate after generating a certificate for MqttHost.
+    Value: !Ref MqttTlsSecret
