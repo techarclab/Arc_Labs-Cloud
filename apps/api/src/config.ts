@@ -25,6 +25,14 @@ const schema = z.object({
   /** Public base URL of this API, shown in HTTP examples (e.g. http://192.168.1.20:3000). */
   HTTP_PUBLIC_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default(''),
+  /**
+   * Accept device keys in the URL (?api_key=…), as ThingSpeak does. URLs are written to proxy and load
+   * balancer logs, so set this to false in production once firmware sends the Authorization header.
+   */
+  DEVICE_KEY_IN_QUERY: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   /** Comma-separated emails of ARC LABS staff who manage plans for every organization. */
   PLATFORM_ADMIN_EMAILS: z.string().default(''),
 });

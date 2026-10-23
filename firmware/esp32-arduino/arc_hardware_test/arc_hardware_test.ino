@@ -18,6 +18,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include "arc_roots.h"   // public root CAs: the server certificate is always verified
 
 // ---------------- your settings ----------------
 const char *WIFI_SSID     = "your-wifi-name";        // 2.4 GHz network (ESP32 can't join 5 GHz)
@@ -39,7 +40,7 @@ bool checkedServer = false, checkedKey = false, checkedControls = false, checked
 void line() { Serial.println(F("------------------------------------------------------------")); }
 
 void explain(int code, const String &body) {
-  if (code < 0) Serial.printf("   Can't reach the server (%s).\n   Check SERVER, and that this Wi-Fi has internet.\n", HTTPClient::errorToString(code).c_str());
+  if (code < 0) Serial.printf("   Can't reach the server (%s).\n   Check SERVER, that this Wi-Fi has internet, and that the server's certificate chains to a root in arc_roots.h.\n", HTTPClient::errorToString(code).c_str());
   else if (code == 401) Serial.println(F("   401: the API_KEY is wrong. Copy it again from the device page (or Replace password)."));
   else if (code == 403) Serial.println(F("   403: this device is suspended or revoked. Mark it active on its device page."));
   else if (code == 404) Serial.println(F("   404: wrong address, or the control field \"led\" doesn't exist in Channel settings."));
@@ -52,11 +53,12 @@ void explain(int code, const String &body) {
 // One HTTP(S) request. Returns the status code; the body goes into *out.
 int request(const char *method, const String &url, const String &json, String *out) {
   WiFiClientSecure tls;
-  tls.setInsecure();  // encrypted; add a CA with tls.setCACert() to also verify the server
+  tls.setCACert(ARC_PUBLIC_ROOTS);  // encrypted AND the server is authenticated (no setInsecure)
   HTTPClient http;
   http.setTimeout(10000);
   bool ok = url.startsWith("https://") ? http.begin(tls, url) : http.begin(url);
   if (!ok) return -1;
+  http.addHeader("Authorization", String("Bearer ") + API_KEY);  // the key never goes in the URL
   int code;
   if (strcmp(method, "POST") == 0) {
     http.addHeader("content-type", "application/json");
@@ -69,7 +71,8 @@ int request(const char *method, const String &url, const String &json, String *o
   return code;
 }
 
-String keyed(const char *path) { return String(SERVER) + path + (strchr(path, '?') ? "&" : "?") + "api_key=" + API_KEY; }
+// Full URL for an API path. The device key travels in the Authorization header (see request()).
+String keyed(const char *path) { return String(SERVER) + path; }
 
 // Tiny JSON readers for the command message (avoids an extra library).
 String jsonString(const String &j, const char *key) {
@@ -122,7 +125,7 @@ void checkServer() {
 void sendReadings() {
   int button = digitalRead(BUTTON_PIN) == LOW ? 1 : 0;
   String url = keyed("/api/v1/update") +
-               "&field1=" + String(temperatureRead(), 1) +
+               "?field1=" + String(temperatureRead(), 1) +
                "&field2=" + String(WiFi.RSSI()) +
                "&field3=" + String(millis() / 60000.0, 1) +
                "&field4=" + String(ESP.getFreeHeap() / 1024) +
