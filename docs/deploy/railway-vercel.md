@@ -68,7 +68,13 @@ HTTP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
 CORS_ORIGINS=https://CHANGE-ME.vercel.app
 GOOGLE_CLIENT_ID=<Google OAuth Web client ID>
 ALLOW_SIGNUP=true
+EMQX_API_URL=http://emqx.railway.internal:18083
+EMQX_API_KEY=${{shared.EMQX_API_KEY}}
+EMQX_API_SECRET=${{shared.EMQX_API_SECRET}}
+DEVICE_KEY_IN_QUERY=true
 ```
+
+`EMQX_API_*` let the API disconnect a device the moment it is revoked, rotated, suspended or retired. Add `EMQX_API_KEY=arc-api` and `EMQX_API_SECRET=<openssl rand -hex 32>` to **Shared Variables** first. Set `DEVICE_KEY_IN_QUERY=false` once every HTTP device sends `Authorization: Bearer KEY` (firmware in this repo does).
 
 To enable Google sign-in, configure the app’s OAuth consent/branding and create a client of type **Web application** in Google Cloud Console. Add your console URL under **Authorized JavaScript origins** (also add `http://localhost:3002` for local development), then set its client ID as `GOOGLE_CLIENT_ID` on the Railway `api` service (and in `.env` for local Docker). The client ID is public; no client secret is needed for this sign-in flow. Redeploy the API after setting it.
 
@@ -88,6 +94,8 @@ RAILWAY_DOCKERFILE_PATH=Dockerfile.emqx
 INTERNAL_HOOK_TOKEN=${{shared.INTERNAL_HOOK_TOKEN}}
 API_HOOKS_URL=http://api.railway.internal:3001
 EMQX_DASHBOARD__DEFAULT_PASSWORD=<another random value>
+EMQX_API_KEY=${{shared.EMQX_API_KEY}}
+EMQX_API_SECRET=${{shared.EMQX_API_SECRET}}
 ```
 
 3. **Settings → Networking → TCP Proxy**, port **8883**. Railway shows an address like `xxxx.proxy.rlwy.net:12345`. Write down the domain and the port.
@@ -164,7 +172,7 @@ People whose emails are in `PLATFORM_ADMIN_EMAILS` on the `api` service (comma-s
 1. Open the Vercel URL, create your account, then your organization and channel.
 2. Once your team has accounts, set `ALLOW_SIGNUP=false` on the Railway `api` service.
 3. Devices:
-   - **HTTP (simplest):** the device's "HTTP API" tab shows the `https://…/api/v1/update?api_key=…` URL. In `firmware/esp32-arduino/arc_http`, set `SERVER` to `https://<api-domain>` and use `WiFiClientSecure` (or `setInsecure()` just for testing).
+   - **HTTP (simplest):** the device's "HTTP API" tab shows the request with the key in the `Authorization` header. In `firmware/esp32-arduino/arc_http`, set `SERVER` to `https://<api-domain>`. The sketch verifies the server certificate against the public roots in `arc_roots.h`. If it can't connect, check which root your domain chains to (`openssl s_client -connect <api-domain>:443 -servername <api-domain> </dev/null`) and make sure it is in `arc_roots.h`.
    - **MQTT:** the device file now points at the Railway TCP proxy. Test from your laptop with
      `npm run simulate -- --creds <file>.json --ca infra/certs/out/ca.crt`
      For an ESP32, paste `infra/certs/out/ca.crt` into `config.h`.

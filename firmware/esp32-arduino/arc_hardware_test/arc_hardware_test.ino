@@ -53,7 +53,7 @@ void explain(int code, const String &body) {
 // One HTTP(S) request. Returns the status code; the body goes into *out.
 int request(const char *method, const String &url, const String &json, String *out) {
   WiFiClientSecure tls;
-  tls.setCACert(ARC_PUBLIC_ROOTS);  // encrypted AND the server is authenticated (no setInsecure)
+  tls.setCACert(ARC_PUBLIC_ROOTS);  // encrypted AND the server is authenticated
   HTTPClient http;
   http.setTimeout(10000);
   bool ok = url.startsWith("https://") ? http.begin(tls, url) : http.begin(url);
