@@ -99,6 +99,13 @@ dig api.arcloud.arclabs.in +short @ns12.wixdns.net
 dig mqtt.arcloud.arclabs.in +short @ns12.wixdns.net
 ```
 
+> **Remove the old `arcloud` CNAME first (it points to Vercel).** AWS checks which certificate authorities may
+> issue for `arcloud.arclabs.in`. Through a CNAME it reads the *target's* CAA records, and Vercel's allow only
+> Let's Encrypt, GlobalSign, Sectigo and Google, so ACM fails with `CAA_ERROR`. Delete the CNAME in Wix, wait until
+> `dig arcloud.arclabs.in @8.8.8.8 +short` returns nothing (cached for up to 1 hour), then run the full apply. The
+> console is offline from the deletion until the CloudFront CNAME is added at the end of step 5.
+> If ACM already failed: `terraform apply -replace=aws_acm_certificate.console` requests a fresh certificate.
+
 ## 5. Create everything else
 
 ```bash
