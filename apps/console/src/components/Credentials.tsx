@@ -19,14 +19,25 @@ function configH(device: Device, c: Credentials) {
 #define TOPIC_COMMANDS   "${c.topics.commands ?? ''}"
 #define TOPIC_ACK        "${c.topics.commandAcks ?? ''}"
 
-#define FIRMWARE_VERSION    "1.0.0"
+#define DEVICE_TYPE         "${device.deviceType}"   // OTA releases target this device type
+#define FIRMWARE_VERSION    "1.0.0"   // MAJOR.MINOR.PATCH; bump for every release (devices refuse downgrades)
 #define PUBLISH_INTERVAL_MS ${device.expectedIntervalSeconds * 1000}
 
-// Paste the contents of infra/certs/out/ca.crt here.
-static const char CA_CERT[] = R"PEM(
+// Broker certificate check. Hosted ARC Cloud: keep ARC_PUBLIC_ROOTS.
+// Local Docker: paste infra/certs/out/ca.crt into DEV_CA_CERT and use DEV_CA_CERT instead.
+#define BROKER_CA ARC_PUBLIC_ROOTS
+static const char DEV_CA_CERT[] = R"PEM(
 -----BEGIN CERTIFICATE-----
 ...
 -----END CERTIFICATE-----
+)PEM";
+
+// OTA signing public key: node tools/firmware-sign.mjs header firmware-signing-public.pem
+// Until it is set, this device refuses every firmware update.
+static const char OTA_PUBLIC_KEY_PEM[] = R"PEM(
+-----BEGIN PUBLIC KEY-----
+...
+-----END PUBLIC KEY-----
 )PEM";
 `;
 }
@@ -90,7 +101,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       {tab === 'esp32' && (
         <>
           <p>
-            Save this as <code>config.h</code> next to <code>arc_device.ino</code> (in <code>firmware/esp32-arduino/arc_device</code>), then fill in your Wi-Fi and the certificate.
+            Save this as <code>config.h</code> next to <code>arc_device.ino</code> (in <code>firmware/esp32-arduino/arc_device</code>), then fill in your Wi-Fi and the OTA signing key.
           </p>
           <pre className="code">{configH(device, credentials)}</pre>
           <div className="row">
@@ -104,7 +115,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       {tab === 'http' && credentials.http && (
         <>
           <p>
-            Like ThingSpeak: send readings with a web request. The device’s password is its API key. Use your computer’s Wi-Fi address instead of <code>localhost</code> when calling from an ESP32.
+            Like ThingSpeak: send readings with a web request. The device’s password is its API key; send it in the <code>Authorization</code> header, not in the URL (URLs end up in proxy and server logs). Use your computer’s Wi-Fi address instead of <code>localhost</code> when calling from an ESP32.
           </p>
           <dl className="secret">
             <dt>API key</dt>
@@ -113,14 +124,14 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
               <CopyButton text={credentials.http.apiKey} />
             </span>
             <dt>Send data</dt>
-            <dd>{`${credentials.http.updateUrl}?api_key=${credentials.http.apiKey}&field1=25.4`}</dd>
+            <dd>{`curl -H "Authorization: Bearer ${credentials.http.apiKey}" "${credentials.http.updateUrl}?field1=25.4"`}</dd>
             <span onClick={() => setSaved(true)}>
-              <CopyButton text={`${credentials.http.updateUrl}?api_key=${credentials.http.apiKey}&field1=25.4`} />
+              <CopyButton text={`curl -H "Authorization: Bearer ${credentials.http.apiKey}" "${credentials.http.updateUrl}?field1=25.4"`} />
             </span>
             <dt>Read controls</dt>
-            <dd>{`${credentials.http.controlsUrl}?api_key=${credentials.http.apiKey}`}</dd>
+            <dd>{`curl -H "Authorization: Bearer ${credentials.http.apiKey}" "${credentials.http.controlsUrl}"`}</dd>
             <span onClick={() => setSaved(true)}>
-              <CopyButton text={`${credentials.http.controlsUrl}?api_key=${credentials.http.apiKey}`} />
+              <CopyButton text={`curl -H "Authorization: Bearer ${credentials.http.apiKey}" "${credentials.http.controlsUrl}"`} />
             </span>
           </dl>
           <p className="small muted">The ESP32 example for HTTP is in <code>firmware/esp32-arduino/arc_http</code>.</p>

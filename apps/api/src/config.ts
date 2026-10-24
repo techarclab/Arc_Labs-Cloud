@@ -22,9 +22,24 @@ const schema = z.object({
   MQTT_PUBLIC_PORT: z.coerce.number().int().default(8883),
   /** Broker URL the API uses to push control values (service account). Optional. */
   MQTT_URL: z.string().optional(),
+  /**
+   * EMQX management API (private network only), used to disconnect devices the moment they are revoked,
+   * rotated, suspended or retired. Optional: without it the broker's 30 s authorization cache bounds the delay.
+   */
+  EMQX_API_URL: z.string().trim().optional().transform((v) => v || undefined),
+  EMQX_API_KEY: z.string().trim().optional().transform((v) => v || undefined),
+  EMQX_API_SECRET: z.string().trim().optional().transform((v) => v || undefined),
   /** Public base URL of this API, shown in HTTP examples (e.g. http://192.168.1.20:3000). */
   HTTP_PUBLIC_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default(''),
+  /**
+   * Accept device keys in the URL (?api_key=…), as ThingSpeak does. URLs are written to proxy and load
+   * balancer logs, so set this to false in production once firmware sends the Authorization header.
+   */
+  DEVICE_KEY_IN_QUERY: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   /** Comma-separated emails of ARC LABS staff who manage plans for every organization. */
   PLATFORM_ADMIN_EMAILS: z.string().default(''),
 });

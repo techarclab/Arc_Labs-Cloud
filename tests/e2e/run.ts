@@ -39,6 +39,21 @@ async function main() {
   const procs: ChildProcess[] = [];
   const { server, broker } = await startBroker();
   const sinks = await startSinks();
+  // Stand-in for the EMQX management API: DELETE /api/v5/clients/{id} with HTTP Basic (an API key).
+  const EMQX_KEY = 'e2e-emqx-key', EMQX_SECRET = 'e2e-emqx-secret-0123456789abcdef';
+  const kicked: string[] = [];
+  const emqxAdmin = (await import('node:http')).createServer((req, res) => {
+    if (req.headers.authorization !== `Basic ${Buffer.from(`${EMQX_KEY}:${EMQX_SECRET}`).toString('base64')}`) return void res.writeHead(401).end();
+    const m = /^\/api\/v5\/clients\/([^/?]+)$/.exec(req.url ?? '');
+    if (req.method !== 'DELETE' || !m) return void res.writeHead(404).end();
+    const id = decodeURIComponent(m[1]);
+    kicked.push(id);
+    const client = (broker as any).clients?.[id];
+    if (!client) return void res.writeHead(404).end();
+    client.close();
+    res.writeHead(204).end();
+  });
+  await new Promise<void>((r) => emqxAdmin.listen(18184, '127.0.0.1', r));
   try {
     const env = {
       ...SECRETS,
@@ -53,6 +68,9 @@ async function main() {
       NODE_ENV: 'test',
       ALLOW_PRIVATE_WEBHOOKS: 'true',
       CONSOLE_URL: 'http://console.test',
+      EMQX_API_URL: 'http://127.0.0.1:18184',
+      EMQX_API_KEY: EMQX_KEY,
+      EMQX_API_SECRET: EMQX_SECRET,
     };
     procs.push(spawnSvc('api', 'apps/api/dist/main.js', env));
     await waitFor(async () => (await fetch(`${API}/health/ready`)).ok, 'API');
@@ -227,6 +245,61 @@ async function main() {
         assert.equal((await http('GET', p, tB)).status, 404, p);
       }
     });
+    await check('row-level security: the database itself hides other tenants (tenant role)', async () => {
+      const { Client } = await import('pg');
+      const c = new Client({ connectionString: DB });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query(`SELECT set_config('role', 'arc_tenant', true), set_config('arc.org_ids', $1, true)`, [orgB.id]);
+        // No WHERE on organization: RLS alone must hide org A's rows from a session scoped to org B.
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM devices WHERE id = $1', [dev.id])).rows[0].n, 0, 'devices');
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM projects WHERE id = $1', [proj.id])).rows[0].n, 0, 'projects');
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM telemetry_measurements WHERE device_id = $1', [dev.id])).rows[0].n, 0, 'telemetry');
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM device_credentials WHERE device_id = $1', [dev.id])).rows[0].n, 0, 'credentials');
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM metric_definitions WHERE project_id = $1', [proj.id])).rows[0].n, 0, 'fields');
+        await assert.rejects(c.query(`INSERT INTO devices (organization_id, project_id, display_name) VALUES ($1, $2, 'x')`, [orgA.id, proj.id]), /row-level security/);
+        await c.query('ROLLBACK');
+        await c.query('BEGIN');
+        await c.query(`SELECT set_config('role', 'arc_tenant', true)`); // no organizations pinned → sees nothing
+        assert.equal((await c.query('SELECT count(*)::int AS n FROM devices')).rows[0].n, 0, 'unscoped tenant sees nothing');
+        await c.query('ROLLBACK');
+      } finally {
+        await c.end();
+      }
+    });
+    await check('every tenant table has row-level security (guards future migrations)', async () => {
+      const missing = await sql(`
+        SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
+          AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN ('organization_id', 'project_id', 'device_id', 'alert_id'))
+          AND NOT (c.relname = 'telemetry_measurements' AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'))
+        ORDER BY 1`);
+      assert.deepEqual(missing.map((r: any) => r.relname), [], 'add a tenant_isolation policy in the migration that creates these tables');
+    });
+    await check('API requests run as the RLS-restricted role, pinned to the caller\'s organizations', async () => {
+      // A temporary trigger records which role and organizations the API's own write ran under.
+      await sql(`CREATE TABLE rls_probe (who text, orgs text)`);
+      await sql(`GRANT INSERT ON rls_probe TO arc_tenant`);
+      await sql(`CREATE FUNCTION rls_probe_fn() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN INSERT INTO rls_probe VALUES (current_user, current_setting('arc.org_ids', true)); RETURN NEW; END $$`);
+      await sql(`CREATE TRIGGER rls_probe_t AFTER INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION rls_probe_fn()`);
+      try {
+        const r = await http('PATCH', `/api/v1/devices/${dev.id}`, tA, { displayName: 'ESP32 #1' });
+        assert.ok(r.status < 300, JSON.stringify(r.body));
+        const rows = await sql('SELECT who, orgs FROM rls_probe');
+        assert.ok(rows.length >= 1, 'the request wrote an audit row');
+        for (const row of rows) {
+          assert.equal(row.who, 'arc_tenant');
+          assert.ok(row.orgs.split(',').includes(orgA.id) && !row.orgs.split(',').includes(orgB.id), row.orgs);
+        }
+      } finally {
+        await sql('DROP TRIGGER rls_probe_t ON audit_logs');
+        await sql('DROP FUNCTION rls_probe_fn()');
+        await sql('DROP TABLE rls_probe');
+      }
+    });
     await check('other tenant cannot create devices in, or rotate devices of, another org', async () => {
       assert.equal((await http('POST', '/api/v1/devices', tB, { projectId: proj.id, displayName: 'evil' })).status, 404);
       assert.equal((await http('POST', `/api/v1/devices/${dev.id}/rotate-credentials`, tB)).status, 404);
@@ -244,17 +317,28 @@ async function main() {
     });
 
     console.log('\nCredential lifecycle');
-    await check('rotation: old password stops working, new one works', async () => {
+    await check('rotation: old password stops working, new one works, and the live session is cut', async () => {
+      const live = await connectDevice(creds);
+      const closed = new Promise<void>((r) => live.once('close', () => r()));
       const r = await http('POST', `/api/v1/devices/${dev.id}/rotate-credentials`, tA);
       assert.equal(r.status, 200);
+      await Promise.race([closed, sleep(3000).then(() => { throw new Error('session still open after rotation'); })]);
+      live.end(true);
+      assert.ok(kicked.includes(dev.id), 'API asked the broker to disconnect the device');
       await assert.rejects(connectDevice(creds));
       const c = await connectDevice(r.body.credentials);
       await pub(c, creds.topics.telemetry, telemetry({ temperatureC: 31 }));
       c.end();
       creds.password = r.body.credentials.password;
     });
-    await check('revocation blocks connection and ACL', async () => {
+    await check('revocation disconnects the live session at once, then blocks connection and ACL', async () => {
+      const live = await connectDevice(creds);
+      const closed = new Promise<void>((r) => live.once('close', () => r()));
+      const before = kicked.length;
       assert.equal((await http('POST', `/api/v1/devices/${dev.id}/revoke`, tA, { reason: 'e2e' })).status, 200);
+      await Promise.race([closed, sleep(3000).then(() => { throw new Error('session still open after revocation'); })]);
+      live.end(true);
+      assert.equal(kicked.length, before + 1);
       await assert.rejects(connectDevice(creds));
       assert.equal((await hook('/internal/mqtt/authorize', { username: dev.id, topic: creds.topics.telemetry, action: 'publish' })).result, 'deny');
     });
@@ -296,6 +380,11 @@ async function main() {
       await sleep(1100);
       const post = await fetch(`${API}/api/v1/update`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key2 }, body: JSON.stringify({ humidityPct: 57 }) });
       assert.equal(post.status, 200);
+      await sleep(1100);
+      // Preferred: key in the Authorization header, nothing secret in the URL.
+      const bearer = await fetch(`${API}/api/v1/update?field2=58`, { headers: { authorization: `Bearer ${key2}` } });
+      assert.equal(bearer.status, 200, await bearer.text());
+      assert.equal((await fetch(`${API}/api/v1/update?field2=58`, { headers: { authorization: 'Bearer not-a-real-key-123456' } })).status, 401);
       assert.equal((await fetch(httpUrl('api_key=not-a-real-key-123456&field1=1'))).status, 401);
       await sleep(1100);
       assert.equal((await fetch(httpUrl(`api_key=${key2}&field1=hot`))).status, 400);
@@ -385,6 +474,7 @@ async function main() {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
     server.close();
+    emqxAdmin.close();
     await sinks.close();
   }
 
@@ -473,7 +563,7 @@ async function eventually<T>(fn: () => Promise<T | undefined | null | false>, wh
 
 async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; proj: any; dev2: any; key2: string; sinks: Sinks }) {
   const { tA, tB, orgA, orgB, proj, dev2, key2, sinks } = ctx;
-  const { createHmac, generateKeyPairSync, sign, createHash } = await import('node:crypto');
+  const { createHmac, generateKeyPairSync, sign, verify, createHash } = await import('node:crypto');
   const httpSend = async (q: string) => {
     await sleep(1100); // per-device HTTP rate limit (1/s)
     const r = await fetch(`${API}/api/v1/update?api_key=${encodeURIComponent(key2)}&${q}`);
@@ -736,15 +826,26 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     const again = await fetch(`${API}/api/v1/commands/${s.body.id}/ack?api_key=${encodeURIComponent(key2)}`, { method: 'POST' });
     assert.equal(again.status, 404, 'cannot ack twice');
   });
+  await check('OTA signing keys: P-256 is device-verifiable; legacy Ed25519 accepted; RSA refused', async () => {
+    const ed = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const edKey = await http('POST', '/api/v1/firmware/signing-keys', tA, { organizationId: orgA.id, name: 'Legacy key', publicKeyPem: ed });
+    assert.equal(edKey.status, 201, JSON.stringify(edKey.body));
+    assert.equal(edKey.body.algorithm, 'ed25519');
+    assert.equal(edKey.body.deviceVerifiable, false);
+    const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    assert.equal((await http('POST', '/api/v1/firmware/signing-keys', tA, { organizationId: orgA.id, name: 'RSA', publicKeyPem: rsa })).status, 400);
+  });
   await check('OTA: unsigned/mis-signed releases refused; signed staged rollout completes', async () => {
-    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
     const pem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
     const key = await http('POST', '/api/v1/firmware/signing-keys', tA, { organizationId: orgA.id, name: 'Release key', publicKeyPem: pem });
     assert.equal(key.status, 201, JSON.stringify(key.body));
+    assert.equal(key.body.algorithm, 'ecdsa-p256');
+    assert.equal(key.body.deviceVerifiable, true);
     const m = { deviceType: 'esp32-pump', version: '2.0.0', url: 'https://firmware.arclabs.test/pump-2.0.0.bin', sha256: createHash('sha256').update('fw').digest('hex'), sizeBytes: 1048576 };
     const canonical = JSON.stringify({ deviceType: m.deviceType, sha256: m.sha256, sizeBytes: m.sizeBytes, url: m.url, version: m.version });
-    const signature = sign(null, Buffer.from(canonical), privateKey).toString('base64');
-    const badSig = sign(null, Buffer.from(canonical.replace('2.0.0', '2.0.1')), privateKey).toString('base64');
+    const signature = sign('sha256', Buffer.from(canonical), { key: privateKey, dsaEncoding: 'der' }).toString('base64');
+    const badSig = sign('sha256', Buffer.from(canonical.replace('2.0.0', '2.0.1')), { key: privateKey, dsaEncoding: 'der' }).toString('base64');
     assert.equal((await http('POST', '/api/v1/firmware/releases', tA, { organizationId: orgA.id, ...m, signature: badSig, signingKeyId: key.body.id })).status, 400);
     const rel = await http('POST', '/api/v1/firmware/releases', tA, { organizationId: orgA.id, ...m, signature, signingKeyId: key.body.id });
     assert.equal(rel.status, 201, JSON.stringify(rel.body));
@@ -757,6 +858,9 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     const ota = await eventually(async () => received.find((x) => x.name === 'ota.update'), 'OTA command');
     assert.equal(ota.payload.version, '2.0.0');
     assert.equal(ota.payload.signature, signature);
+    // Devices verify the signature over exactly these bytes and read url/sha256/version only from them.
+    assert.equal(ota.payload.manifest, canonical);
+    assert.ok(verify('sha256', Buffer.from(ota.payload.manifest), { key: publicKey, dsaEncoding: 'der' }, Buffer.from(ota.payload.signature, 'base64')));
     await pub(c3!, d3.credentials.topics.telemetry.replace(/telemetry$/, 'cmd-ack'), { commandId: ota.commandId, status: 'ok' });
     await pub(c3!, d3.credentials.topics.telemetry, { ...telemetry({ temperatureC: 21 }), metadata: { firmwareVersion: '2.0.0' } });
     // d4 updates over the same rails (simulate its report).

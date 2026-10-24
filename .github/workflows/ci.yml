@@ -61,3 +61,51 @@ jobs:
       - name: No secrets committed
         run: |
           ! git ls-files | grep -E '(^|/)(\.env|device[^/]*\.json|railway-variables\.txt|.*-private\.pem)$|infra/certs/out/'
+
+  firmware-crypto:
+    # The device's OTA signature check (C/mbedTLS) must accept exactly what the signing tool and API produce.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get install -y -q libmbedtls-dev g++ >/dev/null
+      - run: node tests/firmware/run.mjs
+
+  firmware-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ARDUINO_CLI_VERSION: 1.5.1
+      ESP32_CORE: 3.3.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install arduino-cli, ESP32 core and libraries (pinned)
+        run: |
+          curl -fsSL -o /tmp/cli.tgz "https://github.com/arduino/arduino-cli/releases/download/v${ARDUINO_CLI_VERSION}/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz"
+          sudo tar xzf /tmp/cli.tgz -C /usr/local/bin arduino-cli
+          arduino-cli config init --additional-urls "https://github.com/espressif/arduino-esp32/releases/download/${ESP32_CORE}/package_esp32_index.json"
+          arduino-cli core update-index
+          arduino-cli core install "esp32:esp32@${ESP32_CORE}"
+          arduino-cli lib install "ArduinoJson@7.4.3" "PubSubClient@2.8" "DHT sensor library@1.4.7" "Adafruit Unified Sensor@1.1.15"
+      - name: config.h from the template, with a throwaway P-256 OTA key
+        run: |
+          openssl ecparam -name prime256v1 -genkey -noout -out /tmp/k.pem
+          openssl ec -in /tmp/k.pem -pubout -out /tmp/pub.pem
+          python3 - <<'PY'
+          s = open('firmware/esp32-arduino/arc_device/config.example.h').read()
+          s = s.replace('-----BEGIN PUBLIC KEY-----\n...paste firmware-signing-public.pem here...\n-----END PUBLIC KEY-----', open('/tmp/pub.pem').read().strip())
+          open('firmware/esp32-arduino/arc_device/config.h', 'w').write(s)
+          PY
+      - name: Compile every sketch (ESP32), and the OTA-capable ones for ESP32-S3
+        run: |
+          for s in arc_device arc_http arc_dht_sensor arc_hardware_test; do
+            arduino-cli compile --warnings all -b esp32:esp32:esp32 "firmware/esp32-arduino/$s"
+          done
+          for s in arc_device arc_http; do
+            arduino-cli compile --warnings all -b esp32:esp32:esp32s3 "firmware/esp32-arduino/$s"
+          done
+      - name: Firmware must never skip TLS verification or put keys in URLs
+        run: |
+          ! grep -rn "setInsecure\|api_key=" firmware/esp32-arduino --include=*.ino --include=*.h

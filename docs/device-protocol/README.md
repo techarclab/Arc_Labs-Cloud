@@ -59,27 +59,41 @@ A reserved command sent by firmware rollouts:
 
 ```json
 { "type": "command", "name": "ota.update", "commandId": "…",
-  "payload": { "deviceType": "esp32", "version": "1.2.0", "url": "https://…/fw.bin", "sha256": "…", "sizeBytes": 1048576, "signature": "…", "rolloutId": "…" } }
+  "payload": {
+    "manifest": "{\"deviceType\":\"esp32\",\"sha256\":\"…\",\"sizeBytes\":1048576,\"url\":\"https://…/fw.bin\",\"version\":\"1.2.0\"}",
+    "signature": "MEUCIQ…",
+    "signingKeyId": "…", "rolloutId": "…",
+    "deviceType": "esp32", "version": "1.2.0", "url": "https://…/fw.bin", "sha256": "…", "sizeBytes": 1048576 } }
 ```
 
-The cloud has already verified the Ed25519 `signature` over the manifest. The device downloads `url`, checks size and SHA-256, installs, acks `ok`, restarts and reports the new `firmwareVersion` (telemetry `metadata` or `state`). The rollout counts a device as succeeded only when it reports the new version. On any mismatch the device acks `error` and keeps its current firmware. Example: `firmware/esp32-arduino/arc_device/arc_ota.h`.
+**Device rules (do not skip any):**
+
+1. Verify `signature` (ECDSA P-256 over SHA-256, DER, base64) over the exact bytes of `manifest` with the OTA public key **compiled into the firmware**. The cloud also checks it, but the device must not trust the cloud, broker or network for firmware integrity.
+2. Read `url`, `sha256`, `sizeBytes`, `version` and `deviceType` **only from the signed `manifest`**. The loose copies next to it are for display and older firmware.
+3. Refuse a `deviceType` other than your own, and any `version` that is not newer than the running one (MAJOR.MINOR.PATCH, compared numerically). This stops a replayed old, signed release from downgrading the device.
+4. Download over certificate-verified HTTPS, check size and SHA-256 while writing, and switch the boot partition only when both match.
+5. After rebooting into the new image, mark it valid only once it has reached the cloud, and roll back if it never does. The reference firmware does this (5-minute window), using the Arduino-ESP32 3.x bootloader's rollback support.
+
+Then ack `ok`, restart and report the new `firmwareVersion` (telemetry `metadata` or `state`). The rollout counts a device as succeeded only when it reports the new version. If a check fails, ack `error` with the reason and keep the current firmware. Reference implementation: `firmware/esp32-arduino/arc_device/arc_ota.h` and `arc_ota_verify.h`. CI cross-checks it against `tools/firmware-sign.mjs` (`tests/firmware`).
+
+Signing: `node tools/firmware-sign.mjs keygen` (P-256 by default), add the public key under **Firmware → Signing keys**, put it in the firmware with `node tools/firmware-sign.mjs header firmware-signing-public.pem`, and sign each image with `node tools/firmware-sign.mjs sign …`. Keep the private key offline (a password manager or hardware token, or a protected CI secret), never in the repo. Ed25519 keys registered earlier still work server-side, but the reference firmware can't verify them, so migrate to P-256.
 
 ## HTTP API (ThingSpeak-style)
 
-For devices that don't use MQTT. The key is the device password (shown once when the device is added).
+For devices that don't use MQTT. The key is the device password (shown once when the device is added). Send it as a header, `Authorization: Bearer KEY` (or `X-API-Key: KEY`), never in the URL: URLs are recorded in proxy, load balancer and server logs. HTTPS only, with the server certificate verified (the reference sketches pin public root CAs in `arc_roots.h`).
 
 | Request | What it does |
 |---|---|
-| `GET/POST /api/v1/update?api_key=KEY&field1=23.5&field2=60` | Send readings. `fieldN` maps to field number N in Channel settings; names (`&temperature=23.5`) work too. Optional `created_at` (ISO time). At most 1 request/second per device. |
-| `GET /api/v1/controls?api_key=KEY` | All control values as JSON, e.g. `{"relay":1,"fanSpeed":40}`. Also marks the device as seen. |
-| `GET /api/v1/controls?api_key=KEY&field=relay` | One control value as plain text (`1`). `field=field3` works too. |
-| `GET /api/v1/channels/{channelId}/feeds.json?api_key=READ_KEY&results=100` | Read the channel's data (also `feeds.csv`). Optional `device`, `start`, `end`. |
-| `GET /api/v1/commands/next?api_key=KEY` | Oldest pending command (`{commandId,name,payload,expiresAt}`), or `204` when there is none. |
-| `POST /api/v1/commands/{commandId}/ack?api_key=KEY` | Body `{"status":"ok"}` or `{"status":"error","error":"…"}`. |
+| `GET/POST /api/v1/update?field1=23.5&field2=60` | Send readings. `fieldN` maps to field number N in Channel settings; names (`&temperature=23.5`) work too. Optional `created_at` (ISO time). At most 1 request/second per device. |
+| `GET /api/v1/controls` | All control values as JSON, e.g. `{"relay":1,"fanSpeed":40}`. Also marks the device as seen. |
+| `GET /api/v1/controls?field=relay` | One control value as plain text (`1`). `field=field3` works too. |
+| `GET /api/v1/channels/{channelId}/feeds.json?results=100` | Read the channel's data (also `feeds.csv`) with the channel **read** key in `X-API-Key` (or `?api_key=`: it is read-only and rotatable). Optional `device`, `start`, `end`. |
+| `GET /api/v1/commands/next` | Oldest pending command (`{commandId,name,payload,expiresAt}`), or `204` when there is none. |
+| `POST /api/v1/commands/{commandId}/ack` | Body `{"status":"ok"}` or `{"status":"error","error":"…"}`. |
 
 Add `&firmware_version=1.2.0` to `/update` so firmware rollouts can confirm HTTP devices.
 
-The key can also be sent as an `X-API-Key` header. Use HTTPS in production.
+ThingSpeak-style `?api_key=KEY` in the URL still works while the API runs with `DEVICE_KEY_IN_QUERY=true` (the default, for existing devices). Set it to `false` in production once your firmware sends the header; the API then answers `401 api_key_in_url_disabled`.
 
 ## Telemetry payload
 

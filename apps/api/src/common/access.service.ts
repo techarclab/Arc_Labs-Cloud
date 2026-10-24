@@ -46,7 +46,7 @@ export class AccessService {
     return project;
   }
 
-  async requireDevice(user: AuthUser, deviceId: string, min: OrgRole, q: Queryable = this.db.pool) {
+  async requireDevice(user: AuthUser, deviceId: string, min: OrgRole, q: Queryable = this.db.scoped) {
     const res = await q.query('SELECT * FROM devices WHERE id = $1', [deviceId]);
     const device = res.rows[0];
     if (!device) throw new NotFoundException({ code: 'not_found' });

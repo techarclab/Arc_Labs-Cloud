@@ -7,6 +7,8 @@ import { validateTelemetry } from '@arc/shared';
 import type { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { AccessService } from '../common/access.service';
+import { loadConfig } from '../config';
+import { extractDeviceKey } from './device-key';
 import { apiKeyHash, safeEqual, UUID_RE } from '../common/crypto';
 import { Public } from '../common/http';
 import { INGESTIBLE, IngestDevice, IngestService } from '../common/ingest.service';
@@ -47,12 +49,13 @@ function toNumber(v: unknown): number | null {
 /**
  * ThingSpeak/Blynk-style HTTP API for devices that don't use MQTT.
  *
- *   GET or POST /api/v1/update?api_key=KEY&field1=23.5&field2=60
- *   GET         /api/v1/controls?api_key=KEY            → {"relay":1,"brightness":40}
- *   GET         /api/v1/controls?api_key=KEY&field=relay → 1   (plain text)
- *   GET         /api/v1/channels/{id}/feeds.json?api_key=READ_KEY&results=100   (also feeds.csv)
+ *   GET or POST /api/v1/update?field1=23.5&field2=60          (header: Authorization: Bearer KEY)
+ *   GET         /api/v1/controls                             → {"relay":1,"brightness":40}
+ *   GET         /api/v1/controls?field=relay                 → 1   (plain text)
+ *   GET         /api/v1/channels/{id}/feeds.json?results=100 (header: X-API-Key: READ_KEY; also feeds.csv)
  *
- * KEY is the device's password from registration. Use HTTPS in production: the key travels in the request.
+ * KEY is the device's password from registration. HTTPS only in production. ?api_key=KEY in the URL still
+ * works for ThingSpeak-style clients unless DEVICE_KEY_IN_QUERY=false (recommended in production).
  */
 @ApiTags('Device HTTP API')
 @Controller('api/v1')
@@ -114,11 +117,7 @@ export class DeviceHttpController {
   }
 
   private apiKey(req: Request): string {
-    const q = req.query.api_key ?? (req.body && typeof req.body === 'object' ? (req.body as any).api_key : undefined);
-    const h = req.headers['x-api-key'] ?? req.headers['thingspeakapikey'];
-    const key = (Array.isArray(q) ? q[0] : q) ?? (Array.isArray(h) ? h[0] : h);
-    if (typeof key !== 'string' || key.length < 16 || key.length > 128) throw new UnauthorizedException({ code: 'missing_api_key', message: 'Add ?api_key=YOUR_DEVICE_KEY to the URL.' });
-    return key;
+    return extractDeviceKey(req as any, loadConfig().DEVICE_KEY_IN_QUERY);
   }
 
   private async deviceFor(key: string): Promise<IngestDevice> {
@@ -224,7 +223,9 @@ export class DeviceHttpController {
   async feeds(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
     if (!UUID_RE.test(id)) throw new NotFoundException({ code: 'not_found' });
     const project = await this.db.one('SELECT * FROM projects WHERE id = $1', [id]);
-    const readKey = typeof req.query.api_key === 'string' ? req.query.api_key : null;
+    // Read key: X-API-Key header (preferred) or ?api_key= (ThingSpeak-compatible; it is a read-only, rotatable key).
+    const headerKey = req.headers['x-api-key'];
+    const readKey = typeof headerKey === 'string' ? headerKey : typeof req.query.api_key === 'string' ? req.query.api_key : null;
     if (readKey) {
       if (!project || !safeEqual(readKey, project.read_api_key)) throw new UnauthorizedException({ code: 'invalid_api_key', message: 'Wrong read API key for this channel.' });
     } else {

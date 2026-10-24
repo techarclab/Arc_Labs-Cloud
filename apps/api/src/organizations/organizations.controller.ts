@@ -1,4 +1,5 @@
 import { ApiTags } from '@nestjs/swagger';
+import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Doc } from '../common/docs';
 import { Body, ConflictException, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
@@ -38,6 +39,8 @@ export class OrganizationsController {
   ) {}
 
   @Doc('Create', { body: createBody })
+  /** Runs without row-level security: the caller is not yet a member of the organization being created. */
+  @SystemDb()
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     requirePerson(user);

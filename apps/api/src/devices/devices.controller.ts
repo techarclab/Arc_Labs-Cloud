@@ -6,6 +6,7 @@ import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AccessService } from '../common/access.service';
+import { BrokerAdmin } from '../common/broker-admin.service';
 import { AuditService } from '../common/audit.service';
 import { apiKeyHash, generateSecret, hashSecret } from '../common/crypto';
 import { MqttPublisher } from '../common/mqtt-publisher.service';
@@ -81,6 +82,7 @@ export class DevicesController {
     private readonly access: AccessService,
     private readonly audit: AuditService,
     private readonly mqtt: MqttPublisher,
+    private readonly broker: BrokerAdmin,
   ) {}
 
   /** Registers a device and issues its unique MQTT credential. The password is returned only once. */
@@ -178,10 +180,11 @@ export class DevicesController {
       await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.credentials.rotate', resourceType: 'device', resourceId: id }, c);
       return d;
     });
+    await this.broker.disconnect(id); // the old password is dead: end any session that used it
     return { device: this.map(device), credentials: this.credentials(device, password) };
   }
 
-  /** Permanently revokes the device and its credentials. Existing sessions are rejected on next auth/ACL check. */
+  /** Permanently revokes the device and its credentials, and disconnects its live broker session. */
   @Doc('Revoke', { body: z.object({ reason: z.string().max(500).optional() }) })
   @Post(':id/revoke')
   @HttpCode(200)
@@ -196,6 +199,7 @@ export class DevicesController {
       await emitEvent(c, d.organization_id, 'device.revoked', { deviceId: id, projectId: d.project_id, name: d.display_name, reason: reason ?? null });
       return updated;
     });
+    await this.broker.disconnect(id);
     return this.map(device);
   }
 
@@ -216,6 +220,7 @@ export class DevicesController {
       await this.audit.record({ ...actor(user), organizationId: d.organization_id, action: 'device.lifecycle', resourceType: 'device', resourceId: id, metadata: input }, c);
       return updated;
     });
+    if (input.status === 'suspended' || input.status === 'retired') await this.broker.disconnect(id);
     return this.map(device);
   }
 
