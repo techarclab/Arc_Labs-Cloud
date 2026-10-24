@@ -16,7 +16,7 @@ variable "environment" {
 
 variable "zone_name" {
   type        = string
-  description = "Subdomain delegated from Wix to Route 53. The console lives at its apex."
+  description = "Console hostname; the API and broker live at api.<this> and mqtt.<this>. DNS records are added in Wix."
   default     = "arcloud.arclabs.in"
 }
 

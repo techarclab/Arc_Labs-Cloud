@@ -6,7 +6,7 @@ Devices/scripts ──HTTPS──▶ api.arcloud.arclabs.in  ├─ EC2 t4g.medi
                                                    │    Caddy (Let's Encrypt) → API · EMQX · worker
                                                    └──▶ RDS PostgreSQL 16 db.t4g.micro (private subnets)
 Browsers ──HTTPS──▶ arcloud.arclabs.in ──▶ CloudFront ──▶ S3 (console)
-DNS: arclabs.in stays on Wix; arcloud.arclabs.in is delegated to Route 53.
+DNS: all records stay in Wix (Wix has no NS records for subdomains, so there is no Route 53 zone).
 ```
 
 Account `756751967044` ("ARC Cloud", a member account of the ARC LABS AWS Organization; never the management account), region `ap-south-1` (Mumbai). Terraform: `infra/terraform/{bootstrap,pilot}`. Server runtime: `deploy/aws/`.
@@ -19,7 +19,7 @@ Account `756751967044` ("ARC Cloud", a member account of the ARC LABS AWS Organi
 | Elastic IP (public IPv4 $0.005/h) | ~$3.7 |
 | EBS gp3 30 GB | ~$3 |
 | RDS db.t4g.micro Single-AZ + 20 GB gp3 + backups | ~$18 |
-| Route 53 zone, Secrets Manager (2 secrets), S3, CloudFront, CloudWatch logs | ~$3 |
+| Secrets Manager (2 secrets), S3, CloudFront, CloudWatch logs | ~$2.5 |
 | **Total** | **~$43 ≈ ₹4,100, ≈ ₹4,850 with 18% GST (AWS India)** |
 
 Notes:
@@ -43,8 +43,7 @@ Notes:
 - **An administrator identity in the ARC Cloud account (`756751967044`).** IAM Identity Center user `Arc_Labs` with the AdministratorAccess permission set on that account. Configure the CLI with `aws configure sso --profile arc-admin`: portal `https://d-96679036fe.awsapps.com/start`, SSO region `ap-southeast-1` (Identity Center lives in Singapore), account **ARC Cloud**, default region `ap-south-1`.
   - **Never use root access keys.**
   - Never paste keys into chat or commit them.
-- **Access to Wix DNS for `arclabs.in`.**
-- **A maintenance window of about one hour.** The console at `arcloud.arclabs.in` is unreachable between steps 4 and 6. The old console stays reachable at its `*.vercel.app` address.
+- **Access to Wix DNS for `arclabs.in`** (you add 4 records there).
 
 ## 1. Bootstrap (once per account)
 
@@ -69,25 +68,37 @@ cp terraform.tfvars.example terraform.tfvars      # set alert_email; it is git-i
 terraform init -backend-config="bucket=arc-cloud-tfstate-756751967044"
 ```
 
-## 3. Create the DNS zone first
+## 3. Reserve the server address and request the console certificate
 
 ```bash
-terraform apply -target=aws_route53_zone.main
-terraform output wix_ns_records
+terraform apply -target=aws_eip.server -target=aws_acm_certificate.console
+terraform output wix_records
 ```
 
-## 4. Delegate `arcloud.arclabs.in` from Wix
+The output has two lists:
+- `step_1_before_full_apply`: a CNAME for certificate validation, and A records for `api.arcloud` and `mqtt.arcloud`.
+- `step_2_after_full_apply`: the console CNAME, for later.
 
-In **Wix → Domains → arclabs.in → Manage DNS records**:
+## 4. Add the step-1 records in Wix
 
-1. **Delete** the existing `CNAME` record for `arcloud` (it points to Vercel).
-2. **Add four `NS` records**, host name `arcloud`, one for each name server printed in step 3.
-3. Leave every other record (the website, email) untouched. Do **not** change the nameservers of `arclabs.in` itself.
+In **Wix → Domains → arclabs.in → Manage DNS records**, add every record from `step_1_before_full_apply`:
 
-Check delegation (it may take minutes to a few hours):
+| Section | Host name (type exactly as printed) | Value |
+|---|---|---|
+| CNAME | `_<long id>.arcloud` | `_<long id>.<…>.acm-validations.aws` |
+| A (Host) | `api.arcloud` | the Elastic IP |
+| A (Host) | `mqtt.arcloud` | the Elastic IP |
+
+- Wix appends `.arclabs.in` itself, so type only the host shown.
+- Leave TTL at the default.
+- **Keep the validation CNAME forever:** ACM uses it to renew the console certificate.
+- **Never click "Use custom nameservers"** (that moves all of `arclabs.in` away from Wix, taking the website and email with it).
+
+Check from Terminal (each must answer):
 
 ```bash
-dig NS arcloud.arclabs.in +short        # must list the four awsdns servers
+dig api.arcloud.arclabs.in +short @ns12.wixdns.net
+dig mqtt.arcloud.arclabs.in +short @ns12.wixdns.net
 ```
 
 ## 5. Create everything else
@@ -96,19 +107,20 @@ dig NS arcloud.arclabs.in +short        # must list the four awsdns servers
 terraform apply
 ```
 
-This takes about 20–40 minutes. It does the following, in order:
+This takes about 20–40 minutes and does the following, in order:
 
-1. It waits until the console certificate validates. **That proves the Wix delegation works.**
-2. It then creates RDS (~10 min), CloudFront (~5–15 min) and the server.
+1. Waits until the console certificate validates. This proves the Wix CNAME is live.
+2. Creates RDS (~10 min), CloudFront (~5–15 min) and the server.
 3. The server's first boot takes about 10 more minutes:
    - installs Docker;
    - builds the images;
-   - gets Let's Encrypt certificates for `api.` and `mqtt.`;
+   - gets Let's Encrypt certificates for `api.` and `mqtt.` (through the A records);
    - runs the database migrations;
    - starts the stack.
 
 Then:
 
+- **Point the console at AWS.** In Wix, edit the existing `arcloud` CNAME and replace the Vercel value with the CloudFront name from `terraform output wix_records` (`step_2_after_full_apply`). The old Vercel console stays live until this edit, so the downtime is only DNS caching (≤ 1 hour).
 - **Confirm the SNS subscription email** that AWS sends to `alert_email`. No alarm reaches you until you do.
 - **Check the server:**
   ```bash
@@ -215,4 +227,4 @@ Next step at that point: the load-balanced design in the target ADR, which needs
 - **Instance metadata:** IMDSv2 only, hop limit 1, so containers cannot use the server's IAM role.
 - **Terraform state** contains the generated app secrets. The bucket is private, encrypted, versioned and TLS-only. Treat state access as secret access.
 - **Database user:** the app currently connects as the RDS master user. It is not a superuser, and row-level security still applies through `arc_tenant`. Moving to a dedicated least-privilege login is a follow-up.
-- **Certificate issuance:** CAA records allow only Let's Encrypt and Amazon to issue certificates under `arcloud.arclabs.in`.
+- **Certificate issuance (optional hardening):** Wix's DNS editor shows no CAA records. If it ever offers them, add `0 issue "letsencrypt.org"` and `0 issue "amazon.com"` for `arcloud.arclabs.in`.

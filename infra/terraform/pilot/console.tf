@@ -10,20 +10,14 @@ resource "aws_acm_certificate" "console" {
   }
 }
 
-resource "aws_route53_record" "console_cert_validation" {
-  for_each = { for o in aws_acm_certificate.console.domain_validation_options : o.domain_name => o }
-  zone_id  = aws_route53_zone.main.zone_id
-  name     = each.value.resource_record_name
-  type     = each.value.resource_record_type
-  ttl      = 300
-  records  = [each.value.resource_record_value]
-}
-
-# Waits until the Wix NS delegation is live; run the zone first (docs/deploy/aws-pilot.md, step 3).
+# DNS for arclabs.in stays in Wix (Wix offers no NS records for subdomains, so no Route 53 zone).
+# This waits until the validation CNAME from `terraform output wix_records` has been added in Wix.
 resource "aws_acm_certificate_validation" "console" {
-  provider                = aws.us_east_1
-  certificate_arn         = aws_acm_certificate.console.arn
-  validation_record_fqdns = [for r in aws_route53_record.console_cert_validation : r.fqdn]
+  provider        = aws.us_east_1
+  certificate_arn = aws_acm_certificate.console.arn
+  timeouts {
+    create = "2h"
+  }
 }
 
 resource "aws_s3_bucket" "console" {
@@ -187,16 +181,4 @@ data "aws_iam_policy_document" "console_bucket" {
 resource "aws_s3_bucket_policy" "console" {
   bucket = aws_s3_bucket.console.id
   policy = data.aws_iam_policy_document.console_bucket.json
-}
-
-resource "aws_route53_record" "console" {
-  for_each = toset(["A", "AAAA"])
-  zone_id  = aws_route53_zone.main.zone_id
-  name     = var.zone_name
-  type     = each.value
-  alias {
-    name                   = aws_cloudfront_distribution.console.domain_name
-    zone_id                = aws_cloudfront_distribution.console.hosted_zone_id
-    evaluate_target_health = false
-  }
 }
