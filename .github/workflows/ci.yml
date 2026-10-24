@@ -109,3 +109,27 @@ jobs:
       - name: Firmware must never skip TLS verification or put keys in URLs
         run: |
           ! grep -rn "setInsecure\|api_key=" firmware/esp32-arduino --include=*.ino --include=*.h
+
+  infra:
+    # Terraform for the AWS pilot: formatting + validation against the real AWS provider schema (no credentials),
+    # the production compose file, and the server scripts.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.13.2
+      - name: Terraform fmt + validate
+        run: |
+          for s in bootstrap pilot; do
+            (cd "infra/terraform/$s" && tofu fmt -check && tofu init -backend=false -input=false >/dev/null && tofu validate)
+          done
+      - name: Server scripts (shellcheck) and env writer
+        run: |
+          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh infra/emqx/entrypoint.sh
+          python3 -m py_compile deploy/aws/write-env.py
+      - name: Production compose file renders
+        run: |
+          sudo mkdir -p /etc/arc-cloud && sudo touch /etc/arc-cloud/{api,worker,emqx}.env
+          ACME_EMAIL=a@example.com API_HOST=api.example.com MQTT_HOST=mqtt.example.com \
+            docker compose -f deploy/aws/docker-compose.yml config --quiet

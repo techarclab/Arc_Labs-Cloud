@@ -42,7 +42,9 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 
 ## Deploying
 
-GitHub → Railway (broker, API, worker, Postgres) + Vercel (console): see **[docs/deploy/railway-vercel.md](docs/deploy/railway-vercel.md)**. AWS: `docs/aws/deployment.md`.
+- **AWS pilot (Mumbai, ≈ ₹5,000/month):** one server (Caddy + EMQX + API + worker) + RDS PostgreSQL + console on CloudFront, all in Terraform: **[docs/deploy/aws-pilot.md](docs/deploy/aws-pilot.md)**.
+- GitHub → Railway (broker, API, worker, Postgres) + Vercel (console): [docs/deploy/railway-vercel.md](docs/deploy/railway-vercel.md).
+- Larger load-balanced AWS layout for later: `docs/aws/deployment.md`.
 
 ## Quick start (Docker)
 
