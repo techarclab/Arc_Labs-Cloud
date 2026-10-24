@@ -155,6 +155,20 @@ Then:
 
 Open `https://arcloud.arclabs.in`.
 
+If the workflow fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, compare the subject
+GitHub sent with the one the role trusts (`github_oidc_subject` in `deploy_role.tf`):
+
+```bash
+aws cloudtrail lookup-events --region ap-south-1 \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithWebIdentity \
+  --max-results 5 --query 'Events[].CloudTrailEvent' --output json \
+| python3 -c "import sys,json; [print(json.loads(e)['userIdentity'].get('userName'), '|', json.loads(e).get('errorCode')) for e in json.load(sys.stdin)]"
+```
+
+This repository's tokens use the ID-based form `repo:techarclab@166861876/Arc_Labs-Cloud@1415316437:environment:pilot`.
+For a fork or another repository, set `github_repository`, `github_owner_id` and `github_repository_id`
+(`gh api repos/OWNER/NAME --jq '.owner.id, .id'`).
+
 ## 7. Lock down sign-up and set operators
 
 Register the first admin account in the console. Then, on the server (`aws ssm start-session …`):

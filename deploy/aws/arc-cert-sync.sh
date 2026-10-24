@@ -19,7 +19,12 @@ done
 STORE=/opt/arc-cloud-data/caddy/caddy/certificates
 DST=/opt/arc-cloud-data/mqtt-tls
 deadline=$((SECONDS + WAIT))
-find_cert() { find "$STORE" -path "*/$MQTT_HOST/$MQTT_HOST.crt" 2>/dev/null | head -n1; }
+# Caddy creates $STORE only after its first certificate. Under `set -o pipefail` a failing find (missing
+# directory) would abort the script silently inside the command substitution, so treat it as "not yet".
+find_cert() {
+  [ -d "$STORE" ] || return 0
+  find "$STORE" -path "*/$MQTT_HOST/$MQTT_HOST.crt" 2>/dev/null | head -n1 || true
+}
 
 CRT="$(find_cert)"
 until [ -n "$CRT" ] && [ -s "$CRT" ] && [ -s "${CRT%.crt}.key" ]; do
@@ -48,7 +53,7 @@ mv -f "$DST/server.crt.new" "$DST/server.crt"
 mv -f "$DST/ca.crt.new" "$DST/ca.crt"
 echo "[arc-cert-sync] installed new certificate for $MQTT_HOST: $(openssl x509 -in "$DST/server.crt" -noout -enddate 2>/dev/null || true)"
 
-if [ "$RESTART" -eq 1 ] && docker ps --format '{{.Names}}' | grep -q '^arc-cloud-emqx-1$'; then
+if [ "$RESTART" -eq 1 ] && [ -n "$(docker ps -q --filter 'name=^arc-cloud-emqx-1$')" ]; then
   docker restart arc-cloud-emqx-1 >/dev/null
   echo "[arc-cert-sync] restarted EMQX"
 fi

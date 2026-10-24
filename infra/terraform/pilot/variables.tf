@@ -58,6 +58,18 @@ variable "github_repository" {
   default     = "techarclab/Arc_Labs-Cloud"
 }
 
+variable "github_owner_id" {
+  type        = string
+  description = "Numeric GitHub ID of the repository owner: gh api repos/OWNER/NAME --jq .owner.id"
+  default     = "166861876"
+}
+
+variable "github_repository_id" {
+  type        = string
+  description = "Numeric GitHub ID of the repository: gh api repos/OWNER/NAME --jq .id"
+  default     = "1415316437"
+}
+
 variable "app_git_ref" {
   type        = string
   description = "Git branch/tag the server deploys on first boot. Later deploys pass a ref explicitly."
