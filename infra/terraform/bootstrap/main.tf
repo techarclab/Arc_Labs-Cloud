@@ -84,9 +84,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 
 data "aws_iam_policy_document" "state_tls_only" {
   statement {
-    sid     = "DenyInsecureTransport"
-    effect  = "Deny"
-    actions = ["s3:*"]
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
     resources = [aws_s3_bucket.state.arn, "${aws_s3_bucket.state.arn}/*"]
     principals {
       type        = "*"

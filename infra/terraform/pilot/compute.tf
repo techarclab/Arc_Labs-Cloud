@@ -83,18 +83,18 @@ resource "aws_instance" "server" {
     git_repository = var.github_repository
     git_ref        = var.app_git_ref
     config = {
-      AWS_REGION         = var.region
-      APP_SECRET_ARN     = aws_secretsmanager_secret.app.arn
-      DB_SECRET_ARN      = aws_db_instance.main.master_user_secret[0].secret_arn
-      DB_HOST            = aws_db_instance.main.address
-      DB_PORT            = tostring(aws_db_instance.main.port)
-      DB_NAME            = aws_db_instance.main.db_name
-      API_HOST           = local.api_host
-      MQTT_HOST          = local.mqtt_host
-      CONSOLE_ORIGIN     = "https://${var.zone_name}"
-      ACME_EMAIL         = var.alert_email
-      LOG_GROUP          = aws_cloudwatch_log_group.app.name
-      GIT_REPOSITORY     = var.github_repository
+      AWS_REGION     = var.region
+      APP_SECRET_ARN = aws_secretsmanager_secret.app.arn
+      DB_SECRET_ARN  = aws_db_instance.main.master_user_secret[0].secret_arn
+      DB_HOST        = aws_db_instance.main.address
+      DB_PORT        = tostring(aws_db_instance.main.port)
+      DB_NAME        = aws_db_instance.main.db_name
+      API_HOST       = local.api_host
+      MQTT_HOST      = local.mqtt_host
+      CONSOLE_ORIGIN = "https://${var.zone_name}"
+      ACME_EMAIL     = var.alert_email
+      LOG_GROUP      = aws_cloudwatch_log_group.app.name
+      GIT_REPOSITORY = var.github_repository
     }
   })
   user_data_replace_on_change = false # app updates go through deploy/aws/arc-deploy.sh, not instance replacement
