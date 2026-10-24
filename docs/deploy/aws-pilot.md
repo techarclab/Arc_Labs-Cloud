@@ -75,13 +75,11 @@ terraform apply -target=aws_eip.server -target=aws_acm_certificate.console
 terraform output wix_records
 ```
 
-The output has two lists:
-- `step_1_before_full_apply`: a CNAME for certificate validation, and A records for `api.arcloud` and `mqtt.arcloud`.
-- `step_2_after_full_apply`: the console CNAME, for later.
+It lists three records: a CNAME for certificate validation, and A records for `api.arcloud` and `mqtt.arcloud`.
 
 ## 4. Add the step-1 records in Wix
 
-In **Wix → Domains → arclabs.in → Manage DNS records**, add every record from `step_1_before_full_apply`:
+In **Wix → Domains → arclabs.in → Manage DNS records**, add the three records from `wix_records`:
 
 | Section | Host name (type exactly as printed) | Value |
 |---|---|---|
@@ -120,7 +118,7 @@ This takes about 20–40 minutes and does the following, in order:
 
 Then:
 
-- **Point the console at AWS.** In Wix, edit the existing `arcloud` CNAME and replace the Vercel value with the CloudFront name from `terraform output wix_records` (`step_2_after_full_apply`). The old Vercel console stays live until this edit, so the downtime is only DNS caching (≤ 1 hour).
+- **Point the console at AWS.** In Wix, edit the existing `arcloud` CNAME and replace the Vercel value with the CloudFront name from `terraform output wix_console_cname`. The old Vercel console stays live until this edit, so the downtime is only DNS caching (≤ 1 hour).
 - **Confirm the SNS subscription email** that AWS sends to `alert_email`. No alarm reaches you until you do.
 - **Check the server:**
   ```bash

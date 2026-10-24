@@ -1,19 +1,20 @@
+# Only depends on the Elastic IP and the certificate, so it is available after the targeted apply in step 3.
 output "wix_records" {
-  description = "Records to add in Wix → Domains → arclabs.in → Manage DNS records (host names WITHOUT .arclabs.in)."
-  value = {
-    step_1_before_full_apply = concat(
-      [for o in aws_acm_certificate.console.domain_validation_options : {
-        section = "CNAME", host = trimsuffix(trimsuffix(o.resource_record_name, "."), ".arclabs.in"), value = trimsuffix(o.resource_record_value, ".")
-      }],
-      [
-        { section = "A (Host)", host = trimsuffix(local.api_host, ".arclabs.in"), value = aws_eip.server.public_ip },
-        { section = "A (Host)", host = trimsuffix(local.mqtt_host, ".arclabs.in"), value = aws_eip.server.public_ip },
-      ]
-    )
-    step_2_after_full_apply = [
-      { section = "CNAME (replace the Vercel value)", host = trimsuffix(var.zone_name, ".arclabs.in"), value = try(aws_cloudfront_distribution.console.domain_name, "(created by the full apply)") },
+  description = "Add these in Wix → Domains → arclabs.in → Manage DNS records BEFORE the full apply (host names without .arclabs.in)."
+  value = concat(
+    [for o in aws_acm_certificate.console.domain_validation_options : {
+      section = "CNAME", host = trimsuffix(trimsuffix(o.resource_record_name, "."), ".arclabs.in"), value = trimsuffix(o.resource_record_value, ".")
+    }],
+    [
+      { section = "A (Host)", host = trimsuffix(local.api_host, ".arclabs.in"), value = aws_eip.server.public_ip },
+      { section = "A (Host)", host = trimsuffix(local.mqtt_host, ".arclabs.in"), value = aws_eip.server.public_ip },
     ]
-  }
+  )
+}
+
+output "wix_console_cname" {
+  description = "AFTER the full apply: in Wix, change the value of the existing 'arcloud' CNAME (Vercel) to this."
+  value       = { section = "CNAME", host = trimsuffix(var.zone_name, ".arclabs.in"), value = aws_cloudfront_distribution.console.domain_name }
 }
 
 output "server_public_ip" {
