@@ -1,0 +1,43 @@
+#!/bin/bash
+# First boot of the ARC Cloud server (Amazon Linux 2023, arm64). Rendered by Terraform.
+# Installs Docker + Compose, writes non-secret config, clones the app and runs the first deploy.
+# Secrets are NOT here: deploy/aws/arc-deploy.sh reads them from Secrets Manager at deploy time.
+set -euxo pipefail
+exec > >(tee -a /var/log/arc-bootstrap.log) 2>&1
+
+install -d -m 0755 /etc/arc-cloud /opt/arc-cloud-data
+cat > /etc/arc-cloud/config <<'CFG'
+%{ for k, v in config ~}
+${k}=${v}
+%{ endfor ~}
+CFG
+chmod 0644 /etc/arc-cloud/config
+
+# The Elastic IP is attached just after launch; until then there is no route to the internet.
+for _ in $(seq 1 60); do curl -fsS --max-time 5 https://checkip.amazonaws.com >/dev/null && break; sleep 5; done
+
+dnf -y install docker git python3
+COMPOSE_VERSION=v5.6.1
+COMPOSE_SHA256=42cfa75f51ad0ccf290bad37899e0038a8c10a0069e85233ecc1d53e3ff1347d
+install -d /usr/local/lib/docker/cli-plugins
+curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
+  "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-aarch64"
+echo "$COMPOSE_SHA256  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c -
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Container logs go to CloudWatch Logs (14-day retention), not the local disk.
+install -d /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "awslogs",
+  "log-opts": { "awslogs-region": "${region}", "awslogs-group": "${log_group}", "tag": "{{.Name}}" }
+}
+JSON
+systemctl enable --now docker
+
+# CA bundle for verifying the RDS certificate (sslmode=verify-full).
+curl -fsSL -o /opt/arc-cloud-data/rds-ca.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+
+git clone --depth 1 --branch "${git_ref}" "https://github.com/${git_repository}.git" /opt/arc-cloud
+install -m 0755 /opt/arc-cloud/deploy/aws/arc-deploy.sh /usr/local/bin/arc-deploy
+/usr/local/bin/arc-deploy "${git_ref}"

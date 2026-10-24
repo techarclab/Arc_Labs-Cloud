@@ -1,0 +1,8 @@
+[Unit]
+Description=Copy the renewed MQTT TLS certificate from Caddy to EMQX
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arc-cert-sync

@@ -17,3 +17,11 @@ backups/
 *-private.pem
 firmware-signing-private.pem
 firmware/esp32-arduino/my_*/
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl.bak
+crash.log
