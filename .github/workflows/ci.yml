@@ -133,3 +133,14 @@ jobs:
           sudo mkdir -p /etc/arc-cloud && sudo touch /etc/arc-cloud/{api,worker,emqx}.env
           ACME_EMAIL=a@example.com API_HOST=api.example.com MQTT_HOST=mqtt.example.com \
             docker compose -f deploy/aws/docker-compose.yml config --quiet
+
+  images:
+    # Builds the production images. The API/worker Dockerfile ends with tools/check-runtime-deps.cjs, so a
+    # runtime dependency missing from the final image fails here instead of crash-looping on a server.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: API / worker image
+        run: |
+          docker build -f Dockerfile -t arc-cloud-api:ci .
+          docker run --rm --entrypoint node arc-cloud-api:ci -e "require('zod'); require('pg'); console.log('ok')"
