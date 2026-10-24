@@ -1,0 +1,84 @@
+# ARC Cloud on a single AWS server (see docs/deploy/aws-pilot.md). Started by /usr/local/bin/arc-deploy.
+# Database: RDS (not in this file). Secrets: /etc/arc-cloud/{api,worker,emqx}.env, written by arc-deploy from
+# Secrets Manager. Each service gets only the secrets it needs.
+name: arc-cloud
+
+services:
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"     # Let's Encrypt HTTP-01 challenge + redirect to HTTPS
+      - "443:443"   # API
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      API_HOST: ${API_HOST}
+      MQTT_HOST: ${MQTT_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/arc-cloud-data/caddy:/data
+      - caddy-config:/config
+    mem_limit: 256m
+
+  api:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: unless-stopped
+    command: ["node", "apps/api/dist/main.js"]
+    env_file: /etc/arc-cloud/api.env
+    environment:
+      PORT: "3000"
+      INTERNAL_PORT: "3001"
+      RUN_MIGRATIONS: "false"          # migrations run as a one-off step in arc-deploy, before the new API starts
+      NODE_EXTRA_CA_CERTS: /certs/rds-ca.pem
+      TRUST_PROXY: "1"                 # exactly one proxy (Caddy) in front
+      MQTT_URL: mqtt://emqx:1883
+      EMQX_API_URL: http://emqx:18083
+    volumes:
+      - /opt/arc-cloud-data/rds-ca.pem:/certs/rds-ca.pem:ro
+    expose: ["3000", "3001"]           # reachable by Caddy and EMQX only; nothing published on the host
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    mem_limit: 768m
+
+  emqx:
+    build: { context: ../.., dockerfile: Dockerfile.emqx }
+    restart: unless-stopped
+    env_file: /etc/arc-cloud/emqx.env
+    environment:
+      API_HOOKS_URL: http://api:3001
+      EMQX_NODE__NAME: emqx@127.0.0.1
+    ports:
+      - "8883:8883"                    # devices: MQTT over TLS. 1883 and the 18083 dashboard stay internal.
+    volumes:
+      - /opt/arc-cloud-data/mqtt-tls:/opt/emqx/etc/certs/arc:ro   # Let's Encrypt cert, kept fresh by arc-cert-sync
+      - emqx-data:/opt/emqx/data
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 1g
+
+  worker:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: unless-stopped
+    command: ["node", "apps/ingestion-worker/dist/main.js"]
+    env_file: /etc/arc-cloud/worker.env
+    environment:
+      MQTT_URL: mqtt://emqx:1883
+      WORKER_ID: ingest-1
+      NODE_EXTRA_CA_CERTS: /certs/rds-ca.pem
+    volumes:
+      - /opt/arc-cloud-data/rds-ca.pem:/certs/rds-ca.pem:ro
+    depends_on:
+      emqx: { condition: service_healthy }
+    mem_limit: 512m
+
+volumes:
+  caddy-config:
+  emqx-data:

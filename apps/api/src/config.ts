@@ -32,6 +32,8 @@ const schema = z.object({
   /** Public base URL of this API, shown in HTTP examples (e.g. http://192.168.1.20:3000). */
   HTTP_PUBLIC_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGINS: z.string().default(''),
+  /** Number of reverse proxies in front of the API (1 behind Caddy or Railway). 0 = use the socket address. */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(3).default(0),
   /**
    * Accept device keys in the URL (?api_key=…), as ThingSpeak does. URLs are written to proxy and load
    * balancer logs, so set this to false in production once firmware sends the Authorization header.

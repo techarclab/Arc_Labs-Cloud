@@ -72,9 +72,10 @@ EMQX_API_URL=http://emqx.railway.internal:18083
 EMQX_API_KEY=${{shared.EMQX_API_KEY}}
 EMQX_API_SECRET=${{shared.EMQX_API_SECRET}}
 DEVICE_KEY_IN_QUERY=true
+TRUST_PROXY=1
 ```
 
-`EMQX_API_*` let the API disconnect a device the moment it is revoked, rotated, suspended or retired. Add `EMQX_API_KEY=arc-api` and `EMQX_API_SECRET=<openssl rand -hex 32>` to **Shared Variables** first. Set `DEVICE_KEY_IN_QUERY=false` once every HTTP device sends `Authorization: Bearer KEY` (firmware in this repo does).
+`EMQX_API_*` let the API disconnect a device the moment it is revoked, rotated, suspended or retired. Add `EMQX_API_KEY=arc-api` and `EMQX_API_SECRET=<openssl rand -hex 32>` to **Shared Variables** first. `TRUST_PROXY=1` makes rate limits apply per client behind Railway's proxy (without it every user shares one limit). Set `DEVICE_KEY_IN_QUERY=false` once every HTTP device sends `Authorization: Bearer KEY` (firmware in this repo does).
 
 To enable Google sign-in, configure the app’s OAuth consent/branding and create a client of type **Web application** in Google Cloud Console. Add your console URL under **Authorized JavaScript origins** (also add `http://localhost:3002` for local development), then set its client ID as `GOOGLE_CLIENT_ID` on the Railway `api` service (and in `.env` for local Docker). The client ID is public; no client secret is needed for this sign-in flow. Redeploy the API after setting it.
 
