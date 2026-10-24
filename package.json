@@ -2,7 +2,7 @@
   "name": "arc-cloud",
   "private": true,
   "version": "0.1.0",
-  "description": "ARC Cloud — multi-tenant IoT platform (MVP: identity, device registry, MQTT ingestion, telemetry)",
+  "description": "ARC Cloud \u2014 multi-tenant IoT platform (MVP: identity, device registry, MQTT ingestion, telemetry)",
   "workspaces": [
     "packages/*",
     "apps/*",
@@ -35,5 +35,8 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "multer": "2.5.0"
   }
 }
