@@ -19,7 +19,7 @@ variable "region" {
 variable "expected_account_id" {
   type        = string
   description = "Refuse to run against any other account (guards against a wrong AWS profile)."
-  default     = "682849161227"
+  default     = "756751967044"
 }
 
 provider "aws" {

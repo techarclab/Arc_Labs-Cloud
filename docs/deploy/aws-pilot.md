@@ -9,7 +9,7 @@ Browsers ──HTTPS──▶ arcloud.arclabs.in ──▶ CloudFront ──▶ 
 DNS: arclabs.in stays on Wix; arcloud.arclabs.in is delegated to Route 53.
 ```
 
-Account `682849161227`, region `ap-south-1` (Mumbai). Terraform: `infra/terraform/{bootstrap,pilot}`. Server runtime: `deploy/aws/`.
+Account `756751967044` ("ARC Cloud", a member account of the ARC LABS AWS Organization; never the management account), region `ap-south-1` (Mumbai). Terraform: `infra/terraform/{bootstrap,pilot}`. Server runtime: `deploy/aws/`.
 
 ## What it costs (on-demand list prices, ap-south-1)
 
@@ -40,7 +40,7 @@ Notes:
 ## You need
 
 - **AWS CLI v2 and Terraform ≥ 1.10 (or OpenTofu ≥ 1.10)** on your Mac.
-- **An administrator identity in the dedicated account, for the one-time setup only.** Use IAM Identity Center or an IAM admin user with MFA, and run `aws configure sso` or `aws configure --profile arc-admin`.
+- **An administrator identity in the ARC Cloud account (`756751967044`).** IAM Identity Center user `Arc_Labs` with the AdministratorAccess permission set on that account. Configure the CLI with `aws configure sso --profile arc-admin`: portal `https://d-96679036fe.awsapps.com/start`, SSO region `ap-southeast-1` (Identity Center lives in Singapore), account **ARC Cloud**, default region `ap-south-1`.
   - **Never use root access keys.**
   - Never paste keys into chat or commit them.
 - **Access to Wix DNS for `arclabs.in`.**
@@ -50,13 +50,13 @@ Notes:
 
 ```bash
 export AWS_PROFILE=arc-admin
-aws sts get-caller-identity            # must show 682849161227
+aws sts get-caller-identity            # must show 756751967044
 cd infra/terraform/bootstrap
 terraform init && terraform apply
 ```
 
 This creates:
-- the Terraform state bucket `arc-cloud-tfstate-682849161227` (versioned, encrypted, TLS-only);
+- the Terraform state bucket `arc-cloud-tfstate-756751967044` (versioned, encrypted, TLS-only);
 - the GitHub OIDC provider.
 
 Keep `infra/terraform/bootstrap/terraform.tfstate` safe (password manager or private drive). It holds no secrets, but you need it to change the bootstrap later.
@@ -66,7 +66,7 @@ Keep `infra/terraform/bootstrap/terraform.tfstate` safe (password manager or pri
 ```bash
 cd ../pilot
 cp terraform.tfvars.example terraform.tfvars      # set alert_email; it is git-ignored
-terraform init -backend-config="bucket=arc-cloud-tfstate-682849161227"
+terraform init -backend-config="bucket=arc-cloud-tfstate-756751967044"
 ```
 
 ## 3. Create the DNS zone first
