@@ -95,9 +95,13 @@ RAILWAY_DOCKERFILE_PATH=Dockerfile.emqx
 INTERNAL_HOOK_TOKEN=${{shared.INTERNAL_HOOK_TOKEN}}
 API_HOOKS_URL=http://api.railway.internal:3001
 EMQX_DASHBOARD__DEFAULT_PASSWORD=<another random value>
-EMQX_API_KEY=${{shared.EMQX_API_KEY}}
-EMQX_API_SECRET=${{shared.EMQX_API_SECRET}}
+ARC_EMQX_API_KEY=${{shared.EMQX_API_KEY}}
+ARC_EMQX_API_SECRET=${{shared.EMQX_API_SECRET}}
 ```
+
+On the `emqx` service these must be named `ARC_EMQX_API_*`, not `EMQX_API_*`: EMQX reads every `EMQX_*`
+variable as a config override and refuses to start on `EMQX_API_KEY` (`bad_value_for_struct … api_key`).
+(The image also accepts the old names and removes them before EMQX starts.)
 
 3. **Settings → Networking → TCP Proxy**, port **8883**. Railway shows an address like `xxxx.proxy.rlwy.net:12345`. Write down the domain and the port.
 4. Make the broker's TLS certificate for that domain. In Git Bash on your laptop:

@@ -82,8 +82,8 @@ write("worker.env", {
 })
 write("emqx.env", {
     "INTERNAL_HOOK_TOKEN": app["INTERNAL_HOOK_TOKEN"],
-    "EMQX_API_KEY": "arc-api",
-    "EMQX_API_SECRET": app["EMQX_API_SECRET"],
+    "ARC_EMQX_API_KEY": "arc-api",  # not EMQX_*: EMQX treats those as config overrides
+    "ARC_EMQX_API_SECRET": app["EMQX_API_SECRET"],
     "EMQX_DASHBOARD__DEFAULT_PASSWORD": app["EMQX_DASHBOARD_PASS"],
     "EMQX_NODE__COOKIE": app["EMQX_NODE_COOKIE"],
 })
