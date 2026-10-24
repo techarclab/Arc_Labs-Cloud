@@ -14,6 +14,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <DHT.h>
+#include "arc_roots.h"   // public root CAs: the server certificate is always verified
 
 // ---------- your settings ----------
 const char* WIFI_NAME = "your-wifi-name";          // must be 2.4 GHz
@@ -56,10 +57,11 @@ int lastLed = -2;  // -2 = never checked, -1 = not set, 0 = off, 1 = on
 // Asks ARC Cloud for the "led" control value and switches the LED. Prints only when it changes.
 void readLedSwitch() {
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(ARC_PUBLIC_ROOTS);
   HTTPClient http;
   http.setTimeout(10000);
-  http.begin(client, String(SERVER) + "/api/v1/controls?api_key=" + API_KEY + "&field=led");
+  http.begin(client, String(SERVER) + "/api/v1/controls?field=led");
+  http.addHeader("Authorization", String("Bearer ") + API_KEY);  // the key never goes in the URL
   int code = http.GET();
   if (code == 200) {
     String v = http.getString();
@@ -100,23 +102,23 @@ void loop() {
     return;
   }
 
-  String url = String(SERVER) + "/api/v1/update?api_key=" + API_KEY +
-               "&field1=" + String(temp, 1) +
+  String url = String(SERVER) + "/api/v1/update?field1=" + String(temp, 1) +
                "&field2=" + String(hum, 1) +
                "&field3=" + String(WiFi.RSSI());
 
   WiFiClientSecure client;
-  client.setInsecure();  // HTTPS without certificate check (fine for testing)
+  client.setCACert(ARC_PUBLIC_ROOTS);  // encrypted AND the server is authenticated
   HTTPClient http;
   http.setTimeout(10000);
   http.begin(client, url);
+  http.addHeader("Authorization", String("Bearer ") + API_KEY);
   int code = http.GET();
 
   Serial.printf("Temperature %.1f C   Humidity %.1f %%   -> ", temp, hum);
   if (code == 200) {
     Serial.println("sent to ARC Cloud (200 OK)");
   } else if (code < 0) {
-    Serial.println("can't reach the server: check the hotspot has internet and the SERVER address");
+    Serial.println("can't reach the server: check the hotspot has internet, the SERVER address, and that its certificate chains to a root in arc_roots.h");
   } else if (code == 401) {
     Serial.println("401: wrong API_KEY (copy it again from the device page)");
   } else if (code == 403) {

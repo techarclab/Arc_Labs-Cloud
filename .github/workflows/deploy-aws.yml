@@ -1,0 +1,85 @@
+# Deploys ARC Cloud to the AWS pilot (docs/deploy/aws-pilot.md). Manual, from the Actions tab.
+# Auth: GitHub OIDC → IAM role (no stored AWS keys). Only jobs in the "pilot" environment can assume the role,
+# so add required reviewers to that environment (Settings → Environments → pilot).
+name: Deploy (AWS pilot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to deploy
+        required: true
+        default: main
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-aws-pilot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: pilot
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ap-south-1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve the exact commit being deployed
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Server (API, broker, worker) via SSM
+        env:
+          INSTANCE_ID: ${{ vars.SERVER_INSTANCE_ID }}
+          SHA: ${{ steps.rev.outputs.sha }}
+        run: |
+          id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+                 --comment "arc-deploy $SHA" --timeout-seconds 600 \
+                 --parameters "{\"commands\":[\"/usr/local/bin/arc-deploy $SHA\"],\"executionTimeout\":[\"2400\"]}" \
+                 --query Command.CommandId --output text)
+          echo "SSM command $id"
+          for _ in $(seq 1 240); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 10
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text | tail -n 60
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text | tail -n 40
+          [ "$status" = Success ] || { echo "::error::server deploy $status"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build the console
+        env:
+          VITE_API_URL: ${{ vars.API_URL }}
+        run: |
+          test -n "$VITE_API_URL"
+          npm ci --no-audit --no-fund
+          npm run build -w @arc/console
+
+      - name: Upload the console and refresh CloudFront
+        env:
+          BUCKET: ${{ vars.CONSOLE_BUCKET }}
+          DISTRIBUTION: ${{ vars.CONSOLE_DISTRIBUTION_ID }}
+        run: |
+          # Hashed assets are immutable; index.html must always be revalidated.
+          aws s3 sync apps/console/dist/assets "s3://$BUCKET/assets" --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync apps/console/dist "s3://$BUCKET" --exclude "assets/*" --exclude index.html --cache-control "public,max-age=3600"
+          aws s3 cp apps/console/dist/index.html "s3://$BUCKET/index.html" --cache-control "no-cache"
+          aws s3 sync apps/console/dist "s3://$BUCKET" --delete --size-only
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths /index.html / >/dev/null

@@ -1,5 +1,7 @@
 # Moving ARC Cloud to AWS
 
+> **Current plan:** the budget pilot in [`docs/deploy/aws-pilot.md`](../deploy/aws-pilot.md) (single server + RDS, Terraform in `infra/terraform/`). This page describes the larger load-balanced layout to grow into.
+
 The local Docker stack maps onto AWS service-for-service. Do this in phase 6 (hardening) once the kickoff decisions in the design plan (device count, publish rate, retention, budget) are answered, because they decide instance sizes.
 
 ## Recommended layout
@@ -9,7 +11,7 @@ The local Docker stack maps onto AWS service-for-service. Do this in phase 6 (ha
 | `api` container | ECS Fargate service behind an Application Load Balancer (HTTPS via ACM). Only port 3000 is attached to the ALB. |
 | API port 3001 (broker hooks) | Same task, reachable only from the broker's security group; no ALB route. |
 | `ingestion-worker` | ECS Fargate service, 2+ tasks (shared subscription splits load), private subnets. |
-| `emqx` | EMQX on ECS (EC2 launch type) or EC2 behind a **Network Load Balancer** on 8883. TLS can terminate on EMQX with a cert for e.g. `mqtt.arclabs.in`. |
+| `emqx` | EMQX on ECS (EC2 launch type) or EC2 behind a **Network Load Balancer** on 8883. TLS can terminate on EMQX with a cert for e.g. `mqtt.arcloud.arclabs.in`. |
 | `db` (TimescaleDB) | See the database choice below. |
 | `.env` secrets | AWS Secrets Manager, injected into ECS task definitions. |
 | dev certs | Real certificate for the broker domain (Let's Encrypt or a public CA; ESP32s need a CA they trust). |

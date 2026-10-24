@@ -23,9 +23,20 @@ Controllers never trust an organization ID from the client for authorization: th
 **7. Email/password plus Google Identity Services for console sign-in.**
 Google ID tokens are verified by the API against the configured Web client ID, then mapped to `users.identity_provider_id`; the rest of the API continues to use ARC Cloud JWTs and only reads the JWT `sub`.
 
+**8. Device-side OTA verification with ECDSA P-256 (supersedes "server verifies, device checks SHA-256").**
+The device trusts only the public key compiled into it, verifies the signature over the exact manifest bytes, and reads url/hash/size/version from them alone. P-256 rather than Ed25519, because the mbedTLS in the Arduino-ESP32 core verifies P-256 natively with no extra crypto library on the device. Ed25519 keys remain accepted server-side for compatibility. Downgrades are refused, and a new image confirms itself only after reaching the cloud, otherwise the bootloader rolls back. *Revisit when:* hardware ships with Secure Boot v2 (then also enable eFuse anti-rollback).
+
+**9. Row-level security as a second tenant boundary.**
+`arc_tenant` (non-owner, NOBYPASSRLS) plus policies on every tenant table. The API sets `role` and `arc.org_ids` with `set_config(…, true)` inside each transaction, so the scope cannot leak across pooled connections. Cost: about three extra round trips per tenant query (BEGIN, set_config, COMMIT). System paths stay on the owner role. *Revisit when:* the per-query transaction overhead shows in API latency (then switch to one transaction per request), or an enterprise tenant needs a dedicated database.
+
+**10. Device keys in headers; `?api_key=` only for compatibility.**
+URLs are logged by proxies and load balancers. `DEVICE_KEY_IN_QUERY` defaults to true so existing ThingSpeak-style devices keep working; production sets it to false.
+
+**11. Immediate broker disconnect on credential changes.**
+After the database change commits, the API calls EMQX `DELETE /api/v5/clients/{id}` with a bootstrap API key (`api_key.bootstrap_file`). It is best effort: the committed database state is what the auth/ACL hooks enforce. The key is broker-admin, so port 18083 must stay on the private network.
+
 ## Known gaps (tracked for later phases)
 
 - Claim codes (`POST /devices/{id}/claim-codes`) are not built; devices are provisioned directly by an engineer.
-- Revocation does not yet kick a live session through the EMQX management API (bounded by the 30 s authz cache).
 - No email invitations (members must register first), no API keys/webhooks, no rules/alerts, no console UI.
 - Rate limiting in the worker is per instance; with several workers use EMQX listener limits as well.

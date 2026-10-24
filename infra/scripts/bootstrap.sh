@@ -12,6 +12,7 @@ else
       -e "s|__INTERNAL_HOOK_TOKEN__|$(rand 40)|" \
       -e "s|__MQTT_SERVICE_PASSWORD__|$(rand 32)|" \
       -e "s|__POSTGRES_PASSWORD__|$(rand 24)|" \
+      -e "s|__EMQX_API_SECRET__|$(rand 40)|" \
       .env.example > .env
   echo "created .env with random secrets"
 fi

@@ -22,6 +22,10 @@ async function bootstrap() {
   const origins = cfg.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
   if (origins.length) api.enableCors({ origin: origins, credentials: false });
   api.getHttpAdapter().getInstance().disable('x-powered-by');
+  // Behind a reverse proxy (Caddy on AWS, Railway's edge) the socket address is the proxy's. Trust exactly
+  // TRUST_PROXY hops of X-Forwarded-For so rate limits apply per client, not to everyone at once. Never set
+  // it higher than the real number of proxies, or clients can spoof their address.
+  if (cfg.TRUST_PROXY > 0) api.set('trust proxy', cfg.TRUST_PROXY);
 
   // OpenAPI: interactive docs at /api/docs, machine-readable spec at /api/openapi.json.
   const spec = buildOpenApi(api);

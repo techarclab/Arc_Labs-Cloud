@@ -15,6 +15,38 @@ export function canonicalManifest(m: { deviceType: string; version: string; url:
   return JSON.stringify({ deviceType: m.deviceType, sha256: m.sha256, sizeBytes: m.sizeBytes, url: m.url, version: m.version });
 }
 
+/**
+ * Signing key algorithms.
+ * - `ecdsa-p256`: ECDSA over SHA-256 on NIST P-256, DER signature. ESP32 firmware verifies these on the
+ *   device with the mbedTLS that ships in the Arduino core, so this is the algorithm to use for OTA.
+ * - `ed25519`: accepted for keys registered before device-side verification existed. The server verifies
+ *   them, but the reference firmware cannot (mbedTLS has no Ed25519), so new keys should be P-256.
+ */
+export type SigningAlgorithm = 'ecdsa-p256' | 'ed25519';
+
+export function keyAlgorithm(pem: string): SigningAlgorithm | null {
+  try {
+    const k = createPublicKey(pem);
+    if (k.asymmetricKeyType === 'ed25519') return 'ed25519';
+    if (k.asymmetricKeyType === 'ec' && k.asymmetricKeyDetails?.namedCurve === 'prime256v1') return 'ecdsa-p256';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function verifyManifest(manifest: string, publicKeyPem: string, signatureB64: string): boolean {
+  try {
+    const alg = keyAlgorithm(publicKeyPem);
+    const sig = Buffer.from(signatureB64, 'base64');
+    if (alg === 'ed25519') return verify(null, Buffer.from(manifest), createPublicKey(publicKeyPem), sig);
+    if (alg === 'ecdsa-p256') return verify('sha256', Buffer.from(manifest), { key: createPublicKey(publicKeyPem), dsaEncoding: 'der' }, sig);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 const keyBody = z.object({ organizationId: z.uuid(), name: z.string().trim().min(1).max(80), publicKeyPem: z.string().min(40).max(2000) });
 const releaseBody = z.object({
   organizationId: z.uuid(),
@@ -68,7 +100,12 @@ export class FirmwareController {
     const { organizationId } = parse(z.object({ organizationId: z.uuid() }), q);
     await this.access.requireOrg(user, organizationId, 'viewer');
     const rows = await this.db.query('SELECT id, name, public_key_pem, created_at, revoked_at FROM firmware_signing_keys WHERE organization_id = $1 ORDER BY created_at', [organizationId]);
-    return { items: rows.map((k) => ({ id: k.id, name: k.name, publicKeyPem: k.public_key_pem, createdAt: k.created_at, revokedAt: k.revoked_at })) };
+    return {
+      items: rows.map((k) => {
+        const algorithm = keyAlgorithm(k.public_key_pem);
+        return { id: k.id, name: k.name, algorithm, deviceVerifiable: algorithm === 'ecdsa-p256', publicKeyPem: k.public_key_pem, createdAt: k.created_at, revokedAt: k.revoked_at };
+      }),
+    };
   }
 
   @Doc('Add key', { body: keyBody })
@@ -76,16 +113,13 @@ export class FirmwareController {
   async addKey(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const input = parse(keyBody, body);
     await this.access.requireOrg(user, input.organizationId, 'org_admin');
-    let type: string | undefined;
-    try {
-      type = createPublicKey(input.publicKeyPem).asymmetricKeyType;
-    } catch {
-      throw new BadRequestException({ code: 'invalid_key', message: 'Not a valid PEM public key.' });
+    const algorithm = keyAlgorithm(input.publicKeyPem);
+    if (!algorithm) {
+      throw new BadRequestException({ code: 'invalid_key', message: 'Use an ECDSA P-256 public key in PEM form (node tools/firmware-sign.mjs keygen).' });
     }
-    if (type !== 'ed25519') throw new BadRequestException({ code: 'invalid_key', message: 'Use an Ed25519 public key (tools/firmware-sign.mjs keygen).' });
     const k = await this.db.one('INSERT INTO firmware_signing_keys (organization_id, name, public_key_pem) VALUES ($1, $2, $3) RETURNING *', [input.organizationId, input.name, input.publicKeyPem.trim()]);
-    await this.audit.record({ ...actor(user), organizationId: input.organizationId, action: 'firmware.key_add', resourceType: 'firmware_signing_key', resourceId: k.id, metadata: { name: k.name } });
-    return { id: k.id, name: k.name, createdAt: k.created_at };
+    await this.audit.record({ ...actor(user), organizationId: input.organizationId, action: 'firmware.key_add', resourceType: 'firmware_signing_key', resourceId: k.id, metadata: { name: k.name, algorithm } });
+    return { id: k.id, name: k.name, algorithm, deviceVerifiable: algorithm === 'ecdsa-p256', createdAt: k.created_at };
   }
 
   @Doc('Revoke key')
@@ -123,13 +157,7 @@ export class FirmwareController {
     const key = await this.db.one('SELECT * FROM firmware_signing_keys WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL', [input.signingKeyId, input.organizationId]);
     if (!key) throw new BadRequestException({ code: 'unknown_signing_key' });
     const manifest = canonicalManifest(input);
-    let ok = false;
-    try {
-      ok = verify(null, Buffer.from(manifest), createPublicKey(key.public_key_pem), Buffer.from(input.signature, 'base64'));
-    } catch {
-      ok = false;
-    }
-    if (!ok) throw new BadRequestException({ code: 'bad_signature', message: 'The signature doesn’t match this manifest and key. Sign it with tools/firmware-sign.mjs.' });
+    if (!verifyManifest(manifest, key.public_key_pem, input.signature)) throw new BadRequestException({ code: 'bad_signature', message: 'The signature doesn’t match this manifest and key. Sign it with tools/firmware-sign.mjs.' });
     try {
       const r = await this.db.one(
         `INSERT INTO firmware_releases (organization_id, device_type, version, url, sha256, size_bytes, signature, signing_key_id, notes, created_by)
@@ -261,7 +289,10 @@ export class FirmwareController {
           [rolloutId],
         )
       ).rows;
-      const manifest = { deviceType: o.device_type, version: o.version, url: o.url, sha256: o.sha256, sizeBytes: Number(o.size_bytes), signature: o.signature, rolloutId };
+      // `manifest` is the exact byte string the signature covers. Firmware verifies the signature over it
+      // and takes url/sha256/size/version ONLY from it; the loose fields stay for older firmware and the console.
+      const fields = { deviceType: o.device_type, version: o.version, url: o.url, sha256: o.sha256, sizeBytes: Number(o.size_bytes) };
+      const manifest = { ...fields, manifest: canonicalManifest(fields), signature: o.signature, signingKeyId: o.signing_key_id, rolloutId };
       const cmds: any[] = [];
       for (const d of pending) {
         const cmd = await this.commands.create(c, d, 'ota.update', manifest, OTA_TTL_SECONDS, userRef(user), label(user));

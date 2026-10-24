@@ -14,6 +14,8 @@
  *  - receives commands on the same topic and confirms each one on TOPIC_ACK
  *    ({"commandId":"…","status":"ok"|"error"}); the cloud only marks a command
  *    "acknowledged" after this. Example commands: "blink" {seconds}, "ota.update" (firmware update)
+ *  - OTA: installs only images signed with the key in OTA_PUBLIC_KEY_PEM, never downgrades, and rolls
+ *    back if the new image can't reach the cloud within 5 minutes (see arc_ota.h)
  */
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -21,10 +23,17 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "config.h"
+#include "arc_roots.h"
 #include "arc_ota.h"
 
 #ifndef TOPIC_ACK
 #error "Add TOPIC_ACK (…/cmd-ack) to config.h - copy it from the device page"
+#endif
+#ifndef BROKER_CA
+#define BROKER_CA CA_CERT          // config.h files generated before BROKER_CA existed
+#endif
+#ifndef OTA_CA
+#define OTA_CA ARC_PUBLIC_ROOTS    // CA bundle for the HTTPS host that serves firmware images
 #endif
 
 WiFiClientSecure net;
@@ -43,7 +52,7 @@ void connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("WiFi");
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); arcOtaRollbackWatchdog(); }
   Serial.printf(" ok, ip=%s\n", WiFi.localIP().toString().c_str());
 }
 
@@ -94,11 +103,10 @@ void onCommand(JsonDocument &doc) {
     for (int i = 0; i < seconds * 2; i++) { digitalWrite(RELAY_PIN, i % 2 ? LOW : HIGH); delay(250); }
     ackCommand(id, nullptr);
   } else if (strcmp(name, "ota.update") == 0) {
-    const char *version = p["version"] | "";
-    if (strcmp(version, FIRMWARE_VERSION) == 0) { ackCommand(id, nullptr); return; }  // already up to date
-    Serial.printf("OTA to %s from %s\n", version, (const char *)(p["url"] | ""));
-    String err = arcOtaInstall(p["url"] | "", p["sha256"] | "", p["sizeBytes"] | 0);
-    if (err.length()) { ackCommand(id, err.c_str()); return; }
+    Serial.printf("OTA to %s requested\n", (const char *)(p["version"] | "?"));
+    String err = arcOtaInstall(p, OTA_CA);   // verifies the signature before touching flash
+    if (err == "up-to-date") { ackCommand(id, nullptr); return; }
+    if (err.length()) { Serial.printf("OTA refused: %s\n", err.c_str()); ackCommand(id, err.c_str()); return; }
     ackCommand(id, nullptr);
     mqtt.loop();
     delay(500);
@@ -129,11 +137,13 @@ void connectMqtt() {
     // clientId and username must both be the device UUID.
     if (mqtt.connect(DEVICE_ID, DEVICE_ID, DEVICE_PASSWORD)) {
       Serial.println("ok");
+      arcOtaConfirmBoot();                 // a freshly-updated image proved it can reach the cloud
       mqtt.subscribe(TOPIC_COMMANDS, 1);   // the cloud re-sends current control values right after this
       publishState();
     } else {
       // rc=4/5: bad credentials or device revoked — check the API, don't hammer the broker.
       Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
+      arcOtaRollbackWatchdog();
       delay(5000);
     }
   }
@@ -167,15 +177,16 @@ void setup() {
   connectWiFi();
   configTime(0, 0, "pool.ntp.org", "time.google.com");
 
-  net.setCACert(CA_CERT);          // verifies the broker certificate
+  net.setCACert(BROKER_CA);        // verifies the broker certificate; there is no insecure fallback
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setBufferSize(1024);   // room for OTA manifests
+  mqtt.setBufferSize(4096);   // room for signed OTA manifests (the URL appears twice)
   mqtt.setCallback(onControl);
   pinMode(RELAY_PIN, OUTPUT);
   mqtt.setKeepAlive(30);
 }
 
 void loop() {
+  arcOtaRollbackWatchdog();
   connectWiFi();
   connectMqtt();
   mqtt.loop();

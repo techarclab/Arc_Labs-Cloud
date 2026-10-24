@@ -1,5 +1,7 @@
 import { Controller, Get, Module, ServiceUnavailableException } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { TenantScopeInterceptor } from './common/tenant-scope.interceptor';
+import { BrokerAdmin } from './common/broker-admin.service';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -99,9 +101,11 @@ class RootController {
     AuditService,
     IngestService,
     MqttPublisher,
+    BrokerAdmin,
     CommandsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_INTERCEPTOR, useClass: TenantScopeInterceptor },
   ],
 })
 export class AppModule {}

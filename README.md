@@ -20,7 +20,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 | `infra/` | SQL migrations, EMQX config, TLS certs, backup/restore scripts. |
 | `firmware/esp32-arduino` | `arc_hardware_test` (no-sensor test, see `docs/hardware-test.md`), `arc_http` (HTTPS) and `arc_device` (MQTT/TLS), with controls, commands and OTA. |
 | `tools/` | Device simulator, firmware signing, Railway deploy and diagnostics, local dev helper. |
-| `tests/` | `e2e` (62 end-to-end checks), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
+| `tests/` | `e2e` (65 end-to-end checks), `firmware` (device OTA crypto cross-check), `load`, `ui/demo-stack.ts` (seeded demo for reviewing the console). |
 | `docs/` | Device protocol, OpenAPI, architecture decisions, deployment (Railway/Vercel, staging, AWS), ARC LMS, runbooks, security review. |
 
 ### Console
@@ -42,7 +42,9 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 
 ## Deploying
 
-GitHub → Railway (broker, API, worker, Postgres) + Vercel (console): see **[docs/deploy/railway-vercel.md](docs/deploy/railway-vercel.md)**. AWS: `docs/aws/deployment.md`.
+- **AWS pilot (Mumbai, ≈ ₹5,000/month):** one server (Caddy + EMQX + API + worker) + RDS PostgreSQL + console on CloudFront, all in Terraform: **[docs/deploy/aws-pilot.md](docs/deploy/aws-pilot.md)**.
+- GitHub → Railway (broker, API, worker, Postgres) + Vercel (console): [docs/deploy/railway-vercel.md](docs/deploy/railway-vercel.md).
+- Larger load-balanced AWS layout for later: `docs/aws/deployment.md`.
 
 ## Quick start (Docker)
 
@@ -62,7 +64,7 @@ docker compose ps                    # wait until api, emqx and ingestion-worker
   - **Charts:** time chart (line, area, steps or bars; up to 3 fields), histogram, scatter plot, heatmap (hour × day), data table, compare devices, map
   - **Controls:** switch, push button, slider, plus/minus, mode selector, number input, colour picker
   - **Other:** text note
-- Devices send data over **MQTT** or a simple **HTTP API** (`/api/v1/update?api_key=KEY&field1=25`). Controls reach MQTT devices instantly and HTTP devices when they poll `/api/v1/controls`.
+- Devices send data over **MQTT** or a simple **HTTP API** (`/api/v1/update?field1=25` with `Authorization: Bearer KEY`). Controls reach MQTT devices instantly and HTTP devices when they poll `/api/v1/controls`.
 - Each channel has a **read key** for `feeds.json` / `feeds.csv`, and the console can download CSV.
 
 ESP32 examples: `firmware/esp32-arduino/arc_device` (MQTT over TLS, receives controls) and `firmware/esp32-arduino/arc_http` (HTTP only, simplest).
@@ -135,7 +137,7 @@ Full interactive reference: **`/api/docs`** on the API (machine-readable: `/api/
 | Organizations | `organizations`, members, `audit-logs`, `rejected-messages`, `overview`, `usage`, `settings` (retention), `plan` (platform admins), `platform/organizations` |
 | Channels | `projects`, `fields`, `dashboard`, `read-key`, `command-types` |
 | Devices & data | `devices`, credentials, lifecycle, `state`, `telemetry`, `events`, `controls`, `commands`, `channels/:id/feeds.json\|csv` |
-| Device HTTP | `update?api_key=…&field1=…`, `controls`, next command + acknowledgement |
+| Device HTTP | `update?field1=…` (key in `Authorization: Bearer`), `controls`, next command + acknowledgement |
 | Rules & alerts | `rules`, `alerts`, `alerts/:id/acknowledge`, `alerts/:id/resolve` |
 | Integrations | `api-keys`, `webhooks` (+ `test`, `deliveries`), `lms/links` (+ `learner-tokens`) |
 | Firmware | `firmware/signing-keys`, `firmware/releases`, `firmware/rollouts` |
@@ -157,7 +159,11 @@ DATABASE_URL=postgres://user:pass@localhost:5432/empty_db npm run test:e2e   # f
 - Each device has its own credential, stored as an scrypt hash; the plaintext is returned once at provisioning or rotation.
 - Device identity comes from the authenticated connection (`clientId = username = device UUID`). The ACL lets a device publish only to its own `telemetry`, `state` and `cmd-ack` topics and subscribe only to its own `cmd` topic. The worker re-checks topic vs. device as defence in depth.
 - Broker hooks run on a separate port with a shared token; keep port 3001 off the public network.
-- Revoking or rotating takes effect on the next connect; the EMQX authorization cache (30 s) bounds how long an already-connected revoked device can keep publishing. Kick the client from EMQX for immediate effect (automating this is a planned follow-up).
+- Revoking, rotating, suspending or retiring a device also disconnects its live MQTT session through the EMQX management API (`EMQX_API_URL/KEY/SECRET`). Without that configured, the EMQX authorization cache (30 s) bounds how long a connected revoked device can keep publishing.
+- Tenant isolation is enforced twice: in the API (`AccessService`) and by PostgreSQL row-level security. Authenticated requests run as the `arc_tenant` role, pinned to the caller's organizations (`infra/db/migrations/004_row_level_security.sql`).
+- OTA: devices verify an ECDSA P-256 signature over the release manifest with a key compiled into the firmware, refuse downgrades, and roll back an image that can't reach the cloud (`firmware/esp32-arduino/arc_device/arc_ota.h`).
+- Firmware verifies server certificates (pinned public roots, `arc_roots.h`) and sends device keys in the `Authorization` header. Set `DEVICE_KEY_IN_QUERY=false` in production.
+- The console ships a Content Security Policy (`apps/console/vite.config.ts`); custom boards render in a sandboxed iframe with no scripts.
 - Change `ALLOW_SIGNUP=false` once accounts exist. Review Indian DPDP Act obligations before production data.
 
 ## Plan coverage
