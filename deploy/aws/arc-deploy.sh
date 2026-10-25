@@ -23,6 +23,14 @@ export AWS_REGION ACME_EMAIL API_HOST MQTT_HOST
 cd "$APP_DIR"
 git fetch --depth 1 origin "$REF"
 git checkout --force --detach FETCH_HEAD
+
+# The copy of this script that is running may be older than the one just checked out. Hand over to the
+# new one before doing anything else, so a change to the steps below takes effect in a single deploy.
+if [ -z "${ARC_DEPLOY_REEXEC:-}" ] && ! cmp -s deploy/aws/arc-deploy.sh /usr/local/bin/arc-deploy; then
+  install -m 0755 deploy/aws/arc-deploy.sh /usr/local/bin/arc-deploy
+  log "arc-deploy updated; restarting with the new version"
+  ARC_DEPLOY_REEXEC=1 exec /usr/local/bin/arc-deploy "$REF"
+fi
 log "deploying $(git rev-parse --short HEAD) ($REF)"
 
 install -m 0755 deploy/aws/arc-deploy.sh /usr/local/bin/arc-deploy
