@@ -27,9 +27,11 @@ log "deploying $(git rev-parse --short HEAD) ($REF)"
 
 install -m 0755 deploy/aws/arc-deploy.sh /usr/local/bin/arc-deploy
 install -m 0755 deploy/aws/arc-cert-sync.sh /usr/local/bin/arc-cert-sync
-install -m 0644 deploy/aws/arc-cert-sync.service deploy/aws/arc-cert-sync.timer /etc/systemd/system/
+install -m 0755 deploy/aws/arc-os-patch.sh /usr/local/bin/arc-os-patch
+install -m 0644 deploy/aws/arc-cert-sync.service deploy/aws/arc-cert-sync.timer \
+  deploy/aws/arc-os-patch.service deploy/aws/arc-os-patch.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now arc-cert-sync.timer
+systemctl enable --now arc-cert-sync.timer arc-os-patch.timer
 
 # Docker Compose v2+ builds through buildx >= 0.17; Amazon Linux's docker package does not ship it.
 BUILDX_VERSION=v0.38.1

@@ -228,6 +228,7 @@ sudo arc-deploy main                                    # applies newer migratio
 | Logs | CloudWatch Logs group `/arc-cloud/pilot` (14 days), one stream per container |
 | Shell | `aws ssm start-session --target <instance-id>` (no SSH port is open) |
 | MQTT certificate | Caddy renews automatically. A daily timer (`arc-cert-sync.timer`) installs the new cert into EMQX and restarts it, so devices reconnect once per renewal (~every 60 days) |
+| OS security updates | `arc-os-patch.timer` applies Amazon Linux security advisories every Sunday ~03:30 IST and reboots only if the kernel or core libraries changed (~2 min downtime). AL2023 pins dnf to the AMI's release, so the script uses `--releasever=latest`. Manual run: `sudo arc-os-patch` (add `--no-reboot` to defer); last run: `journalctl -u arc-os-patch` |
 | Database restore | RDS console → `arc-cloud-pilot` → Restore to point in time (7 days) |
 | Secrets | Secrets Manager `arc-cloud/pilot/app` (app) and the RDS-managed master secret. They are rewritten into `/etc/arc-cloud/*.env` (0600) on every deploy |
 | Spend | Billing → Budgets → `arc-cloud-pilot-monthly` |

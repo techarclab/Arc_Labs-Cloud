@@ -127,7 +127,8 @@ jobs:
           done
       - name: Server scripts (shellcheck) and env writer
         run: |
-          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh infra/emqx/entrypoint.sh
+          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh deploy/aws/arc-os-patch.sh infra/emqx/entrypoint.sh
+          for t in deploy/aws/*.timer; do systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" >/dev/null; done
           python3 -m py_compile deploy/aws/write-env.py
       - name: Production compose file renders
         run: |

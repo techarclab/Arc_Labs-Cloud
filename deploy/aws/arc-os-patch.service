@@ -1,0 +1,8 @@
+[Unit]
+Description=Apply Amazon Linux security updates (reboots only if required)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arc-os-patch
