@@ -2,6 +2,7 @@
 # Starts EMQX with ARC Cloud's config.
 #   INTERNAL_HOOK_TOKEN  (required) shared secret for the API's /internal/mqtt hooks
 #   API_HOOKS_URL        API hook base URL (default http://api:3001; on Railway http://api.railway.internal:3001)
+#   API_WAIT_SECONDS     how long to wait for the API hooks before starting anyway (default 180)
 #   MQTT_TLS_CA_B64, MQTT_TLS_CERT_B64, MQTT_TLS_KEY_B64
 #                        base64 PEMs for the device TLS listener. When not set, certificates mounted at
 #                        /opt/emqx/etc/certs/arc are used (docker-compose mounts infra/certs/out there).
@@ -53,5 +54,23 @@ if [ -n "$API_KEY" ] && [ -n "$API_SECRET" ]; then
   echo "[arc] management API key '${API_KEY}' provisioned (keep port 18083 on the private network)"
 fi
 unset API_SECRET
+
+# Wait for the API before accepting clients. EMQX asks the API to approve every connection and subscription;
+# if it starts first (e.g. after a host reboot, when Docker starts all containers at once and ignores
+# depends_on), early clients are denied and a denied subscription is not retried. Starts anyway after
+# API_WAIT_SECONDS so the broker never stays down because of a broken API.
+API_WAIT_SECONDS="${API_WAIT_SECONDS:-180}"
+waited=0
+until curl -fs -o /dev/null --max-time 3 -X POST -H 'content-type: application/json' \
+        -H "x-internal-token: ${INTERNAL_HOOK_TOKEN}" -d '{}' "${API_HOOKS_URL}/internal/mqtt/authenticate"; do
+  if [ "$waited" -ge "$API_WAIT_SECONDS" ]; then
+    echo "[arc] WARNING: API hooks at ${API_HOOKS_URL} not answering after ${waited}s; starting anyway" >&2
+    break
+  fi
+  [ "$waited" -eq 0 ] && echo "[arc] waiting for the API hooks at ${API_HOOKS_URL} ..."
+  sleep 2
+  waited=$((waited + 2))
+done
+[ "$waited" -lt "$API_WAIT_SECONDS" ] && echo "[arc] API hooks answering after ${waited}s"
 
 exec /usr/bin/docker-entrypoint.sh /opt/emqx/bin/emqx foreground
