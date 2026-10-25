@@ -19,7 +19,7 @@
 // ---------- your settings ----------
 const char* WIFI_NAME = "your-wifi-name";          // must be 2.4 GHz
 const char* WIFI_PASS = "your-wifi-password";
-const char* SERVER    = "https://arcapi-production-30bb.up.railway.app";
+const char* SERVER    = "https://api.arcloud.arclabs.in";
 const char* API_KEY   = "paste-the-device-key";    // from the device's "HTTP API" tab
 #define SENSOR_TYPE DHT11                           // change to DHT22 if you have a DHT22 (white sensor)
 // -----------------------------------

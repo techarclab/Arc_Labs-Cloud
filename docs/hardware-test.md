@@ -8,7 +8,7 @@ The test sketch is `firmware/esp32-arduino/arc_hardware_test/arc_hardware_test.i
 
 ## Part A: prepare ARC Cloud (10 min)
 
-1. Sign in at **arc-labs-cloud.vercel.app**.
+1. Sign in at **arcloud.arclabs.in**.
 2. **New channel** (the **+** next to *Channels*): name it `Hardware test`.
 3. **Channel settings → Fields**: set these six fields and **Save**:
 
@@ -23,7 +23,7 @@ The test sketch is `firmware/esp32-arduino/arc_hardware_test/arc_hardware_test.i
 
 4. **Devices → Add device**: name `My ESP32`, kind `esp32`, *Sends data every* **15 seconds**. Open the **HTTP API** tab and copy:
    - the **device key** (shown only once; keep it safe),
-   - the **server address** (the part before `/api/v1/update`, e.g. `https://arcapi-production-30bb.up.railway.app`).
+   - the **server address** (the part before `/api/v1/update`, e.g. `https://api.arcloud.arclabs.in`).
 5. **Commands → New command**: add `blink` with a number setting `seconds` (1–30). Optionally also add `set_interval` (number `seconds`, 5–3600) and `reboot` (no settings).
 6. **Dashboard → Create a starter dashboard**, then **Edit dashboard → Add widget → Switch** on the `LED` field, and **Save dashboard**.
 7. Optional, to test alerts: **Rules → New rule**:
@@ -45,7 +45,7 @@ The test sketch is `firmware/esp32-arduino/arc_hardware_test/arc_hardware_test.i
    ```cpp
    const char *WIFI_SSID     = "your Wi-Fi name";
    const char *WIFI_PASSWORD = "your Wi-Fi password";
-   const char *SERVER        = "https://arcapi-production-30bb.up.railway.app";
+   const char *SERVER        = "https://api.arcloud.arclabs.in";
    const char *API_KEY       = "the device key from step A4";
    ```
 3. **Tools → Board**: your board (e.g. *ESP32 Dev Module*). **Tools → Port**: the COM port that appears when you plug it in.
@@ -58,7 +58,7 @@ The test sketch is `firmware/esp32-arduino/arc_hardware_test/arc_hardware_test.i
 ARC Cloud hardware test test-1.0
 [1/5] Wi-Fi: connecting to "MyWiFi"....
    OK  ip 192.168.1.42, signal -54 dBm
-[2/5] Server https://arcapi-production-30bb.up.railway.app: OK  reachable
+[2/5] Server https://api.arcloud.arclabs.in: OK  reachable
 [3/5] Device key accepted, readings stored. OK
       Open the device page in ARC Cloud: it should now show Online.
    sent #1  temp 46.1 C  wifi -54 dBm  button 0
@@ -97,11 +97,11 @@ Tick each one; together they cover the whole device path of the platform.
 | `403` | The device is suspended or revoked. |
 | `404` on controls | Add the Control field `led` (step A3). The test carries on without it. |
 | `400 … not allowed / out of range` | A value is outside the field's min/max. Check Channel settings → Fields. |
-| `5xx` | The server is having trouble: run `bash tools/railway-doctor.sh` and check the logs. |
+| `5xx` | The server is having trouble: try again in a minute. Operators: check `sudo docker compose logs api` on the server (`docs/deploy/aws-pilot.md`). |
 | Upload fails | Hold BOOT during “Connecting…”, try another USB cable/port, pick the right board. |
 
 ## Next: real sensors and MQTT
 
 - **Real sensors**: in your own sketch, send any values the same way, e.g. `&field1=<DHT22 temperature>&field2=<humidity>`. Start from `firmware/esp32-arduino/arc_http` (adds signed over-the-air updates).
-- **MQTT over TLS** (instant controls and commands, less data): `firmware/esp32-arduino/arc_device`. Copy `config.example.h` to `config.h` and fill it from the device's **MQTT** tab; the broker is the Railway TCP proxy (e.g. `centerbeam.proxy.rlwy.net:54894`), and the CA certificate is `infra/certs/out/ca.crt`.
+- **MQTT over TLS** (instant controls and commands, less data): `firmware/esp32-arduino/arc_device`. Use **Copy config.h** when you add the device (broker `mqtt.arcloud.arclabs.in:8883`, verified with the public roots in `arc_roots.h`). For a DHT sensor and two LEDs over MQTT, see `firmware/esp32-arduino/arc_dht_mqtt`.
 - **Firmware update test**: see **Firmware & OTA** in the console and `tools/firmware-sign.mjs`.
