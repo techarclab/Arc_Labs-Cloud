@@ -14,6 +14,9 @@ resource "aws_db_parameter_group" "pg16" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+    # AWS records this parameter as pending-reboot; leaving apply_method unset (= immediate) made every plan
+    # show a change. The value is what matters, and 1 (TLS required) is already in effect.
+    apply_method = "pending-reboot"
   }
   parameter {
     name  = "log_min_duration_statement"
