@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly OS security patching (Sunday ~03:30 IST)
+
+[Timer]
+OnCalendar=Sat *-*-* 22:00:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
