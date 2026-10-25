@@ -16,7 +16,7 @@ variable "environment" {
 
 variable "zone_name" {
   type        = string
-  description = "Subdomain delegated from Wix to Route 53. The console lives at its apex."
+  description = "Console hostname; the API and broker live at api.<this> and mqtt.<this>. DNS records are added in Wix."
   default     = "arcloud.arclabs.in"
 }
 
@@ -56,6 +56,18 @@ variable "github_repository" {
   type        = string
   description = "owner/name, exactly as GitHub reports it (case-sensitive in the OIDC subject)."
   default     = "techarclab/Arc_Labs-Cloud"
+}
+
+variable "github_owner_id" {
+  type        = string
+  description = "Numeric GitHub ID of the repository owner: gh api repos/OWNER/NAME --jq .owner.id"
+  default     = "166861876"
+}
+
+variable "github_repository_id" {
+  type        = string
+  description = "Numeric GitHub ID of the repository: gh api repos/OWNER/NAME --jq .id"
+  default     = "1415316437"
 }
 
 variable "app_git_ref" {

@@ -105,15 +105,21 @@ resource "aws_instance" "server" {
     ignore_changes = [ami, user_data] # never replace the server just because a newer AMI exists
   }
 
-  # Boot only once the Wix → Route 53 delegation is proven live (the console certificate validated through it),
-  # so Caddy can obtain Let's Encrypt certificates for api./mqtt. on first boot.
+  # Boot only after the Wix records were added (the console certificate validated through them), so the
+  # api./mqtt. A records already point at the Elastic IP when Caddy asks Let's Encrypt for certificates.
   depends_on = [aws_acm_certificate_validation.console]
 }
 
+# Allocated independently of the instance so its address is known before the server boots: the Wix A records
+# for api./mqtt. must point at it before Caddy requests Let's Encrypt certificates (docs/deploy/aws-pilot.md).
 resource "aws_eip" "server" {
-  domain   = "vpc"
-  instance = aws_instance.server.id
-  tags     = { Name = "arc-cloud-${var.environment}" }
+  domain = "vpc"
+  tags   = { Name = "arc-cloud-${var.environment}" }
+}
+
+resource "aws_eip_association" "server" {
+  instance_id   = aws_instance.server.id
+  allocation_id = aws_eip.server.id
 }
 
 # Self-healing: recover onto healthy hardware on a host failure; reboot on an OS-level failure.

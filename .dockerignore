@@ -8,3 +8,4 @@ infra/certs/out
 firmware
 tests
 coverage
+**/*.tsbuildinfo

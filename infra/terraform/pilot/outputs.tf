@@ -1,6 +1,20 @@
-output "wix_ns_records" {
-  description = "Add these in Wix → Domains → arclabs.in → DNS as NS records with host name 'arcloud' (replace the existing CNAME)."
-  value       = aws_route53_zone.main.name_servers
+# Only depends on the Elastic IP and the certificate, so it is available after the targeted apply in step 3.
+output "wix_records" {
+  description = "Add these in Wix → Domains → arclabs.in → Manage DNS records BEFORE the full apply (host names without .arclabs.in)."
+  value = concat(
+    [for o in aws_acm_certificate.console.domain_validation_options : {
+      section = "CNAME", host = trimsuffix(trimsuffix(o.resource_record_name, "."), ".arclabs.in"), value = trimsuffix(o.resource_record_value, ".")
+    }],
+    [
+      { section = "A (Host)", host = trimsuffix(local.api_host, ".arclabs.in"), value = aws_eip.server.public_ip },
+      { section = "A (Host)", host = trimsuffix(local.mqtt_host, ".arclabs.in"), value = aws_eip.server.public_ip },
+    ]
+  )
+}
+
+output "wix_console_cname" {
+  description = "AFTER the full apply: in Wix, change the value of the existing 'arcloud' CNAME (Vercel) to this."
+  value       = { section = "CNAME", host = trimsuffix(var.zone_name, ".arclabs.in"), value = aws_cloudfront_distribution.console.domain_name }
 }
 
 output "server_public_ip" {

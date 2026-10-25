@@ -88,7 +88,7 @@ resource "aws_vpc_security_group_ingress_rule" "server" {
 
 resource "aws_vpc_security_group_egress_rule" "server_all" {
   security_group_id = aws_security_group.server.id
-  description       = "Package/image downloads, Let's Encrypt, AWS APIs, webhooks, RDS"
+  description       = "Outbound: packages, images, ACME (Lets Encrypt), AWS APIs, webhooks, RDS"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }

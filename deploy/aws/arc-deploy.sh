@@ -31,6 +31,19 @@ install -m 0644 deploy/aws/arc-cert-sync.service deploy/aws/arc-cert-sync.timer 
 systemctl daemon-reload
 systemctl enable --now arc-cert-sync.timer
 
+# Docker Compose v2+ builds through buildx >= 0.17; Amazon Linux's docker package does not ship it.
+BUILDX_VERSION=v0.38.1
+BUILDX_SHA256=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a
+if ! docker buildx version 2>/dev/null | grep -q "$BUILDX_VERSION"; then
+  log "installing docker buildx $BUILDX_VERSION"
+  install -d /usr/local/lib/docker/cli-plugins
+  curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx.new \
+    "https://github.com/docker/buildx/releases/download/$BUILDX_VERSION/buildx-$BUILDX_VERSION.linux-arm64"
+  echo "$BUILDX_SHA256  /usr/local/lib/docker/cli-plugins/docker-buildx.new" | sha256sum -c -
+  chmod 0755 /usr/local/lib/docker/cli-plugins/docker-buildx.new
+  mv -f /usr/local/lib/docker/cli-plugins/docker-buildx.new /usr/local/lib/docker/cli-plugins/docker-buildx
+fi
+
 umask 077
 python3 "$APP_DIR/deploy/aws/write-env.py"
 

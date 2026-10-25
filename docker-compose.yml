@@ -58,8 +58,9 @@ services:
     environment:
       INTERNAL_HOOK_TOKEN: ${INTERNAL_HOOK_TOKEN}
       EMQX_NODE__NAME: emqx@127.0.0.1
-      EMQX_API_KEY: ${EMQX_API_KEY:-}
-      EMQX_API_SECRET: ${EMQX_API_SECRET:-}
+      # ARC_ prefix: EMQX reads every EMQX_* variable as a config override (see infra/emqx/entrypoint.sh)
+      ARC_EMQX_API_KEY: ${EMQX_API_KEY:-}
+      ARC_EMQX_API_SECRET: ${EMQX_API_SECRET:-}
     # Renders base.hocon (hook token + API URL), then starts EMQX. Same image is used on Railway.
     build:
       context: .

@@ -1,5 +1,16 @@
 # GitHub Actions deploy role (OIDC, no stored keys). Only workflows running in the GitHub environment
 # "pilot" of this repository can assume it; protect that environment with required reviewers.
+#
+# GitHub issues this repository's tokens with an ID-based subject:
+#   repo:OWNER@OWNER_ID/NAME@REPO_ID:environment:ENV
+# (confirmed from the AssumeRoleWithWebIdentity event in CloudTrail). The numeric IDs never move to a new
+# repository, so a deleted or renamed repo re-created under the same name cannot assume this role.
+locals {
+  github_oidc_subject = format("repo:%s@%s/%s@%s:environment:%s",
+    split("/", var.github_repository)[0], var.github_owner_id,
+    split("/", var.github_repository)[1], var.github_repository_id,
+  var.environment)
+}
 
 data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
@@ -20,7 +31,7 @@ data "aws_iam_policy_document" "deploy_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.environment}"]
+      values   = [local.github_oidc_subject]
     }
   }
 }
