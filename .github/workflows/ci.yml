@@ -96,14 +96,15 @@ jobs:
           python3 - <<'PY'
           s = open('firmware/esp32-arduino/arc_device/config.example.h').read()
           s = s.replace('-----BEGIN PUBLIC KEY-----\n...paste firmware-signing-public.pem here...\n-----END PUBLIC KEY-----', open('/tmp/pub.pem').read().strip())
-          open('firmware/esp32-arduino/arc_device/config.h', 'w').write(s)
+          for d in ('arc_device', 'arc_dht_mqtt'):
+              open(f'firmware/esp32-arduino/{d}/config.h', 'w').write(s)
           PY
       - name: Compile every sketch (ESP32), and the OTA-capable ones for ESP32-S3
         run: |
-          for s in arc_device arc_http arc_dht_sensor arc_hardware_test; do
+          for s in arc_device arc_dht_mqtt arc_http arc_dht_sensor arc_hardware_test; do
             arduino-cli compile --warnings all -b esp32:esp32:esp32 "firmware/esp32-arduino/$s"
           done
-          for s in arc_device arc_http; do
+          for s in arc_device arc_dht_mqtt arc_http; do
             arduino-cli compile --warnings all -b esp32:esp32:esp32s3 "firmware/esp32-arduino/$s"
           done
       - name: Firmware must never skip TLS verification or put keys in URLs
