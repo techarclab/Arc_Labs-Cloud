@@ -42,9 +42,25 @@ static const char OTA_PUBLIC_KEY_PEM[] = R"PEM(
 `;
 }
 
+/**
+ * One-line provisioning payload for firmware that keeps credentials in NVS (firmware/esp32-arduino/arc_dht_mqtt):
+ * pasted into the Serial Monitor over USB, so no secret is ever compiled into a (public) OTA image.
+ */
+function provisionLine(device: Device, c: Credentials) {
+  const topicBase = c.topics.telemetry.replace(/\/telemetry$/, '');
+  return `PROVISION ${JSON.stringify({
+    wifiSsid: 'your-wifi',
+    wifiPassword: 'your-wifi-password',
+    deviceId: c.clientId,
+    devicePassword: c.password,
+    topicBase,
+    intervalSeconds: device.expectedIntervalSeconds,
+  })}`;
+}
+
 /** Shown once after a device is created or its password is replaced. */
 export function CredentialsDialog({ device, credentials, onClose, replaced }: { device: Device; credentials: Credentials; onClose: () => void; replaced?: boolean }) {
-  const [tab, setTab] = useState<'file' | 'esp32' | 'http' | 'details'>('file');
+  const [tab, setTab] = useState<'usb' | 'file' | 'esp32' | 'http' | 'details'>('usb');
   const [saved, setSaved] = useState(false);
   const fileName = `${device.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'device'}.json`;
 
@@ -68,8 +84,9 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       <div className="tabs" role="tablist">
         {(
           [
+            ['usb', 'ESP32 over USB'],
             ['file', 'For the simulator'],
-            ['esp32', 'For an ESP32'],
+            ['esp32', 'config.h (arc_device)'],
             ['http', 'HTTP API'],
             ['details', 'All details'],
           ] as const
@@ -79,6 +96,23 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
           </button>
         ))}
       </div>
+
+      {tab === 'usb' && (
+        <>
+          <p>
+            For <code>arc_dht_mqtt</code> and other firmware that stores its credentials on the device: flash the firmware, open the Serial Monitor (115200
+            baud, line ending “New Line”), replace <code>your-wifi</code> and <code>your-wifi-password</code> with your 2.4&nbsp;GHz Wi-Fi, paste the line and
+            press Enter. The device saves it and restarts. Nothing secret is compiled into the firmware, so the same image can be updated over the air on every
+            device.
+          </p>
+          <pre className="code">{provisionLine(device, credentials)}</pre>
+          <div className="row">
+            <span onClick={() => setSaved(true)}>
+              <CopyButton text={provisionLine(device, credentials)} label="Copy PROVISION line" />
+            </span>
+          </div>
+        </>
+      )}
 
       {tab === 'file' && (
         <>
@@ -102,6 +136,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
         <>
           <p>
             Save this as <code>config.h</code> next to <code>arc_device.ino</code> (in <code>firmware/esp32-arduino/arc_device</code>), then fill in your Wi-Fi and the OTA signing key.
+            This file holds the device password, so a build made with it must never be hosted for OTA; prefer “ESP32 over USB”.
           </p>
           <pre className="code">{configH(device, credentials)}</pre>
           <div className="row">

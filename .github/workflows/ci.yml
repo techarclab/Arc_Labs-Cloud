@@ -94,10 +94,11 @@ jobs:
           openssl ecparam -name prime256v1 -genkey -noout -out /tmp/k.pem
           openssl ec -in /tmp/k.pem -pubout -out /tmp/pub.pem
           python3 - <<'PY'
-          s = open('firmware/esp32-arduino/arc_device/config.example.h').read()
-          s = s.replace('-----BEGIN PUBLIC KEY-----\n...paste firmware-signing-public.pem here...\n-----END PUBLIC KEY-----', open('/tmp/pub.pem').read().strip())
-          for d in ('arc_device', 'arc_dht_mqtt'):
-              open(f'firmware/esp32-arduino/{d}/config.h', 'w').write(s)
+          placeholder = '-----BEGIN PUBLIC KEY-----\n...paste firmware-signing-public.pem here...\n-----END PUBLIC KEY-----'
+          for d in ('arc_device', 'arc_dht_mqtt'):   # each sketch builds from its own template
+              s = open(f'firmware/esp32-arduino/{d}/config.example.h').read()
+              assert placeholder in s, d
+              open(f'firmware/esp32-arduino/{d}/config.h', 'w').write(s.replace(placeholder, open('/tmp/pub.pem').read().strip()))
           PY
       - name: Compile every sketch (ESP32), and the OTA-capable ones for ESP32-S3
         run: |
@@ -110,6 +111,9 @@ jobs:
       - name: Firmware must never skip TLS verification or put keys in URLs
         run: |
           ! grep -rn "setInsecure\|api_key=" firmware/esp32-arduino --include=*.ino --include=*.h
+      - name: Fleet images must not carry per-device credentials (arc_dht_mqtt provisions them over USB)
+        run: |
+          ! grep -nE "^#define +(WIFI_SSID|WIFI_PASSWORD|DEVICE_ID|DEVICE_PASSWORD|TOPIC_)" firmware/esp32-arduino/arc_dht_mqtt/config.example.h
 
   infra:
     # Terraform for the AWS pilot: formatting + validation against the real AWS provider schema (no credentials),
