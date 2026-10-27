@@ -1,7 +1,7 @@
 /*
  * ARC Cloud — ESP32 + DHT11/DHT22 + 2 LEDs over MQTT/TLS (production device path).
  *
- * Sends every PUBLISH_INTERVAL_MS (from config.h):
+ * Sends every intervalSeconds (provisioned; default PUBLISH_INTERVAL_S in config.h):
  *   temperature  (°C)    DHT sensor
  *   humidity     (%)     DHT sensor
  *   rssi         (dBm)   Wi-Fi signal
@@ -21,14 +21,21 @@
  *   pulls GPIO 15 low at power-on only silences the boot log, but avoid hanging other loads on it.
  *
  * Setup
- *   1. ARC Cloud → your channel → Devices → Add device. Copy config.h from the dialog (the password is
- *      shown once) and save it next to this file. Fill in WIFI_SSID / WIFI_PASSWORD (2.4 GHz only).
+ *   1. Copy config.example.h to config.h (fleet-wide settings only) and paste your OTA public key into it.
  *   2. Libraries (Library Manager): PubSubClient (Nick O'Leary), ArduinoJson (v7),
  *      "DHT sensor library" (Adafruit) + "Adafruit Unified Sensor".
- *   3. Board: ESP32 Dev Module. Serial Monitor: 115200 baud.
+ *   3. Board: ESP32 Dev Module. Upload, open the Serial Monitor (115200 baud, line ending "New Line").
+ *   4. Provision the device once: ARC Cloud → Devices → Add device (or Replace password) → tab
+ *      "ESP32 over USB" → copy the PROVISION line, put in your Wi-Fi (2.4 GHz), paste it into the
+ *      Serial Monitor, press Enter. The device stores it in NVS and reboots.
+ *
+ * The firmware image holds NO Wi-Fi or device credentials (see arc_provision.h): one image serves every
+ * device of DEVICE_TYPE and can be hosted publicly for OTA. Credentials live in each device's NVS and
+ * survive OTA updates.
  *
  * Security: MQTT over TLS with the broker certificate verified (no insecure fallback); per-device
  * username/password; OTA only installs images signed with OTA_PUBLIC_KEY_PEM (see arc_ota.h).
+ * Physical/USB access can read NVS unless flash encryption is enabled (production hardening item).
  */
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -39,9 +46,13 @@
 #include "config.h"
 #include "arc_roots.h"
 #include "arc_ota.h"
+#include "arc_provision.h"
 
-#ifndef TOPIC_ACK
-#error "Add TOPIC_ACK (…/cmd-ack) to config.h - copy config.h again from the device page"
+#if defined(DEVICE_PASSWORD) || defined(WIFI_PASSWORD) || defined(DEVICE_ID)
+#error "config.h contains device or Wi-Fi credentials. They would be compiled into the (public) OTA image. Start from config.example.h and provision the device over USB instead."
+#endif
+#ifndef PUBLISH_INTERVAL_S
+#define PUBLISH_INTERVAL_S 15
 #endif
 #ifndef BROKER_CA
 #define BROKER_CA ARC_PUBLIC_ROOTS
@@ -72,21 +83,28 @@ DHT dht(DHT_PIN, DHT_TYPE);
 uint32_t bootId;          // random per boot, so messageIds stay unique across reboots
 uint32_t seq = 0;
 unsigned long lastPublish = 0;
+String topicTelemetry, topicState, topicCommands, topicAck;   // derived from the provisioned topicBase
+
+// Waits while still accepting serial commands (so a device with wrong settings can be re-provisioned).
+void waitMs(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) { arcPollSerial(); delay(20); }
+}
 
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("WiFi");
+  WiFi.begin(arcCfg.wifiSsid.c_str(), arcCfg.wifiPassword.c_str());
+  Serial.printf("WiFi \"%s\"", arcCfg.wifiSsid.c_str());
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    waitMs(500);
     Serial.print(".");
     arcOtaRollbackWatchdog();
     if (++tries == 40) {   // 20 s
-      Serial.println("\nWi-Fi not connecting: check WIFI_SSID/WIFI_PASSWORD and that the network is 2.4 GHz. Retrying.");
+      Serial.println("\nWi-Fi not connecting: check the name/password (STATUS shows the name; PROVISION {\"wifiSsid\":…,\"wifiPassword\":…} fixes it) and that it is 2.4 GHz. Retrying.");
       WiFi.disconnect();
-      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      WiFi.begin(arcCfg.wifiSsid.c_str(), arcCfg.wifiPassword.c_str());
       tries = 0;
     }
   }
@@ -112,7 +130,7 @@ void publishState() {
   state["freeHeap"] = ESP.getFreeHeap();
   char out[256];
   size_t n = serializeJson(doc, out);
-  mqtt.publish(TOPIC_STATE, (const uint8_t *)out, n, false);
+  mqtt.publish(topicState.c_str(), (const uint8_t *)out, n, false);
 }
 
 void ackCommand(const char *commandId, const char *error) {
@@ -122,7 +140,7 @@ void ackCommand(const char *commandId, const char *error) {
   if (error) ack["error"] = error;
   char out[256];
   size_t n = serializeJson(ack, out);
-  mqtt.publish(TOPIC_ACK, (const uint8_t *)out, n, false);
+  mqtt.publish(topicAck.c_str(), (const uint8_t *)out, n, false);
   Serial.printf("ack %s %s\n", commandId, error ? error : "ok");
 }
 
@@ -177,19 +195,19 @@ void connectMqtt() {
   while (!mqtt.connected()) {
     Serial.printf("MQTT %s:%d connecting... ", MQTT_HOST, MQTT_PORT);
     // clientId and username must both be the device UUID.
-    if (mqtt.connect(DEVICE_ID, DEVICE_ID, DEVICE_PASSWORD)) {
+    if (mqtt.connect(arcCfg.deviceId.c_str(), arcCfg.deviceId.c_str(), arcCfg.devicePassword.c_str())) {
       Serial.println("ok");
       arcOtaConfirmBoot();                 // a freshly-updated image proved it can reach the cloud
-      mqtt.subscribe(TOPIC_COMMANDS, 1);   // the cloud re-sends current switch values ~2 s after this
+      mqtt.subscribe(topicCommands.c_str(), 1);   // the cloud re-sends current switch values ~2 s after this
       publishState();
     } else {
       int rc = mqtt.state();
-      if (rc == 4 || rc == 5) Serial.printf("refused rc=%d: wrong DEVICE_ID/DEVICE_PASSWORD, or the device is suspended/revoked\n", rc);
+      if (rc == 4 || rc == 5) Serial.printf("refused rc=%d: wrong deviceId/devicePassword (re-provision with a new PROVISION line), or the device is suspended/revoked\n", rc);
       else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (check internet, MQTT_HOST, port 8883 not blocked, BROKER_CA)");
       else Serial.printf("failed rc=%d\n", rc);
       Serial.println("retry in 5 s");
       arcOtaRollbackWatchdog();
-      delay(5000);
+      waitMs(5000);
     }
   }
 }
@@ -214,20 +232,32 @@ void publishTelemetry() {
 
   char out[384];
   size_t n = serializeJson(doc, out);
-  bool ok = mqtt.publish(TOPIC_TELEMETRY, (const uint8_t *)out, n, false);
+  bool ok = mqtt.publish(topicTelemetry.c_str(), (const uint8_t *)out, n, false);
   Serial.printf("%s %s\n", ok ? "sent" : "FAILED", out);
 }
 
+bool provisioned = false;
+
 void setup() {
+  Serial.setRxBufferSize(2048);   // a PROVISION line is ~300 bytes; the default 256-byte buffer can overflow
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n=== ARC Cloud: DHT + 2 LEDs (MQTT/TLS) ===");
+  Serial.printf("\n=== ARC Cloud: DHT + 2 LEDs (MQTT/TLS), firmware %s ===\n", FIRMWARE_VERSION);
   pinMode(LED1_PIN, OUTPUT);
   pinMode(LED2_PIN, OUTPUT);
   digitalWrite(LED1_PIN, LOW);
   digitalWrite(LED2_PIN, LOW);
   dht.begin();
   bootId = esp_random();
+
+  arcLoadSettings(PUBLISH_INTERVAL_S);
+  provisioned = arcCfg.complete();
+  if (!provisioned) { arcPrintProvisionHelp(); return; }
+  topicTelemetry = arcCfg.topicBase + "/telemetry";
+  topicState = arcCfg.topicBase + "/state";
+  topicCommands = arcCfg.topicBase + "/cmd";
+  topicAck = arcCfg.topicBase + "/cmd-ack";
+  Serial.printf("device %s, sending every %lu s\n", arcCfg.deviceId.c_str(), (unsigned long)arcCfg.intervalS);
 
   connectWiFi();
   configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -240,11 +270,18 @@ void setup() {
 }
 
 void loop() {
+  arcPollSerial();
   arcOtaRollbackWatchdog();
+  if (!provisioned) {
+    static unsigned long lastHelp = 0;
+    if (millis() - lastHelp > 30000) { lastHelp = millis(); arcPrintProvisionHelp(); }
+    delay(20);
+    return;
+  }
   connectWiFi();
   connectMqtt();
   mqtt.loop();
-  if (lastPublish == 0 || millis() - lastPublish >= PUBLISH_INTERVAL_MS) {
+  if (lastPublish == 0 || millis() - lastPublish >= arcCfg.intervalS * 1000UL) {
     lastPublish = millis();
     if (lastPublish == 0) lastPublish = 1;
     publishTelemetry();
