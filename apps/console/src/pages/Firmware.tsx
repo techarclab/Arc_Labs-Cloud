@@ -5,7 +5,7 @@ import { ago, dateTime } from '../format';
 import { ErrorBox, Modal, useNow, usePoll, useToast } from '../components/ui';
 import { useSession } from '../session';
 
-interface SigningKey { id: string; name: string; publicKeyPem: string; createdAt: string; revokedAt: string | null }
+interface SigningKey { id: string; name: string; algorithm?: 'ecdsa-p256' | 'ed25519' | null; deviceVerifiable?: boolean; publicKeyPem: string; createdAt: string; revokedAt: string | null }
 interface Release {
   id: string;
   deviceType: string;
@@ -246,7 +246,10 @@ export function FirmwarePage() {
                     <tr key={k.id} style={k.revokedAt ? { opacity: 0.55 } : undefined}>
                       <td>
                         <b>{k.name}</b>
-                        <div className="muted small">added {dateTime(k.createdAt)} · Ed25519</div>
+                        <div className="muted small">
+                          added {dateTime(k.createdAt)} · {k.algorithm === 'ecdsa-p256' ? 'ECDSA P-256' : k.algorithm === 'ed25519' ? 'Ed25519' : 'unknown type'}
+                          {k.algorithm && !k.deviceVerifiable && ' · server-checked only: devices cannot verify it, use a P-256 key for OTA'}
+                        </div>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         {k.revokedAt ? (
