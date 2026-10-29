@@ -91,7 +91,7 @@ async function login({ allowRegister }) {
       newPassword = await ask(`That password is ${newPassword.length} characters. Choose one with at least 12: `);
     }
     const name = (await ask('Your name: ')).trim() || email.split('@')[0];
-    res = await call('POST', '/auth/register', undefined, { email, displayName: name, password: newPassword });
+    res = await call('POST', '/auth/register', undefined, { email, displayName: name, password: newPassword, acceptTerms: true });
     if (res.status === 409) fail('That email is already registered with a different password.');
   }
   if (res.status >= 400) fail(`Login failed: ${JSON.stringify(res.data)}`);

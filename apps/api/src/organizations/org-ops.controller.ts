@@ -1,12 +1,13 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { Body, Controller, ForbiddenException, Get, Param, Patch } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, HttpCode, NotFoundException, Param, Patch, Post } from '@nestjs/common';
 import { computeConnectivity } from '@arc/shared';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
 import { mapAlert } from '../common/events';
-import { actor, AuthUser, CurrentUser, parse, Uuid } from '../common/http';
+import { actor, AuthUser, CurrentUser, parse, userRef, Uuid } from '../common/http';
+import { hashInviteCode, newInviteCode } from '../common/invites';
 import { Db } from '../db/db.service';
 
 /** Named plans. Platform admins assign them; limits can also be set individually. */
@@ -173,16 +174,102 @@ export class OrgOpsController {
   }
 }
 
+const inviteBody = z
+  .object({
+    label: z.string().trim().min(1).max(120),
+    maxUses: z.number().int().min(1).max(10000),
+    expiresInDays: z.number().int().min(1).max(365),
+    organizationId: z.uuid().optional(),
+    role: z.enum(['org_admin', 'engineer', 'viewer']).optional(),
+  })
+  .refine((v) => !v.organizationId === !v.role, { message: 'organizationId and role go together' });
+
+function inviteStatus(i: { revoked_at: Date | null; expires_at: Date; used_count: number; max_uses: number }) {
+  if (i.revoked_at) return 'revoked';
+  if (new Date(i.expires_at) <= new Date()) return 'expired';
+  if (i.used_count >= i.max_uses) return 'used_up';
+  return 'active';
+}
+
 /** ARC LABS staff (PLATFORM_ADMIN_EMAILS or users.is_platform_admin): every customer organization at a glance. */
 @ApiTags('Platform administration')
 @Controller('api/v1/platform')
 export class PlatformController {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly audit: AuditService,
+  ) {}
+
+  private requireStaff(user: AuthUser) {
+    if (!user.isPlatformAdmin || user.scope) throw new ForbiddenException({ code: 'platform_admin_only' });
+  }
+
+  @Doc('Invite codes')
+  @Get('invites')
+  async invites(@CurrentUser() user: AuthUser) {
+    this.requireStaff(user);
+    const rows = await this.db.query(
+      `SELECT i.*, o.name AS organization_name FROM invite_codes i LEFT JOIN organizations o ON o.id = i.organization_id
+       ORDER BY i.created_at DESC LIMIT 200`,
+    );
+    return {
+      items: rows.map((i) => ({
+        id: i.id,
+        label: i.label,
+        organizationId: i.organization_id,
+        organizationName: i.organization_name,
+        role: i.role,
+        maxUses: i.max_uses,
+        usedCount: i.used_count,
+        expiresAt: i.expires_at,
+        revokedAt: i.revoked_at,
+        createdAt: i.created_at,
+        status: inviteStatus(i),
+      })),
+    };
+  }
+
+  /** Creates an invite code. The code is returned once; only its hash is stored. */
+  @Doc('Create invite code', { body: inviteBody })
+  @Post('invites')
+  async createInvite(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    this.requireStaff(user);
+    const input = parse(inviteBody, body);
+    if (input.organizationId && !(await this.db.one('SELECT id FROM organizations WHERE id = $1', [input.organizationId]))) {
+      throw new NotFoundException({ code: 'not_found' });
+    }
+    const code = newInviteCode();
+    const row = await this.db.one(
+      `INSERT INTO invite_codes (code_hash, label, organization_id, role, max_uses, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, now() + make_interval(days => $6), $7) RETURNING *`,
+      [hashInviteCode(code), input.label, input.organizationId ?? null, input.role ?? null, input.maxUses, input.expiresInDays, userRef(user)],
+    );
+    await this.audit.record({
+      ...actor(user),
+      organizationId: input.organizationId ?? null,
+      action: 'platform.invite_create',
+      resourceType: 'invite_code',
+      resourceId: row.id,
+      metadata: { label: input.label, maxUses: input.maxUses, expiresInDays: input.expiresInDays, role: input.role ?? null },
+    });
+    return { id: row.id, code, label: row.label, maxUses: row.max_uses, expiresAt: row.expires_at, organizationId: row.organization_id, role: row.role };
+  }
+
+  @Doc('Revoke invite code')
+  @Post('invites/:id/revoke')
+  @HttpCode(200)
+  async revokeInvite(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
+    this.requireStaff(user);
+    const row = await this.db.one(`UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 RETURNING id, organization_id`, [id]);
+    if (!row) throw new NotFoundException({ code: 'not_found' });
+    await this.audit.record({ ...actor(user), organizationId: row.organization_id, action: 'platform.invite_revoke', resourceType: 'invite_code', resourceId: id });
+    return { id, status: 'revoked' };
+  }
 
   @Doc('Organizations')
   @Get('organizations')
   async organizations(@CurrentUser() user: AuthUser) {
-    if (!user.isPlatformAdmin || user.scope) throw new ForbiddenException({ code: 'platform_admin_only' });
+    this.requireStaff(user);
     const rows = await this.db.query(
       `SELECT o.id, o.name, o.slug, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.created_at,
          (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members,

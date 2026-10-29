@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useState } from 'react';
 import { api } from '../api';
 import { ago, dateTime } from '../format';
-import { ErrorBox, Modal, useNow, usePoll, useToast } from '../components/ui';
+import { CopyButton, ErrorBox, Modal, useNow, usePoll, useToast } from '../components/ui';
 import { useSession } from '../session';
 
 type Limits = { devices: number; projects: number; rules: number; apiKeys: number; webhooks: number };
@@ -135,6 +135,7 @@ export function PlatformPage() {
           </table>
         </div>
       </section>
+      <InvitesSection orgs={items ?? []} />
       {editing && (
         <PlanModal
           org={editing}
@@ -199,6 +200,222 @@ function PlanModal({ org, plans, onClose, onSaved }: { org: PlatformOrg; plans: 
           </label>
         </div>
         {base && <p className="muted small">Rules, API keys and webhooks follow the {plan} plan: {base.maxRules} rules, {base.maxApiKeys} keys, {base.maxWebhooks} webhooks.</p>}
+      </form>
+    </Modal>
+  );
+}
+
+interface Invite {
+  id: string;
+  label: string;
+  organizationId: string | null;
+  organizationName: string | null;
+  role: string | null;
+  maxUses: number;
+  usedCount: number;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  status: 'active' | 'expired' | 'used_up' | 'revoked';
+}
+const STATUS_LABEL: Record<Invite['status'], string> = { active: 'active', expired: 'expired', used_up: 'used up', revoked: 'revoked' };
+
+/** Invite codes: sign-up stays closed; each batch or customer gets a code with limited uses and an expiry. */
+function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
+  const toast = useToast();
+  const [items, setItems] = useState<Invite[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<{ code: string; label: string } | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setItems((await api<{ items: Invite[] }>('GET', '/platform/invites')).items);
+    } catch (e) {
+      setError(e);
+    }
+  }, []);
+  usePoll(load, 60_000, [load]);
+
+  async function revoke(i: Invite) {
+    if (!confirm(`Revoke “${i.label}”? Nobody can sign up with it afterwards; accounts already created stay.`)) return;
+    try {
+      await api('POST', `/platform/invites/${i.id}/revoke`);
+      toast('Invite code revoked');
+      void load();
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  return (
+    <section className="panel" style={{ marginTop: 20 }}>
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Invite codes</h3>
+          <p className="muted small" style={{ margin: '4px 0 0' }}>
+            Sign-up is invite-only. Give each class or customer a code: it works for a limited number of people until it expires or you revoke it.
+          </p>
+        </div>
+        <button className="btn primary" onClick={() => setCreating(true)}>
+          New invite code
+        </button>
+      </div>
+      <ErrorBox error={error} />
+      <div className="table-wrap">
+        <table className="grid">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Used</th>
+              <th className="hide-sm">Joins</th>
+              <th>Expires</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {(items ?? []).map((i) => (
+              <tr key={i.id} style={i.status !== 'active' ? { opacity: 0.6 } : undefined}>
+                <td>
+                  <b>{i.label}</b>
+                  <div className="muted small">created {dateTime(i.createdAt)}</div>
+                </td>
+                <td>
+                  {i.usedCount} <span className="muted small">/ {i.maxUses}</span>
+                </td>
+                <td className="hide-sm">{i.organizationName ? `${i.organizationName} (${i.role})` : <span className="muted">own organization</span>}</td>
+                <td>{dateTime(i.expiresAt).split(',')[0]}</td>
+                <td>
+                  <span className={`pill${i.status === 'active' ? ' ok' : ''}`}>{STATUS_LABEL[i.status]}</span>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  {i.status === 'active' && (
+                    <button className="btn small quiet danger" onClick={() => void revoke(i)}>
+                      Revoke
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {items && !items.length && (
+              <tr>
+                <td colSpan={6} className="muted small">
+                  No invite codes yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {creating && (
+        <InviteModal
+          orgs={orgs}
+          onClose={() => setCreating(false)}
+          onCreated={(c) => {
+            setCreating(false);
+            setCreated(c);
+            void load();
+          }}
+        />
+      )}
+      {created && (
+        <Modal open onClose={() => setCreated(null)} title={`Invite code for ${created.label}`} footer={<button className="btn primary" onClick={() => setCreated(null)}>Done</button>}>
+          <div className="note">This code is shown only now. ARC Cloud stores just a scrambled version of it. If it is lost, revoke it and create a new one.</div>
+          <p style={{ fontSize: 26, fontWeight: 700, letterSpacing: 2, textAlign: 'center', margin: '18px 0' }} className="mono">
+            {created.code}
+          </p>
+          <div className="row" style={{ justifyContent: 'center', gap: 8 }}>
+            <CopyButton text={created.code} label="Copy code" />
+            <CopyButton text={`${window.location.origin}/?invite=${encodeURIComponent(created.code)}`} label="Copy sign-up link" />
+          </div>
+          <p className="muted small" style={{ marginTop: 14 }}>
+            The sign-up link opens the form with the code filled in. Share it only with the people it is meant for: anyone with the code can create an account
+            until it is used up or expires.
+          </p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+function InviteModal({ orgs, onClose, onCreated }: { orgs: PlatformOrg[]; onClose: () => void; onCreated: (c: { code: string; label: string }) => void }) {
+  const [label, setLabel] = useState('');
+  const [maxUses, setMaxUses] = useState('60');
+  const [days, setDays] = useState('14');
+  const [orgId, setOrgId] = useState('');
+  const [role, setRole] = useState('engineer');
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api<{ code: string; label: string }>('POST', '/platform/invites', {
+        label: label.trim(),
+        maxUses: Number(maxUses),
+        expiresInDays: Number(days),
+        ...(orgId ? { organizationId: orgId, role } : {}),
+      });
+      onCreated(r);
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="New invite code"
+      footer={
+        <>
+          <button className="btn quiet" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" form="invite-form" disabled={busy}>
+            Create code
+          </button>
+        </>
+      }
+    >
+      <form id="invite-form" className="form" onSubmit={submit}>
+        <ErrorBox error={error} />
+        <label className="field">
+          Label
+          <span className="hint">Who it is for, e.g. “Anurag University ECE batch, Nov 2026”.</span>
+          <input required maxLength={120} value={label} onChange={(e) => setLabel(e.target.value)} />
+        </label>
+        <div className="form-row">
+          <label className="field">
+            How many people
+            <input type="number" required min={1} max={10000} value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
+          </label>
+          <label className="field">
+            Valid for (days)
+            <input type="number" required min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} />
+          </label>
+        </div>
+        <label className="field">
+          After sign-up
+          <select value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+            <option value="">Each person creates their own organization (students, separate customers)</option>
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>
+                Join {o.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {orgId && (
+          <label className="field">
+            Role in that organization
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="viewer">Viewer: sees dashboards</option>
+              <option value="engineer">Engineer: manages devices</option>
+              <option value="org_admin">Admin: manages people and settings</option>
+            </select>
+          </label>
+        )}
       </form>
     </Modal>
   );
