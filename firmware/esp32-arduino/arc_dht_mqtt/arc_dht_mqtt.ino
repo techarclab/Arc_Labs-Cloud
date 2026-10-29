@@ -191,23 +191,72 @@ void onMessage(char *topic, byte *payload, unsigned int length) {
   }
 }
 
+// Explains a failed connection step by step (Wi-Fi, DNS, TCP, TLS, memory), at most every 30 s.
+// Turns a bare "rc=-2" into the actual cause, without a debugger.
+void diagnoseConnectFailure() {
+  static unsigned long last = 0;
+  if (last && millis() - last < 30000) return;
+  last = millis();
+  Serial.println("--- connection diagnostics ---");
+  Serial.printf("wifi   rssi %d dBm, ip %s, gateway %s, dns %s\n", WiFi.RSSI(), WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str());
+  IPAddress ip;
+  if (!WiFi.hostByName(MQTT_HOST, ip) || ip == IPAddress(0, 0, 0, 0)) {
+    Serial.printf("dns    FAILED to resolve %s via %s -> the network's DNS is not answering (restart the router, or use another network)\n",
+                  MQTT_HOST, WiFi.dnsIP().toString().c_str());
+  } else {
+    Serial.printf("dns    %s -> %s\n", MQTT_HOST, ip.toString().c_str());
+    WiFiClient probe;   // plain TCP only: separates "port unreachable" from a TLS problem
+    unsigned long t0 = millis();
+    if (probe.connect(ip, MQTT_PORT, 5000)) {
+      Serial.printf("tcp    %s:%d reachable (%lu ms)\n", ip.toString().c_str(), MQTT_PORT, millis() - t0);
+      probe.stop();
+    } else {
+      Serial.printf("tcp    %s:%d NOT reachable -> blocked by this network/firewall, or the broker is down\n", ip.toString().c_str(), MQTT_PORT);
+    }
+  }
+  char err[160] = "";
+  int code = net.lastError(err, sizeof err);
+  Serial.printf("tls    last error %d (-0x%04X): %s\n", code, code < 0 ? -code : code, err[0] ? err : "(none)");
+  Serial.printf("memory free heap %u bytes, largest block %u bytes (TLS needs ~40 KB)\n", (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  Serial.println("------------------------------");
+}
+
+// Retry delay after failed broker connections: 5 s, 10 s, 20 s ... capped at 5 min, plus up to 25% random jitter.
+// Fixed 5 s retries made the board look like an attack to the router during a server outage (it was blocked for
+// ~80 min), and would make a whole fleet hit the broker at the same instant when it comes back.
+unsigned long backoffMs(uint32_t failures) {
+  unsigned long base = 5000UL << (failures > 6 ? 6 : failures);   // 5 s .. 320 s
+  if (base > 300000UL) base = 300000UL;
+  return base + esp_random() % (base / 4 + 1);
+}
+
 void connectMqtt() {
+  static uint32_t failures = 0;
   while (!mqtt.connected()) {
     Serial.printf("MQTT %s:%d connecting... ", MQTT_HOST, MQTT_PORT);
     // clientId and username must both be the device UUID.
     if (mqtt.connect(arcCfg.deviceId.c_str(), arcCfg.deviceId.c_str(), arcCfg.devicePassword.c_str())) {
       Serial.println("ok");
+      failures = 0;
       arcOtaConfirmBoot();                 // a freshly-updated image proved it can reach the cloud
       mqtt.subscribe(topicCommands.c_str(), 1);   // the cloud re-sends current switch values ~2 s after this
       publishState();
     } else {
       int rc = mqtt.state();
       if (rc == 4 || rc == 5) Serial.printf("refused rc=%d: wrong deviceId/devicePassword (re-provision with a new PROVISION line), or the device is suspended/revoked\n", rc);
-      else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (check internet, MQTT_HOST, port 8883 not blocked, BROKER_CA)");
+      else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (details below)");
       else Serial.printf("failed rc=%d\n", rc);
-      Serial.println("retry in 5 s");
+      if (rc != 4 && rc != 5) diagnoseConnectFailure();
+      unsigned long wait = backoffMs(failures++);
+      Serial.printf("retry in %lu s\n", wait / 1000);
       arcOtaRollbackWatchdog();
-      waitMs(5000);
+      unsigned long start = millis();
+      while (millis() - start < wait) {   // keep the rollback watchdog and serial commands alive while waiting
+        arcOtaRollbackWatchdog();
+        waitMs(1000);
+      }
     }
   }
 }
