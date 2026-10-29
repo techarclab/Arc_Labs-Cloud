@@ -223,12 +223,23 @@ void diagnoseConnectFailure() {
   Serial.println("------------------------------");
 }
 
+// Retry delay after failed broker connections: 5 s, 10 s, 20 s ... capped at 5 min, plus up to 25% random jitter.
+// Fixed 5 s retries made the board look like an attack to the router during a server outage (it was blocked for
+// ~80 min), and would make a whole fleet hit the broker at the same instant when it comes back.
+unsigned long backoffMs(uint32_t failures) {
+  unsigned long base = 5000UL << (failures > 6 ? 6 : failures);   // 5 s .. 320 s
+  if (base > 300000UL) base = 300000UL;
+  return base + esp_random() % (base / 4 + 1);
+}
+
 void connectMqtt() {
+  static uint32_t failures = 0;
   while (!mqtt.connected()) {
     Serial.printf("MQTT %s:%d connecting... ", MQTT_HOST, MQTT_PORT);
     // clientId and username must both be the device UUID.
     if (mqtt.connect(arcCfg.deviceId.c_str(), arcCfg.deviceId.c_str(), arcCfg.devicePassword.c_str())) {
       Serial.println("ok");
+      failures = 0;
       arcOtaConfirmBoot();                 // a freshly-updated image proved it can reach the cloud
       mqtt.subscribe(topicCommands.c_str(), 1);   // the cloud re-sends current switch values ~2 s after this
       publishState();
@@ -238,9 +249,14 @@ void connectMqtt() {
       else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (details below)");
       else Serial.printf("failed rc=%d\n", rc);
       if (rc != 4 && rc != 5) diagnoseConnectFailure();
-      Serial.println("retry in 5 s");
+      unsigned long wait = backoffMs(failures++);
+      Serial.printf("retry in %lu s\n", wait / 1000);
       arcOtaRollbackWatchdog();
-      waitMs(5000);
+      unsigned long start = millis();
+      while (millis() - start < wait) {   // keep the rollback watchdog and serial commands alive while waiting
+        arcOtaRollbackWatchdog();
+        waitMs(1000);
+      }
     }
   }
 }
