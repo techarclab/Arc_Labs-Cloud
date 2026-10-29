@@ -191,6 +191,38 @@ void onMessage(char *topic, byte *payload, unsigned int length) {
   }
 }
 
+// Explains a failed connection step by step (Wi-Fi, DNS, TCP, TLS, memory), at most every 30 s.
+// Turns a bare "rc=-2" into the actual cause, without a debugger.
+void diagnoseConnectFailure() {
+  static unsigned long last = 0;
+  if (last && millis() - last < 30000) return;
+  last = millis();
+  Serial.println("--- connection diagnostics ---");
+  Serial.printf("wifi   rssi %d dBm, ip %s, gateway %s, dns %s\n", WiFi.RSSI(), WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str());
+  IPAddress ip;
+  if (!WiFi.hostByName(MQTT_HOST, ip) || ip == IPAddress(0, 0, 0, 0)) {
+    Serial.printf("dns    FAILED to resolve %s via %s -> the network's DNS is not answering (restart the router, or use another network)\n",
+                  MQTT_HOST, WiFi.dnsIP().toString().c_str());
+  } else {
+    Serial.printf("dns    %s -> %s\n", MQTT_HOST, ip.toString().c_str());
+    WiFiClient probe;   // plain TCP only: separates "port unreachable" from a TLS problem
+    unsigned long t0 = millis();
+    if (probe.connect(ip, MQTT_PORT, 5000)) {
+      Serial.printf("tcp    %s:%d reachable (%lu ms)\n", ip.toString().c_str(), MQTT_PORT, millis() - t0);
+      probe.stop();
+    } else {
+      Serial.printf("tcp    %s:%d NOT reachable -> blocked by this network/firewall, or the broker is down\n", ip.toString().c_str(), MQTT_PORT);
+    }
+  }
+  char err[160] = "";
+  int code = net.lastError(err, sizeof err);
+  Serial.printf("tls    last error %d (-0x%04X): %s\n", code, code < 0 ? -code : code, err[0] ? err : "(none)");
+  Serial.printf("memory free heap %u bytes, largest block %u bytes (TLS needs ~40 KB)\n", (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  Serial.println("------------------------------");
+}
+
 void connectMqtt() {
   while (!mqtt.connected()) {
     Serial.printf("MQTT %s:%d connecting... ", MQTT_HOST, MQTT_PORT);
@@ -203,8 +235,9 @@ void connectMqtt() {
     } else {
       int rc = mqtt.state();
       if (rc == 4 || rc == 5) Serial.printf("refused rc=%d: wrong deviceId/devicePassword (re-provision with a new PROVISION line), or the device is suspended/revoked\n", rc);
-      else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (check internet, MQTT_HOST, port 8883 not blocked, BROKER_CA)");
+      else if (rc == -2) Serial.println("failed rc=-2: no TCP/TLS connection (details below)");
       else Serial.printf("failed rc=%d\n", rc);
+      if (rc != 4 && rc != 5) diagnoseConnectFailure();
       Serial.println("retry in 5 s");
       arcOtaRollbackWatchdog();
       waitMs(5000);
