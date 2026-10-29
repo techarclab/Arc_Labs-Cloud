@@ -100,8 +100,8 @@ async function main() {
     await sleep(500);
 
     console.log('\nIdentity & tenancy');
-    const a = await http('POST', '/api/v1/auth/register', undefined, { email: 'alice@arclabs.test', displayName: 'Alice', password: 'correct-horse-battery' });
-    const b = await http('POST', '/api/v1/auth/register', undefined, { email: 'bob@other.test', displayName: 'Bob', password: 'correct-horse-staple' });
+    const a = await http('POST', '/api/v1/auth/register', undefined, { email: 'alice@arclabs.test', displayName: 'Alice', password: 'correct-horse-battery', acceptTerms: true });
+    const b = await http('POST', '/api/v1/auth/register', undefined, { email: 'bob@other.test', displayName: 'Bob', password: 'correct-horse-staple', acceptTerms: true });
     const tA = a.body.accessToken as string;
     const tB = b.body.accessToken as string;
     await check('users register and receive tokens', () => {
@@ -109,8 +109,8 @@ async function main() {
       assert.equal(b.status, 201);
     });
     await check('weak password and duplicate email rejected', async () => {
-      assert.equal((await http('POST', '/api/v1/auth/register', undefined, { email: 'x@y.test', displayName: 'X', password: 'short' })).status, 400);
-      assert.equal((await http('POST', '/api/v1/auth/register', undefined, { email: 'ALICE@arclabs.test', displayName: 'A', password: 'correct-horse-battery' })).status, 409);
+      assert.equal((await http('POST', '/api/v1/auth/register', undefined, { email: 'x@y.test', displayName: 'X', password: 'short', acceptTerms: true })).status, 400);
+      assert.equal((await http('POST', '/api/v1/auth/register', undefined, { email: 'ALICE@arclabs.test', displayName: 'A', password: 'correct-horse-battery', acceptTerms: true })).status, 409);
     });
     await check('login works; wrong password gets 401', async () => {
       assert.equal((await http('POST', '/api/v1/auth/login', undefined, { email: 'alice@arclabs.test', password: 'correct-horse-battery' })).status, 200);
@@ -126,6 +126,75 @@ async function main() {
     await check('org + project created', () => {
       assert.ok(orgA.id && orgB.id && proj.id);
     });
+
+    console.log('\nInvites & consent (pilot onboarding)');
+    // A second API on the same database with sign-up closed, as on the pilot server.
+    const { MQTT_URL: _noBroker, ...closedEnv } = env;
+    procs.push(spawnSvc('api-closed', 'apps/api/dist/main.js', { ...closedEnv, PORT: '3200', INTERNAL_PORT: '3201', ALLOW_SIGNUP: 'false', RUN_MIGRATIONS: 'false' }));
+    const CLOSED = 'http://127.0.0.1:3200';
+    await waitFor(async () => (await fetch(`${CLOSED}/health/ready`)).ok, 'API with sign-up closed');
+    const closedRegister = async (body: Record<string, unknown>) => {
+      const r = await fetch(`${CLOSED}/api/v1/auth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json().catch(() => null) };
+    };
+    const student = (n: number, extra: Record<string, unknown> = {}) => ({ email: `student${n}@college.test`, displayName: `Student ${n}`, password: 'student-password-123', acceptTerms: true, ...extra });
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+    let batch: any;
+    await check('consent is required to register', async () => {
+      const r = await http('POST', '/api/v1/auth/register', undefined, { email: 'noconsent@college.test', displayName: 'N', password: 'student-password-123' });
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+    });
+    await check('only platform admins create invite codes; the code is shown once', async () => {
+      assert.equal((await http('POST', '/api/v1/platform/invites', tB, { label: 'x', maxUses: 1, expiresInDays: 1 })).status, 403);
+      assert.equal((await http('GET', '/api/v1/platform/invites', tB)).status, 403);
+      batch = (await http('POST', '/api/v1/platform/invites', tA, { label: 'College batch Nov 2026', maxUses: 2, expiresInDays: 30 })).body;
+      assert.match(batch.code, /^ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+      const list = (await http('GET', '/api/v1/platform/invites', tA)).body.items;
+      const item = list.find((i: any) => i.id === batch.id);
+      assert.equal(item.status, 'active');
+      assert.equal(item.code, undefined, 'the list never returns codes');
+      const stored = await sql(`SELECT code_hash FROM invite_codes WHERE id = $1`, [batch.id]);
+      assert.notEqual(stored[0].code_hash, batch.code, 'only a hash is stored');
+    });
+    await check('sign-up closed: registration needs a valid invite code', async () => {
+      assert.equal((await closedRegister(student(1))).body.code, 'invite_required');
+      assert.equal((await closedRegister(student(1, { inviteCode: 'ARC-AAAA-BBBB-CCCC' }))).body.code, 'invite_invalid');
+      const ok = await closedRegister(student(1, { inviteCode: batch.code.toLowerCase().replace(/-/g, ' ') }));
+      assert.equal(ok.status, 201, JSON.stringify(ok.body));
+      const row = (await sql(`SELECT terms_accepted_at, terms_version, invite_id FROM users WHERE email = 'student1@college.test'`))[0];
+      assert.ok(row.terms_accepted_at && row.terms_version, 'consent recorded');
+      assert.equal(row.invite_id, batch.id);
+    });
+    await check('invite limits: uses counted atomically, duplicate email does not burn a use, used-up code refused', async () => {
+      assert.equal((await closedRegister(student(1, { inviteCode: batch.code }))).status, 409);
+      const second = await closedRegister(student(2, { inviteCode: batch.code }));
+      assert.equal(second.status, 201, JSON.stringify(second.body));
+      assert.equal((await closedRegister(student(3, { inviteCode: batch.code }))).body.code, 'invite_invalid');
+      const item = (await http('GET', '/api/v1/platform/invites', tA)).body.items.find((i: any) => i.id === batch.id);
+      assert.equal(item.usedCount, 2);
+      assert.equal(item.status, 'used_up');
+    });
+    await check('expired and revoked codes are refused', async () => {
+      const exp = (await http('POST', '/api/v1/platform/invites', tA, { label: 'expired', maxUses: 5, expiresInDays: 1 })).body;
+      await sql(`UPDATE invite_codes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [exp.id]);
+      assert.equal((await closedRegister(student(4, { inviteCode: exp.code }))).body.code, 'invite_invalid');
+      const rev = (await http('POST', '/api/v1/platform/invites', tA, { label: 'revoked', maxUses: 5, expiresInDays: 1 })).body;
+      assert.equal((await http('POST', `/api/v1/platform/invites/${rev.id}/revoke`, tA)).status, 200);
+      assert.equal((await closedRegister(student(4, { inviteCode: rev.code }))).body.code, 'invite_invalid');
+    });
+    await check('an invite can add the new user to an organization with a role', async () => {
+      assert.equal((await http('POST', '/api/v1/platform/invites', tA, { label: 'bad', maxUses: 1, expiresInDays: 1, organizationId: orgA.id })).status, 400);
+      const team = (await http('POST', '/api/v1/platform/invites', tA, { label: 'ARC Labs viewers', maxUses: 1, expiresInDays: 7, organizationId: orgA.id, role: 'viewer' })).body;
+      const r = await closedRegister(student(5, { inviteCode: team.code }));
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      const me = await (await fetch(`${CLOSED}/api/v1/auth/me`, { headers: { authorization: `Bearer ${r.body.accessToken}` } })).json();
+      assert.deepEqual(me.memberships.map((m: any) => [m.id, m.role]), [[orgA.id, 'viewer']]);
+    });
+    await check('tenant role cannot read invite codes', async () => {
+      const r = await sql(`SELECT has_table_privilege('arc_tenant', 'invite_codes', 'SELECT') AS can`);
+      assert.equal(r[0].can, false);
+    });
+    await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
     await check('metric definitions set', async () => {
       const r = await http('PUT', `/api/v1/projects/${proj.id}/metric-definitions`, tA, {
         metrics: [

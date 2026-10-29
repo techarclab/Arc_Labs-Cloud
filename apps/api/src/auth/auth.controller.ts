@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
 import { hashSecret, verifySecret } from '../common/crypto';
+import { hashInviteCode, TERMS_VERSION } from '../common/invites';
 import { AuthUser, CurrentUser, parse, Public } from '../common/http';
 import { Db } from '../db/db.service';
 
@@ -15,6 +16,10 @@ const registerBody = z.object({
   email: z.email().max(254),
   displayName: z.string().trim().min(1).max(120),
   password: z.string().min(12, 'password must be at least 12 characters').max(256),
+  /** Required when sign-up is closed (ALLOW_SIGNUP=false); always checked when given. */
+  inviteCode: z.string().trim().max(64).optional(),
+  /** The person confirmed they are 18 or older and accepted the privacy notice (TERMS_VERSION). */
+  acceptTerms: z.literal(true, { message: 'accept the privacy notice to create an account' }),
 });
 
 const loginBody = z.object({
@@ -54,16 +59,50 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
   async register(@Body() body: unknown) {
-    if (!loadConfig().ALLOW_SIGNUP) throw new ForbiddenException({ code: 'signup_disabled' });
     const input = parse(registerBody, body);
+    if (!input.inviteCode && !loadConfig().ALLOW_SIGNUP) throw new ForbiddenException({ code: 'invite_required' });
     const passwordHash = await hashSecret(input.password);
     try {
-      const user = await this.db.one(
-        `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, display_name, created_at`,
-        [input.email, input.displayName, passwordHash],
-      );
-      await this.audit.record({ actorType: 'user', actorId: user.id, action: 'user.register', resourceType: 'user', resourceId: user.id });
+      const user = await this.db.tx(async (c) => {
+        // Claim one use of the invite atomically; a failed insert below rolls the claim back.
+        let invite: { id: string; organization_id: string | null; role: string | null } | undefined;
+        if (input.inviteCode) {
+          invite = (
+            await c.query(
+              `UPDATE invite_codes SET used_count = used_count + 1
+               WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+               RETURNING id, organization_id, role`,
+              [hashInviteCode(input.inviteCode)],
+            )
+          ).rows[0];
+          // One answer for unknown, expired, revoked and used-up codes: nothing to learn by guessing.
+          if (!invite) throw new ForbiddenException({ code: 'invite_invalid' });
+        }
+        const u = (
+          await c.query(
+            `INSERT INTO users (email, display_name, password_hash, terms_accepted_at, terms_version, invite_id)
+             VALUES ($1, $2, $3, now(), $4, $5)
+             RETURNING id, email, display_name, created_at`,
+            [input.email, input.displayName, passwordHash, TERMS_VERSION, invite?.id ?? null],
+          )
+        ).rows[0];
+        if (invite?.organization_id) {
+          await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [invite.organization_id, u.id, invite.role]);
+        }
+        await this.audit.record(
+          {
+            actorType: 'user',
+            actorId: u.id,
+            organizationId: invite?.organization_id ?? undefined,
+            action: 'user.register',
+            resourceType: 'user',
+            resourceId: u.id,
+            metadata: { termsVersion: TERMS_VERSION, ...(invite ? { inviteId: invite.id } : {}) },
+          },
+          c,
+        );
+        return u;
+      });
       return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });

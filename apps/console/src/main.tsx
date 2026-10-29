@@ -19,6 +19,7 @@ import { CommandTypesPage } from './pages/Commands';
 import { FirmwarePage } from './pages/Firmware';
 import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
+import { PrivacyPage } from './pages/Privacy';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -103,6 +104,7 @@ createRoot(document.getElementById('root')!).render(
         <SessionProvider>
           <Routes>
             <Route path="/lab" element={<LabPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="*" element={<Gate />} />
           </Routes>
         </SessionProvider>

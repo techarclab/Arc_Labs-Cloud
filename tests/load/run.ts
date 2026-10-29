@@ -48,7 +48,7 @@ async function main() {
     );
     await waitFor(async () => (await fetch('http://127.0.0.1:19100/health/ready')).ok, 'worker');
 
-    const u = await http('POST', '/api/v1/auth/register', undefined, { email: `load-${Date.now()}@arclabs.test`, displayName: 'Load', password: 'load-test-password-123' });
+    const u = await http('POST', '/api/v1/auth/register', undefined, { email: `load-${Date.now()}@arclabs.test`, displayName: 'Load', password: 'load-test-password-123', acceptTerms: true });
     const t = u.body.accessToken;
     const org = (await http('POST', '/api/v1/organizations', t, { name: 'Load test', slug: `load-${Date.now()}` })).body;
     await sql(`UPDATE organizations SET plan = 'enterprise', max_devices = 100000 WHERE id = $1`, [org.id]);

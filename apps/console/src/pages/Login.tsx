@@ -125,10 +125,13 @@ function SignalScene() {
 
 export function LoginPage() {
   const { signIn } = useSession();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'signup' : 'signin'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  // A shared sign-up link (…/?invite=ARC-XXXX-XXXX-XXXX) opens the sign-up form with the code filled in.
+  const [invite, setInvite] = useState(() => new URLSearchParams(window.location.search).get('invite') ?? '');
+  const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
@@ -170,7 +173,13 @@ export function LoginPage() {
       const r =
         mode === 'signin'
           ? await api('POST', '/auth/login', { email, password })
-          : await api('POST', '/auth/register', { email, password, displayName: name || email.split('@')[0] });
+          : await api('POST', '/auth/register', {
+              email,
+              password,
+              displayName: name || email.split('@')[0],
+              ...(invite.trim() ? { inviteCode: invite.trim() } : {}),
+              acceptTerms: accepted,
+            });
       await signIn(r.accessToken);
     } catch (err) {
       setError(err);
@@ -248,6 +257,25 @@ export function LoginPage() {
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             />
           </label>
+          {mode === 'signup' && (
+            <>
+              <label className="field">
+                Invite code
+                <span className="hint">From your instructor or ARC LABS, e.g. ARC-7KQ3-M9TX-4HPW.</span>
+                <input value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
+              </label>
+              <label className="consent">
+                <input type="checkbox" required checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+                <span>
+                  I am 18 or older and I agree to the{' '}
+                  <a href="/privacy" target="_blank" rel="noopener">
+                    privacy notice
+                  </a>
+                  .
+                </span>
+              </label>
+            </>
+          )}
           <ErrorBox error={error} />
           <button className="btn primary" disabled={busy} type="submit">
             {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
