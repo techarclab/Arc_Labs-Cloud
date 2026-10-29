@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Db, Queryable } from '../db/db.service';
 import { emitEvent } from '../common/events';
 import { MqttPublisher } from '../common/mqtt-publisher.service';
@@ -26,11 +26,42 @@ export function mapCommand(c: any) {
  * A command is only "acknowledged" when the device confirms it (MQTT cmd-ack or HTTP ack).
  */
 @Injectable()
-export class CommandsService {
+export class CommandsService implements OnModuleInit {
+  private readonly log = new Logger('Commands');
+  private republishing = false;
+
   constructor(
     private readonly db: Db,
     private readonly mqtt: MqttPublisher,
   ) {}
+
+  onModuleInit() {
+    this.mqtt.onConnected(() => void this.publishQueued());
+  }
+
+  /**
+   * Delivers commands that were created while the broker was unreachable (still 'queued', not expired), oldest
+   * first. Called after every broker (re)connect, so nothing created during an outage is silently dropped.
+   */
+  async publishQueued(): Promise<number> {
+    if (this.republishing) return 0;
+    this.republishing = true;
+    try {
+      const rows = await this.db.query(`SELECT * FROM commands WHERE status = 'queued' AND expires_at > now() ORDER BY created_at LIMIT 500`);
+      let sent = 0;
+      for (const c of rows) {
+        const r = await this.publish(c);
+        if (r?.status === 'published') sent++;
+      }
+      if (rows.length) this.log.log(`delivered ${sent}/${rows.length} command(s) queued while the broker was unreachable`);
+      return sent;
+    } catch (e) {
+      this.log.error(`could not deliver queued commands: ${(e as Error).message}`);
+      return 0;
+    } finally {
+      this.republishing = false;
+    }
+  }
 
   async create(
     q: Queryable,

@@ -68,14 +68,16 @@ log "running database migrations"
 
 "${COMPOSE[@]}" up -d --remove-orphans
 for _ in $(seq 1 60); do
-  if curl -fsS --max-time 5 "https://$API_HOST/health/ready" >/dev/null; then
-    log "healthy: https://$API_HOST"
+  # Healthy = API answers AND its MQTT publisher reached the broker (commands, switches and OTA need it).
+  if curl -fsS --max-time 5 "https://$API_HOST/health/ready" 2>/dev/null | grep -q '"mqtt":"connected"'; then
+    log "healthy: https://$API_HOST (API connected to the broker)"
     docker image prune -f >/dev/null
     exit 0
   fi
   sleep 5
 done
-log "API did not become healthy; recent logs:"
+log "API not healthy, or not connected to the broker: $(curl -sS --max-time 5 "https://$API_HOST/health/ready" 2>&1 || true)"
+log "recent logs:"
 "${COMPOSE[@]}" ps
 "${COMPOSE[@]}" logs --tail 80 api emqx worker caddy || true
 exit 1

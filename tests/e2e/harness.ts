@@ -67,10 +67,36 @@ export async function waitFor(fn: () => Promise<boolean>, what: string, timeoutM
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/** Test switches for the stand-in broker. */
+export const brokerControl = {
+  /** Refuse the API's own connection (client id svc-api-*), like EMQX does while the API's hooks are not up yet. */
+  refuseApiLogins: false,
+};
+
+let currentBroker: Aedes | null = null;
+
+/** Drops the stand-in broker's connections whose client id starts with prefix (they reconnect by themselves). */
+export function dropBrokerClients(prefix: string): number {
+  let n = 0;
+  for (const [id, client] of Object.entries(((currentBroker as any)?.clients ?? {}) as Record<string, { close(): void }>)) {
+    if (id.startsWith(prefix)) {
+      client.close();
+      n++;
+    }
+  }
+  return n;
+}
+
 export async function startBroker(): Promise<{ server: Server; broker: Aedes }> {
   const broker = await Aedes.createBroker({ id: 'e2e' });
+  currentBroker = broker;
   broker.authenticate = (client, username, password, cb) => {
     (client as any)._arcUser = username; // EMQX passes ${username} to the authz hook; mirror that
+    if (brokerControl.refuseApiLogins && String(client.id).startsWith('svc-api')) {
+      const e: any = new Error('denied');
+      e.returnCode = 5;
+      return cb(e, false);
+    }
     hook('/internal/mqtt/authenticate', { username, password: password?.toString() ?? '', clientid: client.id })
       .then((r) => {
         if (r.result === 'allow') return cb(null, true);
