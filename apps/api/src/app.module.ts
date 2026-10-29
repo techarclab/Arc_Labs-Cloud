@@ -1,4 +1,4 @@
-import { Controller, Get, Module, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Module, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantScopeInterceptor } from './common/tenant-scope.interceptor';
 import { BrokerAdmin } from './common/broker-admin.service';
@@ -28,7 +28,11 @@ import { OrgOpsController, PlatformController } from './organizations/org-ops.co
 @ApiTags('Health')
 @Controller('health')
 class HealthController {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    // Absent on the internal hooks server (InternalModule), which also mounts this controller.
+    @Optional() private readonly mqtt?: MqttPublisher,
+  ) {}
 
   @Public()
   @Get('live')
@@ -41,7 +45,8 @@ class HealthController {
   async ready() {
     try {
       await this.db.query('SELECT 1');
-      return { status: 'ok' };
+      // Informational only: readiness must not depend on the broker, because EMQX waits for a healthy API.
+      return this.mqtt ? { status: 'ok', mqtt: this.mqtt.connected ? 'connected' : 'disconnected' } : { status: 'ok' };
     } catch {
       throw new ServiceUnavailableException({ status: 'db_unavailable' });
     }

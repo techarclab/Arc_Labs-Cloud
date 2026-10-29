@@ -25,6 +25,9 @@ async function main() {
     clean: false,
     properties: cfg.MQTT_PROTOCOL_VERSION === 5 ? { sessionExpiryInterval: 3600 } : undefined,
     reconnectPeriod: 2000,
+    // Keep retrying after a refused CONNACK (e.g. the API that approves logins is restarting); mqtt.js otherwise
+    // stops reconnecting for good and ingestion silently halts.
+    reconnectOnConnackError: true,
     ca: cfg.MQTT_CA_FILE ? readFileSync(cfg.MQTT_CA_FILE) : undefined,
   });
 

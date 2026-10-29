@@ -11,6 +11,12 @@ import { loadConfig } from '../config';
 export class MqttPublisher implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger('MqttPublisher');
   private client: MqttClient | null = null;
+  private readonly connectListeners: Array<() => void> = [];
+
+  /** Runs fn after every (re)connect, e.g. to deliver commands queued while the broker was unreachable. */
+  onConnected(fn: () => void) {
+    this.connectListeners.push(fn);
+  }
 
   onModuleInit() {
     const cfg = loadConfig();
@@ -25,8 +31,23 @@ export class MqttPublisher implements OnModuleInit, OnModuleDestroy {
       protocolVersion: 4,
       reconnectPeriod: 3000,
       connectTimeout: 10_000,
+      // Keep retrying after the broker REFUSES a connection. mqtt.js otherwise stops for good after one refused
+      // CONNACK. That happens whenever this API restarts while EMQX is up: EMQX asks this same API (port 3001)
+      // to approve the login before that port is listening, so the first attempt is refused, and without this
+      // option the API never published to devices again (switches, commands, OTA) until it was restarted.
+      reconnectOnConnackError: true,
     });
-    this.client.on('connect', () => this.log.log(`connected to broker ${cfg.MQTT_URL}`));
+    this.client.on('connect', () => {
+      this.log.log(`connected to broker ${cfg.MQTT_URL}`);
+      for (const fn of this.connectListeners) {
+        try {
+          fn();
+        } catch (e) {
+          this.log.error(`connect listener failed: ${(e as Error).message}`);
+        }
+      }
+    });
+    this.client.on('offline', () => this.log.warn('broker connection lost; retrying every 3 s'));
     this.client.on('error', (e) => this.log.warn(`broker: ${e.message}`));
   }
 

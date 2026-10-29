@@ -18,6 +18,8 @@ import {
   spawnSvc,
   waitFor,
   startBroker,
+  brokerControl,
+  dropBrokerClients,
   connectDevice,
   pub,
   telemetry,
@@ -799,6 +801,31 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     }, 'ack');
     assert.deepEqual(done.result, { blinked: true });
     await eventually(async () => sinks.hooks.some((h) => h.headers['x-arc-event'] === 'command.updated' && JSON.parse(h.body).data.status === 'acknowledged'), 'command webhook');
+  });
+  await check('API recovers after the broker refuses its login, and delivers commands queued meanwhile', async () => {
+    // Regression (pilot, 2026-10-28): the API restarted while EMQX was up; EMQX refused its first login because
+    // the API's own hooks were not listening yet, and mqtt.js never retried. Switches, commands and OTA silently
+    // stopped reaching devices until the API was restarted again.
+    const ready = async () => (await (await fetch(`${API}/health/ready`)).json()) as { mqtt?: string };
+    assert.equal((await ready()).mqtt, 'connected');
+    brokerControl.refuseApiLogins = true;
+    try {
+      assert.equal(dropBrokerClients('svc-api'), 1, 'API connection found');
+      await eventually(async () => (await ready()).mqtt === 'disconnected', 'API offline');
+      await sleep(4000); // at least one refused reconnect (reconnectPeriod 3 s)
+      assert.equal((await ready()).mqtt, 'disconnected', 'refused while logins are refused');
+      const q = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 3 } });
+      assert.equal(q.status, 201, JSON.stringify(q.body));
+      assert.equal((await http('GET', `/api/v1/commands/${q.body.id}`, tA)).body.status, 'queued');
+      brokerControl.refuseApiLogins = false;
+      await eventually(async () => (await ready()).mqtt === 'connected', 'API reconnected after a refused login', 20000);
+      const msg = await eventually(async () => received.find((m) => m.commandId === q.body.id), 'queued command delivered after reconnect');
+      assert.deepEqual(msg.payload, { seconds: 3 });
+      assert.equal((await http('GET', `/api/v1/commands/${q.body.id}`, tA)).body.status, 'published');
+      await pub(c3!, d3.credentials.topics.telemetry.replace(/telemetry$/, 'cmd-ack'), { commandId: q.body.id, status: 'ok' });
+    } finally {
+      brokerControl.refuseApiLogins = false;
+    }
   });
   await check('commands expire when not acknowledged; failures recorded', async () => {
     const s1 = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 1 } });
