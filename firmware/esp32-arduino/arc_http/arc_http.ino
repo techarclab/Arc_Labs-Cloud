@@ -160,6 +160,7 @@ void readControls() {
 
 void setup() {
   Serial.begin(115200);
+  arcOtaCheckRollback();   // records an image that was rolled back, so it is never reinstalled
   pinMode(RELAY_PIN, OUTPUT);
   connectWiFi();
 }

@@ -898,6 +898,38 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     }, 'rollout completed');
     assert.deepEqual(final.devices.map((d: any) => d.status), ['succeeded', 'succeeded']);
   });
+  await check('OTA: cancelling a rollout or withdrawing a release closes its pending update commands', async () => {
+    // Regression (pilot, 2026-10-29): cancelled rollouts kept their ota.update commands open for 24 h and the
+    // worker re-sent them on every reconnect, so a device that rolled back reinstalled the same image in a loop.
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const key = await http('POST', '/api/v1/firmware/signing-keys', tA, { organizationId: orgA.id, name: 'Loop test key', publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString() });
+    assert.equal(key.status, 201, JSON.stringify(key.body));
+    const release = async (version: string) => {
+      const m = { deviceType: 'esp32-pump', version, url: `https://firmware.arclabs.test/pump-${version}.bin`, sha256: createHash('sha256').update(version).digest('hex'), sizeBytes: 4096 };
+      const canonical = JSON.stringify({ deviceType: m.deviceType, sha256: m.sha256, sizeBytes: m.sizeBytes, url: m.url, version: m.version });
+      const signature = sign('sha256', Buffer.from(canonical), { key: privateKey, dsaEncoding: 'der' }).toString('base64');
+      const rel = await http('POST', '/api/v1/firmware/releases', tA, { organizationId: orgA.id, ...m, signature, signingKeyId: key.body.id });
+      assert.equal(rel.status, 201, JSON.stringify(rel.body));
+      const ro = await http('POST', '/api/v1/firmware/rollouts', tA, { releaseId: rel.body.id, projectId: proj.id, percent: 100 });
+      assert.equal(ro.status, 201, JSON.stringify(ro.body));
+      return { rel: rel.body, ro: ro.body };
+    };
+    const openCommands = async (rolloutId: string) =>
+      (await sql(`SELECT c.status, c.error FROM firmware_rollout_devices rd JOIN commands c ON c.id = rd.command_id WHERE rd.rollout_id = $1`, [rolloutId])) as any;
+    const rowsOf = (r: any) => (Array.isArray(r) ? r : r.rows) as { status: string; error: string | null }[];
+
+    const a = await release('3.0.0');
+    assert.ok(rowsOf(await openCommands(a.ro.id)).length >= 1, 'commands were created');
+    assert.ok(rowsOf(await openCommands(a.ro.id)).every((c) => ['queued', 'published'].includes(c.status)));
+    const cancel = await http('PATCH', `/api/v1/firmware/rollouts/${a.ro.id}`, tA, { status: 'cancelled' });
+    assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+    assert.ok(rowsOf(await openCommands(a.ro.id)).every((c) => c.status === 'expired' && c.error === 'rollout cancelled'), 'cancel closes the commands');
+
+    const b = await release('3.0.1');
+    assert.ok(rowsOf(await openCommands(b.ro.id)).every((c) => ['queued', 'published'].includes(c.status)));
+    assert.equal((await http('POST', `/api/v1/firmware/releases/${b.rel.id}/withdraw`, tA)).status, 200);
+    assert.ok(rowsOf(await openCommands(b.ro.id)).every((c) => c.status === 'expired' && c.error === 'release withdrawn'), 'withdraw closes the commands');
+  });
 
   console.log('\nHardening (phase 6)');
   await check('quotas enforced from the organization plan', async () => {

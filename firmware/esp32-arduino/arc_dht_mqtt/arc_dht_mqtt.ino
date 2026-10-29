@@ -241,6 +241,7 @@ bool provisioned = false;
 void setup() {
   Serial.setRxBufferSize(2048);   // a PROVISION line is ~300 bytes; the default 256-byte buffer can overflow
   Serial.begin(115200);
+  arcOtaCheckRollback();   // records an image that was rolled back, so it is never reinstalled
   delay(300);
   Serial.printf("\n=== ARC Cloud: DHT + 2 LEDs (MQTT/TLS), firmware %s ===\n", FIRMWARE_VERSION);
   pinMode(LED1_PIN, OUTPUT);

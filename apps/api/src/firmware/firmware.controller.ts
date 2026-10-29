@@ -7,8 +7,8 @@ import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
 import { emitEvent } from '../common/events';
 import { actor, AuthUser, CurrentUser, label, parse, userRef, Uuid } from '../common/http';
-import { CommandsService } from '../commands/commands.service';
-import { Db } from '../db/db.service';
+import { CommandsService, mapCommand } from '../commands/commands.service';
+import { Db, Queryable } from '../db/db.service';
 
 /** Canonical manifest that releases are signed over (keys in this exact order). */
 export function canonicalManifest(m: { deviceType: string; version: string; url: string; sha256: string; sizeBytes: number }): string {
@@ -63,6 +63,25 @@ const rolloutBody = z.object({ releaseId: z.uuid(), projectId: z.uuid(), percent
 const rolloutUpdate = z.object({ percent: z.number().int().min(1).max(100).optional(), status: z.enum(['active', 'paused', 'cancelled']).optional() });
 
 const OTA_TTL_SECONDS = 24 * 3600;
+
+/**
+ * Expires the not-yet-acknowledged ota.update commands of the matching rollouts. Without this, cancelling a
+ * rollout or withdrawing a release left its commands open for 24 h, and the worker re-delivers open commands on
+ * every reconnect, so a device that rolled back reinstalled the same image again and again (seen on the pilot).
+ */
+async function closePendingOtaCommands(c: Queryable, rolloutFilter: string, params: unknown[], reason: string) {
+  const closed = (
+    await c.query(
+      `UPDATE commands SET status = 'expired', completed_at = now(), error = $${params.length + 1}
+       WHERE status IN ('queued', 'published')
+         AND id IN (SELECT command_id FROM firmware_rollout_devices WHERE ${rolloutFilter} AND command_id IS NOT NULL)
+       RETURNING *`,
+      [...params, reason],
+    )
+  ).rows;
+  for (const r of closed) await emitEvent(c, r.organization_id, 'command.updated', mapCommand(r));
+  return closed.length;
+}
 const ORDER_SQL = `md5(d.id::text || $2)`; // stable pseudo-random order per rollout
 
 function mapRelease(r: any) {
@@ -181,6 +200,8 @@ export class FirmwareController {
     await this.db.tx(async (c) => {
       await c.query(`UPDATE firmware_releases SET status = 'withdrawn' WHERE id = $1`, [id]);
       await c.query(`UPDATE firmware_rollouts SET status = 'cancelled', updated_at = now() WHERE release_id = $1 AND status IN ('active', 'paused')`, [id]);
+      // Every rollout of a withdrawn release, including ones cancelled earlier: none of its images may be installed.
+      await closePendingOtaCommands(c, `rollout_id IN (SELECT id FROM firmware_rollouts WHERE release_id = $1)`, [id], 'release withdrawn');
       await this.audit.record({ ...actor(user), organizationId: r.organization_id, action: 'firmware.withdraw', resourceType: 'firmware_release', resourceId: id }, c);
     });
     return { status: 'withdrawn' };
@@ -248,10 +269,13 @@ export class FirmwareController {
     await this.access.requireProject(user, o.project_id, 'org_admin');
     if (['completed', 'cancelled'].includes(o.status)) throw new ConflictException({ code: 'rollout_finished' });
     if (input.percent !== undefined && input.percent < o.percent) throw new BadRequestException({ code: 'cannot_shrink', message: 'A rollout can only be widened.' });
-    await this.db.query(
-      `UPDATE firmware_rollouts SET percent = COALESCE($2, percent), status = COALESCE($3, status), updated_at = now() WHERE id = $1`,
-      [id, input.percent ?? null, input.status ?? null],
-    );
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE firmware_rollouts SET percent = COALESCE($2, percent), status = COALESCE($3, status), updated_at = now() WHERE id = $1`,
+        [id, input.percent ?? null, input.status ?? null],
+      );
+      if (input.status === 'cancelled') await closePendingOtaCommands(c, `rollout_id = $1`, [id], 'rollout cancelled');
+    });
     await this.audit.record({ ...actor(user), organizationId: o.organization_id, action: 'firmware.rollout_update', resourceType: 'firmware_rollout', resourceId: id, metadata: input });
     if ((input.status ?? o.status) === 'active') await this.dispatch(id, user);
     return this.rollout(user, id);
