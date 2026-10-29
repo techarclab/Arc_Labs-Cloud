@@ -173,6 +173,7 @@ void publishTelemetry() {
 
 void setup() {
   Serial.begin(115200);
+  arcOtaCheckRollback();   // records an image that was rolled back, so it is never reinstalled
   bootId = esp_random();
   connectWiFi();
   configTime(0, 0, "pool.ntp.org", "time.google.com");

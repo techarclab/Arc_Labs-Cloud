@@ -6,7 +6,9 @@
 //   2. url, sha256, size and version are taken from that signed manifest only (never the loose fields);
 //   3. the manifest's deviceType must equal DEVICE_TYPE, and its version must be NEWER than FIRMWARE_VERSION
 //      (a replayed old, signed release cannot downgrade the device);
-//   4. the image is downloaded over certificate-verified HTTPS and its size + SHA-256 must match.
+//   4. the image is downloaded over certificate-verified HTTPS and its size + SHA-256 must match;
+//   5. a version that was already rolled back on this device is refused (no reinstall loop if the cloud
+//      offers it again). Call arcOtaCheckRollback() early in setup() to record rollbacks.
 // After the new image boots, call arcOtaConfirmBoot() once the device has reached the cloud. If it never does
 // (crash loop, bad Wi-Fi code), arcOtaRollbackWatchdog() rolls back to the previous image. Rollback needs the
 // bootloader option CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (on in the Arduino-ESP32 3.x prebuilt bootloader,
@@ -20,6 +22,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #include "esp_ota_ops.h"
 #include "arc_ota_verify.h"
 
@@ -30,6 +33,24 @@
 #ifndef ARC_OTA_CONFIRM_TIMEOUT_MS
 #define ARC_OTA_CONFIRM_TIMEOUT_MS (5UL * 60UL * 1000UL)  // new image must reach the cloud within 5 minutes
 #endif
+
+static const char *ARC_OTA_NVS = "arc_ota";   // keys: "trying" (version being installed), "bad" (last rolled back)
+
+// Call early in setup(). If the image we last installed did not stick (rolled back by arcOtaRollbackWatchdog, or
+// by the bootloader after a crash loop), remember its version so arcOtaInstall refuses it from now on.
+inline void arcOtaCheckRollback() {
+  Preferences p;
+  if (!p.begin(ARC_OTA_NVS, false)) return;
+  String trying = p.getString("trying", "");
+  if (trying.length() && trying != FIRMWARE_VERSION) {
+    if (esp_ota_get_last_invalid_partition() != nullptr) {
+      p.putString("bad", trying);
+      Serial.printf("OTA: firmware %s was rolled back; this device will refuse it (publish a newer version)\n", trying.c_str());
+    }
+    p.remove("trying");
+  }
+  p.end();
+}
 
 // Keep the Arduino core from marking a freshly-updated image valid at boot: we confirm it only after the
 // device has proven it can reach the cloud (arcOtaConfirmBoot). Overrides the core's weak default.
@@ -59,6 +80,13 @@ inline String arcOtaInstall(JsonObject payload, const char *caBundle) {
   if (cmp == -2) return "version must be MAJOR.MINOR.PATCH";
   if (cmp == 0) return "up-to-date";
   if (cmp < 0) return String("downgrade to ") + version + " refused";
+  {
+    Preferences p;
+    p.begin(ARC_OTA_NVS, true);
+    String bad = p.getString("bad", "");
+    p.end();
+    if (bad == version) return String("version ") + version + " was rolled back on this device; publish a newer version";
+  }
   if (strncmp(url, "https://", 8) != 0) return "firmware url must be https://";
   if (strlen(expectedSha256) != 64 || expectedSize == 0) return "manifest is missing sha256/sizeBytes";
 
@@ -103,6 +131,12 @@ inline String arcOtaInstall(JsonObject payload, const char *caBundle) {
   for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
   if (strcasecmp(hex, expectedSha256) != 0) { Update.abort(); return "SHA-256 mismatch: image rejected"; }
   if (!Update.end(true)) return String("update failed: ") + Update.errorString();
+  {
+    Preferences p;   // if this image does not stick, arcOtaCheckRollback() marks this version as bad
+    p.begin(ARC_OTA_NVS, false);
+    p.putString("trying", version);
+    p.end();
+  }
   return "";
 }
 
@@ -122,6 +156,11 @@ inline void arcOtaConfirmBoot() {
   if (arcOtaPendingVerify()) {
     esp_ota_mark_app_valid_cancel_rollback();
     arcOtaPending = 0;
+    Preferences p;
+    if (p.begin(ARC_OTA_NVS, false)) {
+      p.remove("trying");
+      p.end();
+    }
     Serial.println("OTA: new firmware confirmed");
   }
 }
