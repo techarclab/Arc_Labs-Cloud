@@ -41,6 +41,16 @@ data "aws_iam_policy_document" "server" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
     resources = ["${aws_cloudwatch_log_group.app.arn}:*"]
   }
+  statement {
+    sid       = "PublishHealthMetrics" # deploy/aws/arc-monitor.sh; PutMetricData has no resource ARNs, so scope by namespace
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["ARC/Cloud"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "server" {

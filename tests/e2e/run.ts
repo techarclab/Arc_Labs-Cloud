@@ -898,17 +898,22 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     // stopped reaching devices until the API was restarted again.
     const ready = async () => (await (await fetch(`${API}/health/ready`)).json()) as { mqtt?: string };
     assert.equal((await ready()).mqtt, 'connected');
+    const deep = async () => (await fetch(`${API}/health/deep`)).status;
+    assert.equal(await deep(), 200, '/health/deep healthy');
     brokerControl.refuseApiLogins = true;
     try {
       assert.equal(dropBrokerClients('svc-api'), 1, 'API connection found');
       await eventually(async () => (await ready()).mqtt === 'disconnected', 'API offline');
       await sleep(4000); // at least one refused reconnect (reconnectPeriod 3 s)
       assert.equal((await ready()).mqtt, 'disconnected', 'refused while logins are refused');
+      assert.equal(await deep(), 503, '/health/deep fails while the API cannot publish (uptime check alerts)');
+      assert.equal((await fetch(`${API}/health/ready`)).status, 200, '/health/ready stays 200 so EMQX and Docker are not blocked');
       const q = await http('POST', `/api/v1/devices/${d3.device.id}/commands`, tA, { name: 'blink', payload: { seconds: 3 } });
       assert.equal(q.status, 201, JSON.stringify(q.body));
       assert.equal((await http('GET', `/api/v1/commands/${q.body.id}`, tA)).body.status, 'queued');
       brokerControl.refuseApiLogins = false;
       await eventually(async () => (await ready()).mqtt === 'connected', 'API reconnected after a refused login', 20000);
+      assert.equal(await deep(), 200, '/health/deep recovers');
       const msg = await eventually(async () => received.find((m) => m.commandId === q.body.id), 'queued command delivered after reconnect');
       assert.deepEqual(msg.payload, { seconds: 3 });
       assert.equal((await http('GET', `/api/v1/commands/${q.body.id}`, tA)).body.status, 'published');
