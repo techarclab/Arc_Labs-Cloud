@@ -22,7 +22,7 @@ variable "zone_name" {
 
 variable "alert_email" {
   type        = string
-  description = "Receives budget, health and Let's Encrypt expiry emails (confirm the SNS subscription mail)."
+  description = "Receives budget, health and uptime alert emails (confirm both SNS subscription mails: ap-south-1 and us-east-1). Also Caddy's ACME account contact; Let's Encrypt no longer sends expiry emails (ended June 2025), arc-monitor alerts instead."
 }
 
 variable "monthly_budget" {

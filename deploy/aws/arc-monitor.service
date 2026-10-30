@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish certificate expiry and worker health to CloudWatch (ARC/Cloud)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arc-monitor

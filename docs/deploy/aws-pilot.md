@@ -20,11 +20,13 @@ Account `756751967044` ("ARC Cloud", a member account of the ARC LABS AWS Organi
 | EBS gp3 30 GB | ~$3 |
 | RDS db.t4g.micro Single-AZ + 20 GB gp3 + backups | ~$18 |
 | Secrets Manager (2 secrets), S3, CloudFront, CloudWatch logs | ~$2.5 |
-| **Total** | **~$43 ≈ ₹4,100, ≈ ₹4,850 with 18% GST (AWS India)** |
+| Uptime checks: 2 Route 53 health checks, one with the HTTPS option; CloudWatch alarms and 3 custom metrics (mostly free tier) | ~$1–3.5 |
+| **Total** | **~$44–46.5, ≈ ₹4,950–5,250 with 18% GST (AWS India)** |
 
 Notes:
 - The t4g.medium price is derived (t4g.small is $0.0112/h; sizes double). The EBS and RDS storage prices are approximate.
 - Internet egress above the free allowance and CPU-credit surcharges are extra.
+- Route 53 health checks: $0.50/month each for AWS endpoints ($0.75 for non-AWS), plus $1 ($2) per optional feature such as HTTPS; up to 50 health checks on AWS endpoints are free. AWS's pricing page does not say whether a check on an Elastic IP counts as an AWS endpoint, hence the range: $1 if it does, $3.50 if not. Check the first bill.
 - An AWS Budgets alert (Terraform: `monthly_budget`, default $44) emails you at 80% of actual spend and at 100% of forecast.
 
 **Deliberately not included** (too expensive for this budget; see the target ADR for when to add them):
@@ -126,7 +128,7 @@ This takes about 20–40 minutes and does the following, in order:
 Then:
 
 - **Point the console at AWS.** In Wix, edit the existing `arcloud` CNAME and replace the Vercel value with the CloudFront name from `terraform output wix_console_cname`. The old Vercel console stays live until this edit, so the downtime is only DNS caching (≤ 1 hour).
-- **Confirm the SNS subscription email** that AWS sends to `alert_email`. No alarm reaches you until you do.
+- **Confirm both SNS subscription emails** that AWS sends to `alert_email`: `arc-cloud-pilot-alerts` (ap-south-1: server, database, certificates, worker) and `arc-cloud-pilot-uptime` (us-east-1: API and MQTT reachability; Route 53 metrics exist only there). No alarm reaches you until you do.
 - **Check the server:**
   ```bash
   curl https://api.arcloud.arclabs.in/health/ready
@@ -233,6 +235,18 @@ sudo arc-deploy main                                    # applies newer migratio
 | Database restore | RDS console → `arc-cloud-pilot` → Restore to point in time (7 days) |
 | Secrets | Secrets Manager `arc-cloud/pilot/app` (app) and the RDS-managed master secret. They are rewritten into `/etc/arc-cloud/*.env` (0600) on every deploy |
 | Spend | Billing → Budgets → `arc-cloud-pilot-monthly` |
+
+**Alerts (email via SNS; each also emails when it recovers):**
+
+| Alarm | Fires when | First thing to check |
+|---|---|---|
+| `api-down` (us-east-1) | `https://api.…/health/deep` fails for 3 min from Route 53's checkers: server, Caddy, API or database down, the API lost its broker connection, or DNS broken | `docker ps`; `docker exec arc-cloud-api-1 wget -qO- http://127.0.0.1:3000/health/deep`; `docker logs arc-cloud-api-1` |
+| `mqtt-down` (us-east-1) | TCP to `mqtt.…:8883` fails for 3 min | `docker logs arc-cloud-emqx-1` |
+| `cert-expiry-api` / `cert-expiry-mqtt` | Certificate served on :443 / :8883 has < 14 days left, or could not be read (-1) | Caddy logs (renewal); for mqtt `sudo arc-cert-sync` |
+| `worker-not-ready` | Ingestion worker reports database/broker not OK for 10 min, **or `arc-monitor` stopped reporting** | `docker logs arc-cloud-worker-1`; `systemctl status arc-monitor.timer` |
+| existing | server recover/reboot, CPU credits, database CPU and storage, budget | see above |
+
+`arc-monitor.timer` runs `/usr/local/bin/arc-monitor` every 5 minutes (manual run: `sudo arc-monitor`; history: `journalctl -u arc-monitor`). Let's Encrypt stopped sending expiry emails in June 2025, so these alarms are the only certificate warning. Expect an alert pair (down, then OK) if a Sunday patch reboot or a deploy takes longer than about 3 minutes.
 
 **Scale-up signals:**
 - The `server-cpu-credits` alarm fires.

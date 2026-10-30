@@ -51,6 +51,22 @@ class HealthController {
       throw new ServiceUnavailableException({ status: 'db_unavailable' });
     }
   }
+
+  /**
+   * For external uptime checks (Route 53): 200 only when the database answers AND the API can publish to the
+   * broker (switches, commands, OTA). Not used by Docker or EMQX, which must keep using /health/ready.
+   */
+  @Public()
+  @Get('deep')
+  async deep() {
+    const db = await this.db.query('SELECT 1').then(
+      () => true,
+      () => false,
+    );
+    const mqtt = this.mqtt ? (this.mqtt.connected ? 'connected' : 'disconnected') : 'n/a';
+    if (!db || mqtt === 'disconnected') throw new ServiceUnavailableException({ status: 'degraded', db, mqtt });
+    return { status: 'ok', db, mqtt };
+  }
 }
 
 /** Friendly answer for anyone who opens the API's bare address in a browser. */
