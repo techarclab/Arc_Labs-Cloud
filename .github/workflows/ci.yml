@@ -131,8 +131,14 @@ jobs:
           done
       - name: Server scripts (shellcheck) and env writer
         run: |
-          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh deploy/aws/arc-os-patch.sh infra/emqx/entrypoint.sh
-          for t in deploy/aws/*.timer; do systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" >/dev/null; done
+          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh deploy/aws/arc-os-patch.sh deploy/aws/arc-monitor.sh infra/emqx/entrypoint.sh
+          # Calendar timers must parse; interval timers (OnUnitActiveSec, e.g. arc-monitor) have no OnCalendar line.
+          for t in deploy/aws/*.timer; do
+            c="$(sed -n 's/^OnCalendar=//p' "$t")"
+            if [ -n "$c" ]; then systemd-analyze calendar "$c" >/dev/null; else grep -q '^OnUnitActiveSec=' "$t"; fi
+          done
+          # Every unit arc-deploy installs must exist in the repo.
+          for f in $(grep -oE 'deploy/aws/[a-z-]+\.(sh|service|timer)' deploy/aws/arc-deploy.sh | sort -u); do test -f "$f" || { echo "missing $f"; exit 1; }; done
           python3 -m py_compile deploy/aws/write-env.py
       - name: Production compose file renders
         run: |
