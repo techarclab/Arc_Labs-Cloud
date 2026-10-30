@@ -1,13 +1,22 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { api, getToken, onUnauthorized, Org, Project, setToken } from './api';
 
-interface User { id: string; email: string; displayName: string; isPlatformAdmin?: boolean }
+interface User {
+  id: string;
+  email: string;
+  displayName: string;
+  isPlatformAdmin?: boolean;
+  /** Privacy notice version this person accepted (null: never), and the version in force. */
+  termsVersion?: string | null;
+  currentTermsVersion?: string;
+}
 interface SessionValue {
   user: User | null;
   orgs: Org[];
   loading: boolean;
   signIn: (token: string) => Promise<void>;
   signOut: () => void;
+  reload: () => Promise<void>;
   refreshOrgs: () => Promise<Org[]>;
   projects: Record<string, Project[]>;
   refreshProjects: (orgId: string) => Promise<Project[]>;
@@ -41,7 +50,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       const me = await api('GET', '/auth/me');
-      setUser({ ...me.user, isPlatformAdmin: !!me.isPlatformAdmin });
+      setUser({ ...me.user, isPlatformAdmin: !!me.isPlatformAdmin, currentTermsVersion: me.currentTermsVersion });
       await refreshOrgs();
     } catch {
       setUser(null);
@@ -75,7 +84,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setProjects({});
   }, []);
 
-  return <Ctx.Provider value={{ user, orgs, loading, signIn, signOut, refreshOrgs, projects, refreshProjects }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, orgs, loading, signIn, signOut, reload: load, refreshOrgs, projects, refreshProjects }}>{children}</Ctx.Provider>;
 }
 
 export const useSession = () => useContext(Ctx);

@@ -62,6 +62,8 @@ const MESSAGES: Record<string, string> = {
   terminal_state: 'This device is revoked or retired and can’t be changed.',
   signup_disabled: 'New sign-ups are turned off on this server.',
   invite_required: 'Creating an account needs an invite code from ARC LABS. Ask your instructor or your ARC LABS contact.',
+  terms_version_changed: 'The privacy notice was updated while this page was open. Reload the page and read the new version.',
+  person_required: 'Only a signed-in person can accept the privacy notice, not an API key.',
   invite_invalid: 'That invite code isn’t valid. Check for typos; it may also have expired, been revoked or been used up.',
   platform_admin_only: 'Only ARC LABS administrators can do this.',
   not_found: 'Not found, or you don’t have access to it.',
