@@ -29,6 +29,12 @@ const loginBody = z.object({
 
 const googleLoginBody = z.object({ credential: z.string().min(1).max(8192) });
 
+const acceptTermsBody = z.object({
+  /** The notice version the person was shown; must be the current one, so a stale page cannot record consent to new terms. */
+  version: z.string().min(1).max(32),
+  accept: z.literal(true),
+});
+
 type GoogleUserRow = {
   [column: string]: any;
   id: string;
@@ -240,13 +246,43 @@ export class AuthController {
         isPlatformAdmin: false,
       };
     }
-    const user = await this.db.one('SELECT id, email, display_name, created_at FROM users WHERE id = $1', [current.id]);
+    const user = await this.db.one('SELECT id, email, display_name, created_at, terms_version, terms_accepted_at FROM users WHERE id = $1', [current.id]);
     const memberships = await this.db.query(
       `SELECT o.id, o.name, o.slug, m.role FROM organization_members m
        JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = $1 ORDER BY o.name`,
       [current.id],
     );
-    return { user: this.publicUser(user), memberships, isPlatformAdmin: current.isPlatformAdmin };
+    return {
+      user: { ...this.publicUser(user), termsVersion: user.terms_version ?? null, termsAcceptedAt: user.terms_accepted_at ?? null },
+      memberships,
+      isPlatformAdmin: current.isPlatformAdmin,
+      /** The privacy notice version in force; the console asks the person to accept it when user.termsVersion differs. */
+      currentTermsVersion: TERMS_VERSION,
+    };
+  }
+
+  @Doc('Accept the current privacy notice', { body: acceptTermsBody })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('accept-terms')
+  @HttpCode(200)
+  async acceptTerms(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    // Only a person can consent; API keys, service accounts and LMS learner links cannot.
+    if (current.scope) throw new ForbiddenException({ code: 'person_required' });
+    const input = parse(acceptTermsBody, body);
+    if (input.version !== TERMS_VERSION) throw new ConflictException({ code: 'terms_version_changed', currentTermsVersion: TERMS_VERSION });
+    const row = await this.db.one<{ terms_version: string; terms_accepted_at: Date }>(
+      `UPDATE users SET terms_version = $2, terms_accepted_at = now() WHERE id = $1 RETURNING terms_version, terms_accepted_at`,
+      [current.id, TERMS_VERSION],
+    );
+    await this.audit.record({
+      actorType: 'user',
+      actorId: current.id,
+      action: 'user.accept_terms',
+      resourceType: 'user',
+      resourceId: current.id,
+      metadata: { termsVersion: TERMS_VERSION },
+    });
+    return { termsVersion: row!.terms_version, termsAcceptedAt: row!.terms_accepted_at };
   }
 
   private async issueToken(userId: string) {

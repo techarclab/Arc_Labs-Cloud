@@ -19,7 +19,7 @@ import { CommandTypesPage } from './pages/Commands';
 import { FirmwarePage } from './pages/Firmware';
 import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
-import { PrivacyPage } from './pages/Privacy';
+import { PrivacyPage, TermsGate } from './pages/Privacy';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -64,9 +64,13 @@ function Home() {
 }
 
 function Gate() {
-  const { user, loading } = useSession();
+  const { user, loading, reload, signOut } = useSession();
   if (loading) return null;
   if (!user) return <LoginPage />;
+  // People (not API keys) must have accepted the privacy notice in force before using the console.
+  if (user.currentTermsVersion && user.termsVersion !== user.currentTermsVersion) {
+    return <TermsGate accepted={user.termsVersion ?? null} onAccepted={reload} onSignOut={signOut} />;
+  }
   return (
     <Routes>
       <Route path="/" element={<Home />} />

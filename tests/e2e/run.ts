@@ -194,6 +194,26 @@ async function main() {
       const r = await sql(`SELECT has_table_privilege('arc_tenant', 'invite_codes', 'SELECT') AS can`);
       assert.equal(r[0].can, false);
     });
+    await check('a changed privacy notice must be accepted again, by a person, at the current version', async () => {
+      let me = (await http('GET', '/api/v1/auth/me', tA)).body;
+      assert.ok(me.currentTermsVersion, 'current version published');
+      assert.equal(me.user.termsVersion, me.currentTermsVersion, 'sign-up recorded the current version');
+      await sql(`UPDATE users SET terms_version = '2000-01-01' WHERE email = 'alice@arclabs.test'`);
+      me = (await http('GET', '/api/v1/auth/me', tA)).body;
+      assert.notEqual(me.user.termsVersion, me.currentTermsVersion, 'console sees the mismatch');
+      const stale = await http('POST', '/api/v1/auth/accept-terms', tA, { version: '2000-01-01', accept: true });
+      assert.equal(stale.status, 409);
+      assert.equal(stale.body.code, 'terms_version_changed');
+      assert.equal((await http('POST', '/api/v1/auth/accept-terms', tA, { version: me.currentTermsVersion, accept: false })).status, 400);
+      assert.equal((await http('POST', '/api/v1/auth/accept-terms', undefined, { version: me.currentTermsVersion, accept: true })).status, 401);
+      const ok = await http('POST', '/api/v1/auth/accept-terms', tA, { version: me.currentTermsVersion, accept: true });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      me = (await http('GET', '/api/v1/auth/me', tA)).body;
+      assert.equal(me.user.termsVersion, me.currentTermsVersion);
+      const audit = await sql(`SELECT metadata FROM audit_logs WHERE action = 'user.accept_terms' AND actor_id = (SELECT id::text FROM users WHERE email = 'alice@arclabs.test')`);
+      assert.equal(audit.length, 1);
+      assert.equal(audit[0].metadata.termsVersion, me.currentTermsVersion);
+    });
     await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
     await check('metric definitions set', async () => {
       const r = await http('PUT', `/api/v1/projects/${proj.id}/metric-definitions`, tA, {
@@ -772,6 +792,7 @@ async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; p
     assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}/members`, key)).status, 404, 'restricted key cannot list members');
     assert.equal((await http('POST', '/api/v1/organizations', key, { name: 'Nope', slug: 'nope-co' })).status, 403);
     assert.equal((await http('POST', '/api/v1/api-keys', key, { organizationId: orgA.id, name: 'escalate', role: 'engineer' })).status, 403);
+    assert.equal((await http('POST', '/api/v1/auth/accept-terms', key, { version: 'x', accept: true })).status, 403, 'an API key cannot consent');
     assert.equal((await http('GET', `/api/v1/api-keys?organizationId=${orgA.id}`, tB)).status, 403, 'viewer cannot list keys');
     const list = await http('GET', `/api/v1/api-keys?organizationId=${orgA.id}`, tA);
     assert.ok(list.body.items[0].lastUsedAt, 'last used recorded');
