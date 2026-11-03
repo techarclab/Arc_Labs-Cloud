@@ -1,5 +1,6 @@
 import { Global, Injectable, Module, OnModuleDestroy } from '@nestjs/common';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { pgConnectionConfig } from '@arc/shared';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { loadConfig } from '../config';
 
@@ -23,7 +24,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class Db implements OnModuleDestroy {
-  readonly pool = new Pool({ connectionString: loadConfig().DATABASE_URL, max: 10 });
+  readonly pool = new Pool({ ...pgConnectionConfig(loadConfig().DATABASE_URL, loadConfig().DATABASE_PASSWORD_FILE), max: 10 });
 
   /** A Queryable that honours the current scope (use instead of `pool` as a default argument). */
   readonly scoped: Queryable = { query: ((sql: string, params?: unknown[]) => this.raw(sql, params ?? [])) as Queryable['query'] };

@@ -194,7 +194,10 @@ On the server (`aws ssm start-session …`). This **replaces** everything in the
 ```bash
 COMPOSE="docker compose -f /opt/arc-cloud/deploy/aws/docker-compose.yml"
 sudo $COMPOSE stop api worker emqx                      # nothing writes during the copy
-DST="$(sudo grep '^DATABASE_URL=' /etc/arc-cloud/api.env | cut -d= -f2-)&sslrootcert=/certs/rds-ca.pem"
+# DATABASE_URL has no password (it rotates; see "Database password" below): add the current one from the password file.
+DB_URL="$(sudo grep '^DATABASE_URL=' /etc/arc-cloud/api.env | cut -d= -f2-)"
+DB_PW="$(sudo cat /opt/arc-cloud-data/db-secret/password | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip(),safe=""))')"
+DST="${DB_URL/@/:$DB_PW@}&sslrootcert=/certs/rds-ca.pem"
 sudo docker run --rm -v /opt/arc-cloud-data/rds-ca.pem:/certs/rds-ca.pem:ro \
   -e SRC='postgres://USER:PASS@HOST:PORT/railway' -e DST="$DST" postgres:16 sh -ec '
     pg_dump --no-owner --no-acl -Fc -f /tmp/arc.dump "$SRC"
@@ -233,7 +236,8 @@ sudo arc-deploy main                                    # applies newer migratio
 | OS security updates | `arc-os-patch.timer` applies Amazon Linux security advisories every Sunday ~03:30 IST and reboots only if the kernel or core libraries changed (~2 min downtime). AL2023 pins dnf to the AMI's release, so the script uses `--releasever=latest`. Manual run: `sudo arc-os-patch` (add `--no-reboot` to defer); last run: `journalctl -u arc-os-patch` |
 | Firmware images (OTA) | Upload signed images to `s3://<console_bucket>/firmware/<device-type>/<version>.bin`; devices download them from `https://arcloud.arclabs.in/firmware/…` (CloudFront, Amazon Root CA 1, already pinned in firmware). Console deploys never delete `firmware/`. A wrong URL returns the console page instead of a 404, which the device rejects on the SHA-256 check |
 | Database restore | RDS console → `arc-cloud-pilot` → Restore to point in time (7 days) |
-| Secrets | Secrets Manager `arc-cloud/pilot/app` (app) and the RDS-managed master secret. They are rewritten into `/etc/arc-cloud/*.env` (0600) on every deploy |
+| Secrets | Secrets Manager `arc-cloud/pilot/app` (app) and the RDS-managed master secret. App secrets are rewritten into `/etc/arc-cloud/*.env` (0600) on every deploy |
+| Database password | **RDS rotates it every 7 days.** It is not in the env files: `arc-db-secret-sync.timer` copies the current one to `/opt/arc-cloud-data/db-secret/password` every minute (mounted read-only into the API and worker, which read it for every new connection). No restart is needed after a rotation; at most ~1 minute of refused new connections. Check: `journalctl -u arc-db-secret-sync` (logs only when it changes); `systemctl list-timers arc-db-secret-sync.timer` |
 | Spend | Billing → Budgets → `arc-cloud-pilot-monthly` |
 
 **Alerts (email via SNS; each also emails when it recovers):**

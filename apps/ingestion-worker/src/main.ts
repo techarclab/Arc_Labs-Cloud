@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
+import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, pgConnectionConfig, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
 import mqtt from 'mqtt';
 import { Pool } from 'pg';
 import { loadConfig } from './config';
@@ -12,7 +12,7 @@ const log = (level: string, msg: string, extra: Record<string, unknown> = {}) =>
 
 async function main() {
   const cfg = loadConfig();
-  const pool = new Pool({ connectionString: cfg.DATABASE_URL, max: 10 });
+  const pool = new Pool({ ...pgConnectionConfig(cfg.DATABASE_URL, cfg.DATABASE_PASSWORD_FILE), max: 10 });
   const counters = new Counters();
   const processor = new Processor(pool, new RateLimiter(cfg.DEVICE_RATE_PER_SEC, cfg.DEVICE_BURST), counters, cfg.CACHE_TTL_SECONDS);
 

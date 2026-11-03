@@ -6,6 +6,8 @@ const schema = z.object({
   /** Broker hooks listen on a separate port that must never be exposed publicly. */
   INTERNAL_PORT: z.coerce.number().int().default(3001),
   DATABASE_URL: z.string().min(1),
+  /** Read for every new DB connection (rotated passwords); DATABASE_URL then has no password. */
+  DATABASE_PASSWORD_FILE: z.string().min(1).optional(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   /** Google OAuth Web client ID; also published to the console for Google Identity Services. */

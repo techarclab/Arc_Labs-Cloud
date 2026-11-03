@@ -3,3 +3,4 @@ export * from './acl';
 export * from './telemetry';
 export * from './connectivity';
 export * from './rules';
+export * from './db';

@@ -21,6 +21,7 @@ firmware/esp32-arduino/my_*/
 **/.terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 *.tfvars
 !*.tfvars.example
 .terraform.lock.hcl.bak
