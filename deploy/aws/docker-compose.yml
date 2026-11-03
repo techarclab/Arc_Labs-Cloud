@@ -35,6 +35,7 @@ services:
       EMQX_API_URL: http://emqx:18083
     volumes:
       - /opt/arc-cloud-data/rds-ca.pem:/certs/rds-ca.pem:ro
+      - /opt/arc-cloud-data/db-secret:/run/arc-db:ro   # DB password, refreshed by arc-db-secret-sync (rotation)
     expose: ["3000", "3001"]           # reachable by Caddy and EMQX only; nothing published on the host
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
@@ -75,6 +76,7 @@ services:
       NODE_EXTRA_CA_CERTS: /certs/rds-ca.pem
     volumes:
       - /opt/arc-cloud-data/rds-ca.pem:/certs/rds-ca.pem:ro
+      - /opt/arc-cloud-data/db-secret:/run/arc-db:ro   # DB password, refreshed by arc-db-secret-sync (rotation)
     depends_on:
       emqx: { condition: service_healthy }
     mem_limit: 512m

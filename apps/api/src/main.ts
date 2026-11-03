@@ -13,7 +13,7 @@ async function bootstrap() {
   const log = new Logger('Bootstrap');
 
   if (process.env.RUN_MIGRATIONS === 'true') {
-    await migrate(cfg.DATABASE_URL, (m) => log.log(m));
+    await migrate(cfg.DATABASE_URL, (m) => log.log(m), cfg.DATABASE_PASSWORD_FILE);
   }
 
   const api = await NestFactory.create<NestExpressApplication>(AppModule);

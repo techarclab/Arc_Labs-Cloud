@@ -39,9 +39,10 @@ install -m 0755 deploy/aws/arc-os-patch.sh /usr/local/bin/arc-os-patch
 install -m 0755 deploy/aws/arc-monitor.sh /usr/local/bin/arc-monitor
 install -m 0644 deploy/aws/arc-cert-sync.service deploy/aws/arc-cert-sync.timer \
   deploy/aws/arc-os-patch.service deploy/aws/arc-os-patch.timer \
-  deploy/aws/arc-monitor.service deploy/aws/arc-monitor.timer /etc/systemd/system/
+  deploy/aws/arc-monitor.service deploy/aws/arc-monitor.timer \
+  deploy/aws/arc-db-secret-sync.service deploy/aws/arc-db-secret-sync.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now arc-cert-sync.timer arc-os-patch.timer arc-monitor.timer
+systemctl enable --now arc-cert-sync.timer arc-os-patch.timer arc-monitor.timer arc-db-secret-sync.timer
 
 # Docker Compose v2+ builds through buildx >= 0.17; Amazon Linux's docker package does not ship it.
 BUILDX_VERSION=v0.38.1

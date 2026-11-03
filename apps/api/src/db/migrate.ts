@@ -1,6 +1,7 @@
 /* Applies infra/db/migrations/*.sql in order, once each, inside a transaction per file. */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pgConnectionConfig } from '@arc/shared';
 import { Client } from 'pg';
 
 function migrationsDir(): string {
@@ -15,8 +16,12 @@ function migrationsDir(): string {
   return dir;
 }
 
-export async function migrate(databaseUrl: string, log: (m: string) => void = console.log): Promise<void> {
-  const client = new Client({ connectionString: databaseUrl });
+export async function migrate(
+  databaseUrl: string,
+  log: (m: string) => void = console.log,
+  passwordFile: string | undefined = process.env.DATABASE_PASSWORD_FILE,
+): Promise<void> {
+  const client = new Client(pgConnectionConfig(databaseUrl, passwordFile));
   await client.connect();
   try {
     await client.query('SELECT pg_advisory_lock(727274)');

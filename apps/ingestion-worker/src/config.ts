@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
+  /** Read for every new DB connection (rotated passwords); DATABASE_URL then has no password. */
+  DATABASE_PASSWORD_FILE: z.string().min(1).optional(),
   MQTT_URL: z.string().default('mqtt://localhost:1883'),
   /** PEM CA used to verify the broker certificate when MQTT_URL is mqtts:// */
   MQTT_CA_FILE: z.string().optional(),
