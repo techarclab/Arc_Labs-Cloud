@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, pgConnectionConfig, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
+import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, newConnectionCheck, pgConnectionConfig, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
 import mqtt from 'mqtt';
 import { Pool } from 'pg';
 import { loadConfig } from './config';
@@ -12,7 +12,10 @@ const log = (level: string, msg: string, extra: Record<string, unknown> = {}) =>
 
 async function main() {
   const cfg = loadConfig();
-  const pool = new Pool({ ...pgConnectionConfig(cfg.DATABASE_URL, cfg.DATABASE_PASSWORD_FILE), max: 10 });
+  const pgConfig = pgConnectionConfig(cfg.DATABASE_URL, cfg.DATABASE_PASSWORD_FILE);
+  const pool = new Pool({ ...pgConfig, max: 10 });
+  // Readiness logs in afresh (cached 15 s): warm pooled connections hide refused logins (2026-10-31).
+  const canOpenNewConnection = newConnectionCheck(pgConfig);
   const counters = new Counters();
   const processor = new Processor(pool, new RateLimiter(cfg.DEVICE_RATE_PER_SEC, cfg.DEVICE_BURST), counters, cfg.CACHE_TTL_SECONDS);
 
@@ -94,7 +97,7 @@ async function main() {
   const health = createServer(async (req, res) => {
     if (req.url === '/health/live') return res.writeHead(200).end('ok');
     if (req.url === '/health/ready') {
-      const dbOk = await pool.query('SELECT 1').then(() => true, () => false);
+      const dbOk = await canOpenNewConnection();
       const ok = dbOk && client.connected;
       return res.writeHead(ok ? 200 : 503, { 'content-type': 'application/json' }).end(JSON.stringify({ db: dbOk, mqtt: client.connected }));
     }
