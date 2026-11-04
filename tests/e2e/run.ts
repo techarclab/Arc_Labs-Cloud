@@ -4,7 +4,12 @@
 import assert from 'node:assert/strict';
 import { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { newConnectionCheck, pgConnectionConfig } from '@arc/shared';
 import { MqttClient } from 'mqtt';
+import { Pool } from 'pg';
 import {
   ROOT,
   DB,
@@ -189,6 +194,41 @@ async function main() {
       assert.equal(r.status, 201, JSON.stringify(r.body));
       const me = await (await fetch(`${CLOSED}/api/v1/auth/me`, { headers: { authorization: `Bearer ${r.body.accessToken}` } })).json();
       assert.deepEqual(me.memberships.map((m: any) => [m.id, m.role]), [[orgA.id, 'viewer']]);
+    });
+    await check('rotated DB password: warm pool still works, but the health check sees refused logins; file update fixes both', async () => {
+      // Regression (pilot, 2026-10-31): RDS rotated the password; pooled connections kept working, so health checks
+      // stayed green for ~21 h while every new login was refused.
+      const dir = mkdtempSync(join(tmpdir(), 'arc-e2e-rot-'));
+      const file = join(dir, 'password');
+      const role = 'e2e_rotate';
+      const u = new URL(DB!);
+      u.username = role;
+      u.password = '';
+      await sql(`DROP ROLE IF EXISTS ${role}`);
+      await sql(`CREATE ROLE ${role} LOGIN PASSWORD 'rot-one'`);
+      writeFileSync(file, 'rot-one\n');
+      const cfg = pgConnectionConfig(u.toString(), file);
+      const pool = new Pool({ ...cfg, max: 1, idleTimeoutMillis: 0 });
+      const fresh = newConnectionCheck(cfg, { cacheMs: 0 });
+      try {
+        assert.equal((await pool.query('SELECT 1 AS ok')).rows[0].ok, 1);
+        assert.equal(await fresh(), true, 'healthy before rotation');
+        await sql(`ALTER ROLE ${role} PASSWORD 'rot-two'`);
+        assert.equal((await pool.query('SELECT 1 AS ok')).rows[0].ok, 1, 'warm pooled connection unaffected (why pool checks miss it)');
+        assert.equal(await fresh(), false, 'fresh-login check fails while the file is stale');
+        writeFileSync(join(dir, 'password.tmp'), 'rot-two\n');
+        renameSync(join(dir, 'password.tmp'), file);
+        assert.equal(await fresh(), true, 'picks up the new password from the file, no restart');
+      } finally {
+        await pool.end().catch(() => undefined);
+        await sql(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+    await check('/health/deep logs in afresh to the database', async () => {
+      const r = await fetch(`${API}/health/deep`);
+      assert.equal(r.status, 200);
+      assert.equal(((await r.json()) as { db: boolean }).db, true);
     });
     await check('tenant role cannot read invite codes', async () => {
       const r = await sql(`SELECT has_table_privilege('arc_tenant', 'invite_codes', 'SELECT') AS can`);

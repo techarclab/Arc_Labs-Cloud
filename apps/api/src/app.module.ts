@@ -1,3 +1,4 @@
+import { newConnectionCheck, pgConnectionConfig } from '@arc/shared';
 import { Controller, Get, Module, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantScopeInterceptor } from './common/tenant-scope.interceptor';
@@ -28,6 +29,9 @@ import { OrgOpsController, PlatformController } from './organizations/org-ops.co
 @ApiTags('Health')
 @Controller('health')
 class HealthController {
+  // A fresh login each time (cached 15 s), not a pool query: warm pooled connections hide refused logins.
+  private readonly canOpenNewConnection = newConnectionCheck(pgConnectionConfig(loadConfig().DATABASE_URL, loadConfig().DATABASE_PASSWORD_FILE));
+
   constructor(
     private readonly db: Db,
     // Absent on the internal hooks server (InternalModule), which also mounts this controller.
@@ -53,16 +57,14 @@ class HealthController {
   }
 
   /**
-   * For external uptime checks (Route 53): 200 only when the database answers AND the API can publish to the
-   * broker (switches, commands, OTA). Not used by Docker or EMQX, which must keep using /health/ready.
+   * For external uptime checks (Route 53): 200 only when a NEW database login succeeds AND the API can publish to
+   * the broker (switches, commands, OTA). Not used by Docker or EMQX, which must keep using /health/ready.
+   * `db` tests a fresh connection: a rotated password left pool queries green for ~21 h on 2026-10-31.
    */
   @Public()
   @Get('deep')
   async deep() {
-    const db = await this.db.query('SELECT 1').then(
-      () => true,
-      () => false,
-    );
+    const db = await this.canOpenNewConnection();
     const mqtt = this.mqtt ? (this.mqtt.connected ? 'connected' : 'disconnected') : 'n/a';
     if (!db || mqtt === 'disconnected') throw new ServiceUnavailableException({ status: 'degraded', db, mqtt });
     return { status: 'ok', db, mqtt };
