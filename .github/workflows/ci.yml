@@ -149,6 +149,10 @@ jobs:
         run: |
           shellcheck -S warning deploy/oracle/*.sh deploy/oracle/postgres-init/*.sh
           python3 -m py_compile deploy/oracle/write-env.py
+          # Regression: arc-deploy runs write-env under umask 077; the DB password must still be group-readable (0640).
+          t="$(mktemp -d)"; mkdir "$t/conf"; printf 'CONSOLE_HOST=a.example.com\nAPI_HOST=b.example.com\nMQTT_HOST=c.example.com\n' > "$t/conf/config"
+          (umask 077; ARC_CONF_DIR="$t/conf" ARC_DB_SECRET_DIR="$t/db" python3 deploy/oracle/write-env.py)
+          test "$(stat -c %a "$t/db/password")" = 640 && test "$(stat -c %a "$t/conf/api.env")" = 600
           for t in deploy/oracle/*.timer; do systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" >/dev/null; done
           for f in $(grep -oE 'deploy/(aws|oracle)/[a-z-]+\.(sh|service|timer)' deploy/oracle/arc-deploy.sh | sort -u); do test -f "$f" || { echo "missing $f"; exit 1; }; done
           export ACME_EMAIL=a@example.com API_HOST=api.example.com MQTT_HOST=mqtt.example.com CONSOLE_HOST=example.com
