@@ -68,6 +68,7 @@ def write_db_password(password):
         pass
     os.makedirs(DB_SECRET_DIR, mode=0o750, exist_ok=True)
     fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    os.fchmod(fd, 0o640)  # explicit: arc-deploy runs under umask 077, which would strip the group read bit
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(password + "\n")
     if os.geteuid() == 0:  # root-owned, readable by the container's node group only

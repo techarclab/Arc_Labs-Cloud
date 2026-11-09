@@ -42,6 +42,7 @@ def read_kv(path):
 def write_file(path, content, mode, uid=None, gid=None):
     """Atomic replace (rename), so bind-mounted directories always see a complete file."""
     fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    os.fchmod(fd, mode)  # explicit: arc-deploy runs under umask 077, which would strip the group read bit
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
     if os.geteuid() == 0 and uid is not None:
