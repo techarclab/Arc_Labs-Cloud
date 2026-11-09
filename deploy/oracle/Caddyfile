@@ -1,0 +1,45 @@
+# TLS for ARC Cloud on the Oracle VM. Certificates come from Let's Encrypt only, with RSA keys, so the chain ends
+# at ISRG Root X1 — a root the device firmware pins (firmware/esp32-arduino/*/arc_roots.h). Keep these two lines.
+{
+	email {$ACME_EMAIL}
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	key_type rsa2048
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}
+
+# API for devices, integrations and scripts.
+{$API_HOST} {
+	encode gzip
+	import security_headers
+	reverse_proxy api:3000
+}
+
+# Console. Its API calls go to /api on this same origin, straight to the API (one proxy hop, so the API sees
+# the real client IP for rate limits). Signed OTA images are files under /firmware.
+{$CONSOLE_HOST} {
+	encode gzip
+	import security_headers
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle /firmware/* {
+		root * /srv
+		file_server
+	}
+	handle {
+		reverse_proxy console:80
+	}
+}
+
+# This site exists so Caddy obtains and renews the certificate EMQX serves on :8883
+# (copied by arc-cert-sync). Nothing is served over HTTPS here.
+{$MQTT_HOST} {
+	respond "ARC Cloud MQTT broker: connect with MQTT over TLS on port 8883." 404
+}

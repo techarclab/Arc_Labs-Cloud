@@ -259,6 +259,37 @@ sudo arc-deploy main                                    # applies newer migratio
 
 Next step at that point: the load-balanced design in the target ADR, which needs no code changes, only hosting.
 
+## Pause and resume
+
+To stop paying for compute while nobody uses the pilot (≈ $0.40/day paused instead of ≈ $1.40). Nothing is
+deleted; the server keeps its Elastic IP, so DNS and devices need no change. Run on your computer with the
+`arc-admin` profile, **not** inside an SSM session on the server.
+
+**Pause**
+```bash
+export AWS_PROFILE=arc-admin
+aws cloudwatch disable-alarm-actions --region ap-south-1 --alarm-names $(aws cloudwatch describe-alarms --region ap-south-1 --alarm-name-prefix arc-cloud-pilot --query 'MetricAlarms[].AlarmName' --output text)
+aws cloudwatch disable-alarm-actions --region us-east-1 --alarm-names arc-cloud-pilot-api-down arc-cloud-pilot-mqtt-down
+SERVER=$(aws ec2 describe-instances --region ap-south-1 --filters Name=tag:Name,Values=arc-cloud-pilot --query 'Reservations[0].Instances[0].InstanceId' --output text)
+aws ec2 stop-instances --region ap-south-1 --instance-ids "$SERVER" && aws ec2 wait instance-stopped --region ap-south-1 --instance-ids "$SERVER"
+aws rds stop-db-instance --region ap-south-1 --db-instance-identifier arc-cloud-pilot
+```
+**AWS starts a stopped RDS database again after 7 days.** Stop it again with the last line if the pause continues.
+
+**Resume** (database first, then the server)
+```bash
+export AWS_PROFILE=arc-admin
+aws rds start-db-instance --region ap-south-1 --db-instance-identifier arc-cloud-pilot   # an error here means it is already running
+aws rds wait db-instance-available --region ap-south-1 --db-instance-identifier arc-cloud-pilot
+SERVER=$(aws ec2 describe-instances --region ap-south-1 --filters Name=tag:Name,Values=arc-cloud-pilot --query 'Reservations[0].Instances[0].InstanceId' --output text)
+aws ec2 start-instances --region ap-south-1 --instance-ids "$SERVER" && aws ec2 wait instance-running --region ap-south-1 --instance-ids "$SERVER"
+sleep 180; curl -s https://api.arcloud.arclabs.in/health/deep; echo     # {"status":"ok","db":true,"mqtt":"connected"}
+aws cloudwatch enable-alarm-actions --region ap-south-1 --alarm-names $(aws cloudwatch describe-alarms --region ap-south-1 --alarm-name-prefix arc-cloud-pilot --query 'MetricAlarms[].AlarmName' --output text)
+aws cloudwatch enable-alarm-actions --region us-east-1 --alarm-names arc-cloud-pilot-api-down arc-cloud-pilot-mqtt-down
+```
+The weekly database password rotation also happens while paused; the server picks up the current password
+within a minute of starting (`arc-db-secret-sync`).
+
 ## Security notes
 
 - **Open ports:** 80 (ACME + redirect), 443 (API) and 8883 (MQTT/TLS). EMQX's 1883 and dashboard (18083), the API hook port (3001) and PostgreSQL are not reachable from the internet.

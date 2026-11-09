@@ -43,6 +43,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 ## Deploying
 
 - **AWS pilot (Mumbai, ≈ ₹5,000/month):** one server (Caddy + EMQX + API + worker) + RDS PostgreSQL + console on CloudFront, all in Terraform: **[docs/deploy/aws-pilot.md](docs/deploy/aws-pilot.md)**.
+- **Oracle Cloud Always Free (Mumbai or Hyderabad, ≈ ₹0/month):** the same containers plus PostgreSQL on one free Ampere VM, for development, demos and small pilots: **[docs/deploy/oracle-free.md](docs/deploy/oracle-free.md)**.
 - GitHub → Railway (broker, API, worker, Postgres) + Vercel (console): [docs/deploy/railway-vercel.md](docs/deploy/railway-vercel.md).
 - Larger load-balanced AWS layout for later: `docs/aws/deployment.md`.
 

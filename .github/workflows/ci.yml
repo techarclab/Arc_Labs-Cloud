@@ -145,6 +145,19 @@ jobs:
           sudo mkdir -p /etc/arc-cloud && sudo touch /etc/arc-cloud/{api,worker,emqx}.env
           ACME_EMAIL=a@example.com API_HOST=api.example.com MQTT_HOST=mqtt.example.com \
             docker compose -f deploy/aws/docker-compose.yml config --quiet
+      - name: Oracle Always Free deployment (docs/deploy/oracle-free.md)
+        run: |
+          shellcheck -S warning deploy/oracle/*.sh deploy/oracle/postgres-init/*.sh
+          python3 -m py_compile deploy/oracle/write-env.py
+          for t in deploy/oracle/*.timer; do systemd-analyze calendar "$(sed -n 's/^OnCalendar=//p' "$t")" >/dev/null; done
+          for f in $(grep -oE 'deploy/(aws|oracle)/[a-z-]+\.(sh|service|timer)' deploy/oracle/arc-deploy.sh | sort -u); do test -f "$f" || { echo "missing $f"; exit 1; }; done
+          export ACME_EMAIL=a@example.com API_HOST=api.example.com MQTT_HOST=mqtt.example.com CONSOLE_HOST=example.com
+          docker compose -f deploy/oracle/docker-compose.yml config --quiet
+          # Caddy's own parser, on both Caddyfiles (an invalid Caddyfile would stop the server's HTTPS at deploy time).
+          for c in deploy/aws/Caddyfile deploy/oracle/Caddyfile; do
+            docker run --rm -e ACME_EMAIL -e API_HOST -e MQTT_HOST -e CONSOLE_HOST -v "$PWD/$c:/etc/caddy/Caddyfile:ro" caddy:2.10 \
+              caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done
 
   images:
     # Builds the production images. The API/worker Dockerfile ends with tools/check-runtime-deps.cjs, so a

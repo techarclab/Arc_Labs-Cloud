@@ -1,0 +1,114 @@
+# ARC Cloud on one Oracle Cloud "Always Free" VM (Ampere A1, arm64). See docs/deploy/oracle-free.md.
+# Started by /usr/local/bin/arc-deploy. Same API/worker/EMQX images as the AWS pilot; differences:
+#   - PostgreSQL runs here (postgres:16), instead of RDS. Data: /opt/arc-cloud-data/postgres.
+#   - Caddy also serves the console (arcloud.<domain>) and the signed OTA images (/firmware), instead of S3 + CloudFront.
+#   - Secrets are generated once on the server (/etc/arc-cloud/secrets.env), instead of Secrets Manager.
+name: arc-cloud
+
+services:
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"     # Let's Encrypt HTTP-01 challenge + redirect to HTTPS
+      - "443:443"   # console + API
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      API_HOST: ${API_HOST}
+      MQTT_HOST: ${MQTT_HOST}
+      CONSOLE_HOST: ${CONSOLE_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/arc-cloud-data/caddy:/data
+      - /opt/arc-cloud-data/firmware:/srv/firmware:ro   # signed OTA images: https://CONSOLE_HOST/firmware/<type>/<version>.bin
+      - caddy-config:/config
+    mem_limit: 256m
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/arc-db/pg-superuser-password   # superuser `postgres`: maintenance only, never given to the app
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - /opt/arc-cloud-data/postgres:/var/lib/postgresql/data
+      - /opt/arc-cloud-data/db-secret:/run/arc-db:ro
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro            # first start only: app role + database
+    expose: ["5432"]                   # reachable by api/worker only; nothing published on the host
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d arc_cloud"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    mem_limit: 1536m
+
+  api:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: unless-stopped
+    command: ["node", "apps/api/dist/main.js"]
+    env_file: /etc/arc-cloud/api.env
+    environment:
+      PORT: "3000"
+      INTERNAL_PORT: "3001"
+      RUN_MIGRATIONS: "false"          # migrations run as a one-off step in arc-deploy, before the new API starts
+      TRUST_PROXY: "1"                 # exactly one proxy (Caddy) in front
+      MQTT_URL: mqtt://emqx:1883
+      EMQX_API_URL: http://emqx:18083
+    volumes:
+      - /opt/arc-cloud-data/db-secret:/run/arc-db:ro
+    expose: ["3000", "3001"]           # reachable by Caddy and EMQX only
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    mem_limit: 768m
+
+  emqx:
+    build: { context: ../.., dockerfile: Dockerfile.emqx }
+    restart: unless-stopped
+    env_file: /etc/arc-cloud/emqx.env
+    environment:
+      API_HOOKS_URL: http://api:3001
+      EMQX_NODE__NAME: emqx@127.0.0.1
+    ports:
+      - "8883:8883"                    # devices: MQTT over TLS. 1883 and the 18083 dashboard stay internal.
+    volumes:
+      - /opt/arc-cloud-data/mqtt-tls:/opt/emqx/etc/certs/arc:ro   # Let's Encrypt cert, kept fresh by arc-cert-sync
+      - emqx-data:/opt/emqx/data
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 1g
+
+  worker:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: unless-stopped
+    command: ["node", "apps/ingestion-worker/dist/main.js"]
+    env_file: /etc/arc-cloud/worker.env
+    environment:
+      MQTT_URL: mqtt://emqx:1883
+      WORKER_ID: ingest-1
+    volumes:
+      - /opt/arc-cloud-data/db-secret:/run/arc-db:ro
+    depends_on:
+      emqx: { condition: service_healthy }
+    mem_limit: 512m
+
+  console:
+    # Built without VITE_API_URL: the console calls /api on its own origin, which Caddy routes to the API.
+    build: { context: ../.., dockerfile: Dockerfile.console }
+    restart: unless-stopped
+    expose: ["80"]
+    mem_limit: 128m
+
+volumes:
+  caddy-config:
+  emqx-data:
