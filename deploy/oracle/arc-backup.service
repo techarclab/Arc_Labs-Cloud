@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up the ARC Cloud database (pg_dump)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arc-backup
