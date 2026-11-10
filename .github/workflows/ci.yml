@@ -131,7 +131,7 @@ jobs:
           done
       - name: Server scripts (shellcheck) and env writer
         run: |
-          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh deploy/aws/arc-os-patch.sh deploy/aws/arc-monitor.sh infra/emqx/entrypoint.sh
+          shellcheck -S warning deploy/aws/arc-deploy.sh deploy/aws/arc-cert-sync.sh deploy/aws/arc-os-patch.sh deploy/aws/arc-monitor.sh deploy/aws/teardown-pilot.sh deploy/aws/teardown-mgmt-staging.sh infra/emqx/entrypoint.sh
           # Calendar timers must parse; interval timers (OnUnitActiveSec, e.g. arc-monitor) have no OnCalendar line.
           for t in deploy/aws/*.timer; do
             c="$(sed -n 's/^OnCalendar=//p' "$t")"

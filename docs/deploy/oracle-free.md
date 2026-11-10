@@ -1,11 +1,12 @@
 # ARC Cloud on Oracle Cloud "Always Free" (≈ ₹0/month)
 
 One Oracle Cloud virtual machine runs everything: Caddy (HTTPS), the console, the API, the ingestion worker, the
-EMQX broker and PostgreSQL. It is the same code and the same containers as the AWS pilot
+EMQX broker and PostgreSQL. It is the same code and the same containers as the (retired, 2026-11-10) AWS pilot
 ([aws-pilot.md](aws-pilot.md)); the differences are listed below. Files: [`deploy/oracle/`](../../deploy/oracle).
 
-**Use it for** development, demos and small pilots. **Before paying customers depend on it**, go back to the AWS
-pilot (managed database backups, monitoring, patching). Moving in either direction is a database dump + DNS change.
+**Use it for** development, demos and small pilots. **Before paying customers depend on it**, move to managed
+hosting (managed database backups, monitoring, patching): the AWS pilot can be recreated from aws-pilot.md, and
+moving is a database dump + DNS change.
 
 ```
 ESP32 devices ── MQTT over TLS :8883 ─┐
@@ -97,11 +98,11 @@ Point the three names at the VM (Wix → Domains → arclabs.in → DNS records)
 | `api.arcloud` | A | `<VM_IP>` | edit (was the AWS Elastic IP) |
 | `mqtt.arcloud` | A | `<VM_IP>` | edit (was the AWS Elastic IP) |
 
-Keep the `_85beb869…arcloud` ACM validation CNAME if you may return to AWS. Check from the Mac before deploying
+The `_…arcloud` ACM validation CNAME is no longer needed (AWS pilot deleted). Check from the Mac before deploying
 (all three must print the VM IP): `for h in arcloud api.arcloud mqtt.arcloud; do dig +short $h.arclabs.in; done`
 
 Devices need nothing new: they connect by name, and the Let's Encrypt chain (ISRG Root X1) is the one their
-firmware already pins. The AWS server, if resumed later, cannot renew its certificates until DNS points back to it.
+firmware already pins.
 
 ## 6. First account (skip if you move your data from AWS, step 7)
 
@@ -116,6 +117,8 @@ After deploying (step 8), register in the console with that email, then set `ALL
 and run `sudo arc-deploy` again. Further people join with invite codes (Platform → Invites).
 
 ## 7. Move your data from AWS (optional, keeps accounts, devices and history)
+
+> **No longer possible:** the AWS pilot was deleted on 2026-11-10 without a final snapshot. Kept for reference.
 
 Your ESP32s keep their stored credentials, so with the data moved they reconnect without being provisioned again.
 Personal data is copied here: delete the dump files at the end.
@@ -207,10 +210,11 @@ Check: open the console and sign in; `curl -s https://api.arcloud.arclabs.in/hea
 
 **One deploy at a time.** Do not run `arc-deploy` twice in parallel.
 
-## Moving back to AWS
+## Moving to AWS later
 
 1. `sudo arc-backup` on Oracle and copy the newest dump to your Mac.
-2. Resume AWS (aws-pilot.md, "Pause and resume"), tunnel to RDS as in step 7, restore with
+2. Recreate the pilot in a new account (aws-pilot.md, steps 1-5; restore the deploy workflow from git history),
+   tunnel to RDS as in step 7, restore with
    `pg_restore -h 127.0.0.1 -p 15432 -U arc_admin -d arc_cloud --clean --if-exists --no-owner <file.dump>`.
 3. Point the three DNS names back (`api.arcloud`, `mqtt.arcloud` → the Elastic IP; `arcloud` → CNAME to the
    CloudFront domain from `terraform output wix_console_cname`), then run the AWS deploy once.

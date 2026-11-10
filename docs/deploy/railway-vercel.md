@@ -1,6 +1,6 @@
 # Deploying ARC Cloud: GitHub → Railway (backend) + Vercel (console)
 
-> **Legacy.** ARC LABS's hosted ARC Cloud runs on AWS ap-south-1 (`docs/deploy/aws-pilot.md`): console `https://arcloud.arclabs.in`, API `https://api.arcloud.arclabs.in`, MQTT `mqtt.arcloud.arclabs.in:8883`. This guide remains for self-hosting on Railway/Vercel.
+> **Legacy.** ARC LABS's hosted ARC Cloud runs on Oracle Cloud (`docs/deploy/oracle-free.md`): console `https://arcloud.arclabs.in`, API `https://api.arcloud.arclabs.in`, MQTT `mqtt.arcloud.arclabs.in:8883`. This guide remains for self-hosting on Railway/Vercel.
 
 ```
 ESP32 ──MQTT/TLS──▶ Railway "emqx" (TCP proxy, e.g. xxxx.proxy.rlwy.net:12345)
