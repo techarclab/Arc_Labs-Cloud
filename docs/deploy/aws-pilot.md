@@ -1,5 +1,11 @@
 # ARC Cloud on AWS: pilot deployment (≤ ₹5,000/month)
 
+> **Retired 2026-11-10.** The hosted ARC Cloud moved to Oracle Cloud Always Free
+> ([oracle-free.md](oracle-free.md)) and this pilot was deleted with the scripts in ["Tear down"](#tear-down).
+> The Terraform (`infra/terraform/{bootstrap,pilot}`) and `deploy/aws/` are kept so the pilot can be
+> recreated from scratch in a new account by following this guide; the GitHub deploy workflow was removed and
+> would need restoring from git history.
+
 ```
 Devices ──MQTT/TLS 8883──▶ mqtt.arcloud.arclabs.in ┐
 Devices/scripts ──HTTPS──▶ api.arcloud.arclabs.in  ├─ EC2 t4g.medium (Elastic IP)
@@ -9,7 +15,7 @@ Browsers ──HTTPS──▶ arcloud.arclabs.in ──▶ CloudFront ──▶ 
 DNS: all records stay in Wix (Wix has no NS records for subdomains, so there is no Route 53 zone).
 ```
 
-Account `756751967044` ("ARC Cloud", a member account of the ARC LABS AWS Organization; never the management account), region `ap-south-1` (Mumbai). Terraform: `infra/terraform/{bootstrap,pilot}`. Server runtime: `deploy/aws/`.
+A dedicated member account of the ARC LABS AWS Organization (never the management account), region `ap-south-1` (Mumbai). Terraform: `infra/terraform/{bootstrap,pilot}`. Server runtime: `deploy/aws/`.
 
 ## What it costs (on-demand list prices, ap-south-1)
 
@@ -42,7 +48,7 @@ Notes:
 ## You need
 
 - **AWS CLI v2 and Terraform ≥ 1.10 (or OpenTofu ≥ 1.10)** on your Mac.
-- **An administrator identity in the ARC Cloud account (`756751967044`).** IAM Identity Center user `Arc_Labs` with the AdministratorAccess permission set on that account. Configure the CLI with `aws configure sso --profile arc-admin`: portal `https://d-96679036fe.awsapps.com/start`, SSO region `ap-southeast-1` (Identity Center lives in Singapore), account **ARC Cloud**, default region `ap-south-1`.
+- **An administrator identity in the ARC Cloud account (`<account-id>`).** IAM Identity Center user `Arc_Labs` with the AdministratorAccess permission set on that account. Configure the CLI with `aws configure sso --profile arc-admin`: portal: your IAM Identity Center access portal URL, SSO region `ap-southeast-1` (Identity Center lives in Singapore), account **ARC Cloud**, default region `ap-south-1`.
   - **Never use root access keys.**
   - Never paste keys into chat or commit them.
 - **Access to Wix DNS for `arclabs.in`** (you add 4 records there).
@@ -51,13 +57,13 @@ Notes:
 
 ```bash
 export AWS_PROFILE=arc-admin
-aws sts get-caller-identity            # must show 756751967044
+aws sts get-caller-identity            # must show the pilot account ID
 cd infra/terraform/bootstrap
-terraform init && terraform apply
+terraform init && terraform apply -var expected_account_id=<account-id>
 ```
 
 This creates:
-- the Terraform state bucket `arc-cloud-tfstate-756751967044` (versioned, encrypted, TLS-only);
+- the Terraform state bucket `arc-cloud-tfstate-<account-id>` (versioned, encrypted, TLS-only);
 - the GitHub OIDC provider.
 
 Keep `infra/terraform/bootstrap/terraform.tfstate` safe (password manager or private drive). It holds no secrets, but you need it to change the bootstrap later.
@@ -67,7 +73,7 @@ Keep `infra/terraform/bootstrap/terraform.tfstate` safe (password manager or pri
 ```bash
 cd ../pilot
 cp terraform.tfvars.example terraform.tfvars      # set alert_email; it is git-ignored
-terraform init -backend-config="bucket=arc-cloud-tfstate-756751967044"
+terraform init -backend-config="bucket=arc-cloud-tfstate-<account-id>"
 ```
 
 ## 3. Reserve the server address and request the console certificate
@@ -289,6 +295,37 @@ aws cloudwatch enable-alarm-actions --region us-east-1 --alarm-names arc-cloud-p
 ```
 The weekly database password rotation also happens while paused; the server picks up the current password
 within a minute of starting (`arc-db-secret-sync`).
+
+## Tear down
+
+Deletes the pilot for good: no final database snapshot, Terraform state and secrets destroyed. Run in **AWS
+CloudShell** (browser), Mumbai region selected. Each script first only lists what it found; nothing changes
+until you run it again with `--delete` and type the account ID a second time. Both are safe to re-run.
+
+1. **Pilot account** (sign in to the pilot account from the access portal, open CloudShell):
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/techarclab/Arc_Labs-Cloud/main/deploy/aws/teardown-pilot.sh
+   bash teardown-pilot.sh <pilot-account-id>            # list
+   bash teardown-pilot.sh <pilot-account-id> --delete   # 20-40 min, mostly waiting for RDS and CloudFront
+   ```
+   It ends by checking every region for instances, volumes, snapshots, Elastic IPs, NAT gateways, RDS, load
+   balancers and secrets, and says "nothing billable is left" only when that is true.
+2. **Management account**, old staging leftovers (2026-10-11 IoT Core design). Only `arc-staging*` /
+   `arc_staging*` names, role `claude-arc-cloud-deployer` and an unattached IoT policy `arc-device` are touched;
+   ArcHome, IAM Identity Center and its KMS key are not:
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/techarclab/Arc_Labs-Cloud/main/deploy/aws/teardown-mgmt-staging.sh
+   bash teardown-mgmt-staging.sh <management-account-id>            # list
+   bash teardown-mgmt-staging.sh <management-account-id> --delete
+   ```
+3. **Close the pilot account**, only after step 1 reports nothing left: management account → AWS Organizations →
+   AWS accounts → the pilot account → **Close account**. It shows `CLOSED` and can be reopened for 90 days, then
+   AWS deletes it permanently. You still receive one last bill for usage up to the closing date.
+4. **GitHub** (Settings → Secrets and variables → Actions, and Settings → Environments): delete the variables
+   `AWS_DEPLOY_ROLE_ARN`, `SERVER_INSTANCE_ID`, `CONSOLE_BUCKET`, `CONSOLE_DISTRIBUTION_ID`, `API_URL` and the
+   `pilot` environment.
+5. **Wix DNS:** delete the `_…arcloud` CNAME that validated the ACM certificate. Leave the three A records
+   (they point at Oracle).
 
 ## Security notes
 

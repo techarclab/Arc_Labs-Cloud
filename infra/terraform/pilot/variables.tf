@@ -1,7 +1,6 @@
 variable "account_id" {
   type        = string
-  description = "Dedicated ARC Cloud AWS account. Terraform refuses to touch any other account."
-  default     = "756751967044"
+  description = "Dedicated ARC Cloud AWS account (set in terraform.tfvars). Terraform refuses to touch any other account."
 }
 
 variable "region" {
