@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 
-export const PRIVACY_VERSION = '2026-10-30';
+export const PRIVACY_VERSION = '2026-11-10';
 
 export function PrivacyNotice() {
   return (
@@ -20,8 +20,10 @@ export function PrivacyNotice() {
       <h2>What we keep</h2>
       <ul>
         <li>
-          <b>Your account:</b> name, email address, your password (stored only as a salted scrypt hash, never readable), the organizations you belong to
-          and your role in each, the invite code you used, and which version of this notice you accepted and when.
+          <b>Your account:</b> name, email address and when you confirmed it, your password (stored only as a salted scrypt hash, never readable), whether
+          you said you are 18 or older, the organizations you belong to and your role in each, any invite code you used, and which version of this notice
+          you accepted and when. If you sign in with Google, we also receive your Google account ID, name and email address from Google, which confirms
+          the address; we do not get your Google password or anything else from your Google account.
         </li>
         <li>
           <b>What your devices send and receive:</b> readings, device state, firmware versions, commands and alerts, in the organization they belong to.
@@ -61,8 +63,9 @@ export function PrivacyNotice() {
           to give support your organization asks for, to keep the service secure, or when the law requires it.
         </li>
         <li>
-          Amazon Web Services hosts ARC Cloud for us, and an email delivery service sends the alert emails you set up. They process data only to provide
-          that service to us.
+          Oracle Cloud hosts ARC Cloud for us. Brevo, an email delivery service, sends account emails (such as the link that confirms your address) and
+          the alert emails you set up, so it receives the recipient’s address and the message; its servers are in the European Union. They process data
+          only to provide that service to us.
         </li>
         <li>Systems you connect yourself, through webhooks or API keys, receive the data you send them; their own terms apply there.</li>
         <li>Authorities, when a law or court order requires it.</li>
@@ -70,9 +73,9 @@ export function PrivacyNotice() {
 
       <h2>Where and how long</h2>
       <ul>
-        <li>Stored on Amazon Web Services in Mumbai, India (ap-south-1).</li>
-        <li>Device readings: for your organization’s data period (90 days on the free plan), then deleted automatically.</li>
-        <li>Server logs: 14 days. Database backups: 7 days, overwritten on a rolling basis.</li>
+        <li>Stored on Oracle Cloud in Hyderabad, India.</li>
+        <li>Device readings: for your organization’s data period (30 days on the free plan), then deleted automatically.</li>
+        <li>Server logs: overwritten once they reach a fixed size (at today’s traffic, after a few months). Database backups: the last 7 days, overwritten on a rolling basis.</li>
         <li>Your account: until you ask us to delete it. Leaving or being removed from an organization does not delete your account.</li>
       </ul>
 
@@ -99,7 +102,11 @@ export function PrivacyNotice() {
       </p>
 
       <h2>Age</h2>
-      <p>ARC Cloud accounts are only for people aged 18 or older. If we learn an account belongs to someone younger, we close it and delete its data.</p>
+      <p>
+        Anyone 18 or older can create an ARC Cloud account. People under 18 can join only with an invite code from their college or school, which
+        arranges a parent’s or guardian’s consent under its agreement with ARC LABS. If we learn that someone under 18 has an account without that, we
+        close it and delete its data.
+      </p>
 
       <h2>Changes</h2>
       <p>
@@ -153,7 +160,7 @@ export function TermsGate({ accepted, onAccepted, onSignOut }: { accepted: strin
       <div className="terms-actions">
         <label className="consent">
           <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
-          <span>I am 18 or older and I agree to this privacy notice.</span>
+          <span>I agree to this privacy notice.</span>
         </label>
         <ErrorBox error={error} />
         <div className="row">

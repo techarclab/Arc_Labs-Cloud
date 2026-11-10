@@ -4,6 +4,7 @@ import { api, isAdmin, ROLE_LABEL } from '../api';
 import { useSession } from '../session';
 import { ArcMark, usePoll } from './ui';
 import { Icon } from './icons';
+import { JoinInviteDialog } from '../pages/Onboarding';
 
 function initials(name?: string) {
   const words = (name ?? '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).filter(Boolean);
@@ -18,6 +19,7 @@ export function Layout() {
   const list = projects[orgId];
   const link = ({ isActive }: { isActive: boolean }) => `side-link${isActive ? ' active' : ''}`;
   const [openAlerts, setOpenAlerts] = useState(0);
+  const [joining, setJoining] = useState(false);
   usePoll(
     () =>
       orgId
@@ -153,9 +155,16 @@ export function Layout() {
             </span>
             <span>
               <b>{user?.displayName}</b>
-              <span>{org?.role ? ROLE_LABEL[org.role] : ''}</span>
+              {/* A role is per organization: being Admin of your own organization gives no access to anyone else's. */}
+              <span title={org ? `Your role in ${org.name}` : undefined}>
+                {user?.isPlatformAdmin ? 'ARC LABS admin · ' : ''}
+                {org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
+              </span>
             </span>
           </div>
+          <button type="button" onClick={() => setJoining(true)}>
+            Join with invite code
+          </button>
           <button
             onClick={() => {
               signOut();
@@ -169,6 +178,7 @@ export function Layout() {
       <main className="main">
         <Outlet context={{ org }} />
       </main>
+      <JoinInviteDialog open={joining} onClose={() => setJoining(false)} />
     </div>
   );
 }

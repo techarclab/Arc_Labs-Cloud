@@ -10,11 +10,17 @@ import { actor, AuthUser, CurrentUser, parse, userRef, Uuid } from '../common/ht
 import { hashInviteCode, newInviteCode } from '../common/invites';
 import { Db } from '../db/db.service';
 
-/** Named plans. Platform admins assign them; limits can also be set individually. */
-export const PLANS: Record<string, { maxDevices: number; maxProjects: number; maxRules: number; maxApiKeys: number; maxWebhooks: number; retentionDays: number }> = {
-  free: { maxDevices: 50, maxProjects: 20, maxRules: 100, maxApiKeys: 20, maxWebhooks: 10, retentionDays: 90 },
-  pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, retentionDays: 365 },
-  enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, retentionDays: 1825 },
+/**
+ * Named plans. Platform admins assign them; limits can also be set individually.
+ * `free` must match the column defaults in infra/db/migrations/006_open_signup.sql (every new organization starts on it).
+ */
+export const PLANS: Record<
+  string,
+  { maxDevices: number; maxProjects: number; maxRules: number; maxApiKeys: number; maxWebhooks: number; maxWidgets: number; retentionDays: number }
+> = {
+  free: { maxDevices: 5, maxProjects: 3, maxRules: 10, maxApiKeys: 3, maxWebhooks: 2, maxWidgets: 12, retentionDays: 30 },
+  pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, maxWidgets: 64, retentionDays: 365 },
+  enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, maxWidgets: 64, retentionDays: 1825 },
 };
 
 const settingsBody = z.object({ retentionDays: z.number().int().min(1).max(3650) });
@@ -25,6 +31,7 @@ const planBody = z.object({
   maxRules: z.number().int().min(1).max(1_000_000).optional(),
   maxApiKeys: z.number().int().min(1).max(10_000).optional(),
   maxWebhooks: z.number().int().min(1).max(10_000).optional(),
+  maxWidgets: z.number().int().min(1).max(64).optional(),
   retentionDays: z.number().int().min(1).max(3650).optional(),
 });
 
@@ -124,7 +131,7 @@ export class OrgOpsController {
     return {
       plan: o.plan,
       retentionDays: o.retention_days,
-      limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks },
+      limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks, widgetsPerDashboard: o.max_widgets },
       used: { devices: used.devices, projects: used.projects, rules: used.rules, apiKeys: used.api_keys, webhooks: used.webhooks },
       messagesPerDay: daily.map((d) => ({ day: d.day, messages: d.messages, measurements: d.measurements })),
       topDevices: top.map((t) => ({ deviceId: t.device_id, name: t.display_name, projectName: t.project_name, messages: t.messages })),
@@ -163,11 +170,12 @@ export class OrgOpsController {
       maxRules: input.maxRules ?? p.maxRules,
       maxApiKeys: input.maxApiKeys ?? p.maxApiKeys,
       maxWebhooks: input.maxWebhooks ?? p.maxWebhooks,
+      maxWidgets: input.maxWidgets ?? p.maxWidgets,
       retentionDays: input.retentionDays ?? p.retentionDays,
     };
     await this.db.query(
-      `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8 WHERE id = $1`,
-      [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays],
+      `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9 WHERE id = $1`,
+      [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets],
     );
     await this.audit.record({ ...actor(user), organizationId: id, action: 'organization.plan', resourceType: 'organization', resourceId: id, metadata: { plan: input.plan, ...v } });
     return { plan: input.plan, ...v };
@@ -271,7 +279,7 @@ export class PlatformController {
   async organizations(@CurrentUser() user: AuthUser) {
     this.requireStaff(user);
     const rows = await this.db.query(
-      `SELECT o.id, o.name, o.slug, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.created_at,
+      `SELECT o.id, o.name, o.slug, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.max_widgets, o.created_at,
          (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members,
          (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id AND d.lifecycle_status NOT IN ('revoked','retired')) AS devices,
          (SELECT count(*)::int FROM projects p WHERE p.organization_id = o.id) AS projects,
@@ -286,7 +294,7 @@ export class PlatformController {
         slug: o.slug,
         plan: o.plan,
         retentionDays: o.retention_days,
-        limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks },
+        limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks, widgetsPerDashboard: o.max_widgets },
         members: o.members,
         devices: o.devices,
         projects: o.projects,

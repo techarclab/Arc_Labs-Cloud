@@ -11,6 +11,17 @@ type Log = (level: string, msg: string, extra?: Record<string, unknown>) => void
 
 /** Webhook/email retry schedule (seconds after each failed attempt). */
 export const BACKOFF = [30, 120, 600, 1800, 7200, 21600];
+/**
+ * Account emails (confirmation links) keep trying hourly for about a day after the first few quick retries, so a
+ * day's email quota running out (Brevo free plan: 300/day) only delays them until the quota resets.
+ */
+export const ACCOUNT_EMAIL_BACKOFF = [30, 120, 600, 1800, ...Array<number>(25).fill(3600)];
+
+/** Seconds to wait before attempt `attempts + 1`, or null when the delivery has used all its attempts. */
+export function retryDelay(eventType: string, attempts: number): number | null {
+  const schedule = eventType.startsWith('auth.') ? ACCOUNT_EMAIL_BACKOFF : BACKOFF;
+  return attempts > schedule.length ? null : schedule[attempts - 1];
+}
 
 export function signWebhook(secret: string, body: string, timestamp: number): string {
   return createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
@@ -377,6 +388,10 @@ export class Jobs {
 
     if (ok) {
       await this.pool.query(`UPDATE deliveries SET status = 'sent', sent_at = now(), response_code = $2, last_error = NULL WHERE id = $1`, [d.id, code]);
+      // Account emails carry a sign-up link: keep only the subject once it is sent.
+      if (String(d.event_type).startsWith('auth.')) {
+        await this.pool.query(`UPDATE deliveries SET payload = jsonb_build_object('subject', payload->>'subject', 'redacted', true) WHERE id = $1`, [d.id]);
+      }
       if (d.webhook_id) await this.pool.query('UPDATE webhooks SET last_success_at = now(), consecutive_failures = 0 WHERE id = $1', [d.webhook_id]);
       if (d.alert_id) await this.pool.query(`INSERT INTO alert_events (alert_id, event, actor_type, note) VALUES ($1, 'notified', 'system', $2)`, [d.alert_id, `${d.kind} → ${d.recipient}`]);
       this.counters.inc(`arc_deliveries_sent_total|${d.kind}`);
@@ -387,10 +402,11 @@ export class Jobs {
       this.counters.inc(`arc_deliveries_skipped_total|${d.kind}`);
       return;
     }
-    const final = d.attempts >= BACKOFF.length + 1;
+    const delay = retryDelay(String(d.event_type), d.attempts);
+    const final = delay === null;
     await this.pool.query(
       `UPDATE deliveries SET status = $2, last_error = $3, response_code = $4, next_attempt_at = now() + make_interval(secs => $5) WHERE id = $1`,
-      [d.id, final ? 'failed' : 'pending', error, code, BACKOFF[Math.min(d.attempts - 1, BACKOFF.length - 1)]],
+      [d.id, final ? 'failed' : 'pending', error, code, delay ?? 0],
     );
     if (d.webhook_id) await this.pool.query('UPDATE webhooks SET last_failure_at = now(), consecutive_failures = consecutive_failures + 1 WHERE id = $1', [d.webhook_id]);
     this.counters.inc(`arc_deliveries_${final ? 'failed' : 'retried'}_total|${d.kind}`);

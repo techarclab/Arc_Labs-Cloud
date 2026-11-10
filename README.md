@@ -91,7 +91,8 @@ Go to **http://localhost:3002**, create your account, then set up your organizat
 API=http://localhost:3000/api/v1
 
 TOKEN=$(curl -s $API/auth/register -H 'content-type: application/json' \
-  -d '{"email":"you@arclabs.in","displayName":"You","password":"a-long-password-123"}' | jq -r .accessToken)
+  -d '{"email":"you@arclabs.in","displayName":"You","password":"a-long-password-123","ageGroup":"adult","acceptTerms":true}' | jq -r .accessToken)
+# (Local Docker confirms emails at once. On a real server, open the link that was emailed before going on.)
 
 ORG=$(curl -s $API/organizations -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"name":"ARC LABS","slug":"arc-labs"}' | jq -r .id)
@@ -134,7 +135,7 @@ Full interactive reference: **`/api/docs`** on the API (machine-readable: `/api/
 
 | Area | Endpoints |
 |---|---|
-| Auth | `auth/register`, `auth/login`, `auth/me`, `oauth/token` (client credentials) |
+| Auth | `auth/register`, `auth/login`, `auth/me`, `auth/verify-email`, `auth/resend-verification`, `auth/complete-profile`, `auth/redeem-invite`, `oauth/token` (client credentials) |
 | Organizations | `organizations`, members, `audit-logs`, `rejected-messages`, `overview`, `usage`, `settings` (retention), `plan` (platform admins), `platform/organizations` |
 | Channels | `projects`, `fields`, `dashboard`, `read-key`, `command-types` |
 | Devices & data | `devices`, credentials, lifecycle, `state`, `telemetry`, `events`, `controls`, `commands`, `channels/:id/feeds.json\|csv` |

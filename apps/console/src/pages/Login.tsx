@@ -2,13 +2,14 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { useSession } from '../session';
+import { AgeChoice, AgeGroup } from './Onboarding';
 
 type GoogleCredentialResponse = { credential?: string };
 type GoogleIdentityApi = {
   initialize: (options: { client_id: string; callback: (response: GoogleCredentialResponse) => void }) => void;
   renderButton: (
     element: HTMLElement,
-    options: { type: 'standard'; theme: 'outline'; size: 'large'; text: 'signin_with'; shape: 'rectangular'; width: number },
+    options: { type: 'standard'; theme: 'outline'; size: 'large'; text: 'signin_with' | 'signup_with'; shape: 'rectangular'; width: number },
   ) => void;
 };
 
@@ -18,7 +19,7 @@ declare global {
   }
 }
 
-function GoogleSignInButton({ clientId, onCredential }: { clientId: string; onCredential: (credential: string) => void }) {
+function GoogleSignInButton({ clientId, onCredential, text = 'signin_with' }: { clientId: string; onCredential: (credential: string) => void; text?: 'signin_with' | 'signup_with' }) {
   const button = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
 
@@ -39,7 +40,7 @@ function GoogleSignInButton({ clientId, onCredential }: { clientId: string; onCr
         type: 'standard',
         theme: 'outline',
         size: 'large',
-        text: 'signin_with',
+        text,
         shape: 'rectangular',
         width: Math.min(400, Math.max(200, Math.floor(container.getBoundingClientRect().width))),
       });
@@ -123,6 +124,35 @@ function SignalScene() {
   );
 }
 
+const USE_CASES: { title: string; text: string }[] = [
+  { title: 'Smart home', text: 'Switch lights, fans and pumps from your phone; see temperature and power use.' },
+  { title: 'Farms & greenhouses', text: 'Soil moisture, water-tank level and climate, with an alert before plants suffer.' },
+  { title: 'Labs & classrooms', text: 'Every student’s ESP32 project on one dashboard, ready for the viva.' },
+  { title: 'Factories & machines', text: 'Machine temperature, vibration and run hours; know when one stops.' },
+  { title: 'Air & environment', text: 'Air quality, noise and weather stations reporting from anywhere.' },
+  { title: 'Cold chain & storage', text: 'Freezers and cold rooms watched day and night, with an alarm when one warms up.' },
+];
+
+/** "What you can build": the landing panel's answer to "what is this for?". */
+function UseCases({ light = false }: { light?: boolean }) {
+  return (
+    <section className={`use-cases${light ? ' light' : ''}`} aria-label="What you can build">
+      <h2>What you can build</h2>
+      <ul>
+        {USE_CASES.map((u) => (
+          <li key={u.title}>
+            <b>{u.title}</b>
+            <span>{u.text}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="use-cases-how">
+        Connect an ESP32, ESP8266 or Raspberry Pi over MQTT or plain HTTP. Free for up to 5 devices; bigger plans for colleges and companies.
+      </p>
+    </section>
+  );
+}
+
 export function LoginPage() {
   const { signIn } = useSession();
   const [mode, setMode] = useState<'signin' | 'signup'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'signup' : 'signin'));
@@ -132,6 +162,8 @@ export function LoginPage() {
   // A shared sign-up link (…/?invite=ARC-XXXX-XXXX-XXXX) opens the sign-up form with the code filled in.
   const [invite, setInvite] = useState(() => new URLSearchParams(window.location.search).get('invite') ?? '');
   const [accepted, setAccepted] = useState(false);
+  const [age, setAge] = useState<AgeGroup | ''>('');
+  const [showInvite, setShowInvite] = useState(() => !!new URLSearchParams(window.location.search).get('invite'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
@@ -177,7 +209,8 @@ export function LoginPage() {
               email,
               password,
               displayName: name || email.split('@')[0],
-              ...(invite.trim() ? { inviteCode: invite.trim() } : {}),
+              ageGroup: age,
+              ...(invite.trim() && (showInvite || age === 'minor') ? { inviteCode: invite.trim() } : {}),
               acceptTerms: accepted,
             });
       await signIn(r.accessToken);
@@ -209,6 +242,7 @@ export function LoginPage() {
           <li>Alerts by email and webhook</li>
           <li>Signed over-the-air updates</li>
         </ul>
+        <UseCases />
       </section>
       <section className="auth-form">
         <form className="auth-card form" onSubmit={submit}>
@@ -216,13 +250,14 @@ export function LoginPage() {
             <p className="auth-kicker"><span aria-hidden="true" /> ARC CLOUD CONSOLE</p>
             <h2 className="auth-title">{mode === 'signin' ? 'Sign in' : 'Create your account'}</h2>
             <p className="muted">
-              {mode === 'signin' ? 'Use the email and password you signed up with.' : 'You’ll set up your organization and first project next.'}
+              {mode === 'signin' ? 'Use the email and password you signed up with.' : 'Free: up to 5 devices and 3 channels. No card needed.'}
             </p>
           </div>
-          {mode === 'signin' && (
+          {(mode === 'signin' || googleClientId) && (
             <div className="google-auth-section">
               {googleClientId ? (
-                <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogle} />
+                // Google has confirmed the address, so these accounts skip the confirmation email.
+                <GoogleSignInButton key={mode} clientId={googleClientId} onCredential={signInWithGoogle} text={mode === 'signup' ? 'signup_with' : 'signin_with'} />
               ) : (
                 <p className="google-auth-status" role="status">
                   {!googleConfigLoaded
@@ -259,15 +294,31 @@ export function LoginPage() {
           </label>
           {mode === 'signup' && (
             <>
-              <label className="field">
-                Invite code
-                <span className="hint">From your instructor or ARC LABS, e.g. ARC-7KQ3-M9TX-4HPW.</span>
-                <input value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
-              </label>
+              <AgeChoice value={age} onChange={setAge} />
+              {showInvite || age === 'minor' ? (
+                <label className="field">
+                  Invite code
+                  <span className="hint">
+                    {age === 'minor' ? 'Required under 18: from your college, school or instructor.' : 'Optional: joins your college’s or company’s organization.'} E.g. ARC-7KQ3-M9TX-4HPW.
+                  </span>
+                  <input
+                    value={invite}
+                    required={age === 'minor'}
+                    onChange={(e) => setInvite(e.target.value)}
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                  />
+                </label>
+              ) : (
+                <button type="button" className="link-btn small" onClick={() => setShowInvite(true)}>
+                  I have an invite code
+                </button>
+              )}
               <label className="consent">
                 <input type="checkbox" required checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
                 <span>
-                  I am 18 or older and I agree to the{' '}
+                  I agree to the{' '}
                   <a href="/privacy" target="_blank" rel="noopener">
                     privacy notice
                   </a>
@@ -277,7 +328,7 @@ export function LoginPage() {
             </>
           )}
           <ErrorBox error={error} />
-          <button className="btn primary" disabled={busy} type="submit">
+          <button className="btn primary" disabled={busy || (mode === 'signup' && !age)} type="submit">
             {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>
           <p className="small muted">
@@ -295,6 +346,8 @@ export function LoginPage() {
           </p>
         </form>
         <p className="auth-footnote"><span aria-hidden="true">✦</span> Secure access to your connected devices</p>
+        {/* On phones the dark panel is hidden, so the same list follows the form. */}
+        <UseCases light />
       </section>
     </div>
   );
