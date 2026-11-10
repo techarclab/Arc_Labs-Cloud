@@ -9,6 +9,9 @@ COPY apps/console/package.json apps/console/
 COPY tools/device-simulator/package.json tools/device-simulator/
 RUN npm ci --no-audit --no-fund
 COPY apps/console apps/console
+# The console serves the ArcCloud Arduino library zip at /downloads (packed during the build).
+COPY tools/pack-arduino-library.mjs tools/
+COPY firmware/arduino-library firmware/arduino-library
 RUN npm run build -w @arc/console
 
 FROM nginx:1.28-alpine

@@ -384,6 +384,8 @@ async function main() {
       const again = await http('GET', `/api/v1/devices/${dev.id}`, tA);
       assert.equal(JSON.stringify(again.body).includes(creds.password), false);
       assert.equal(again.body.connectivity.status, 'unknown');
+      // Non-secret connection details for the console's Arduino code generator.
+      assert.deepEqual(again.body.connection, { mqttHost: creds.mqttHost, mqttPort: creds.mqttPort, topicBase: `arc/v1/${orgA.id}/${proj.id}/${dev.id}` });
     });
     await check('credential stored as scrypt hash, not plaintext', async () => {
       const { Client } = await import('pg');

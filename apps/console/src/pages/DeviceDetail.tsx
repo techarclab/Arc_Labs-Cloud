@@ -4,6 +4,7 @@ import { api, canEdit, Control, Credentials, Device, downloadAuthed, isAdmin, Me
 import { SliderWidget, SwitchWidget } from '../components/widgets';
 import { Chart, Point } from '../components/Chart';
 import { CredentialsDialog } from '../components/Credentials';
+import { ArduinoCodePanel } from '../components/ArduinoCode';
 import { ErrorBox, Lifecycle, LIFECYCLE_TEXT, Modal, Status, Strip, useNow, usePoll, useToast } from '../components/ui';
 import { ago, dateTime, metricLabel, num } from '../format';
 import { useSession } from '../session';
@@ -48,6 +49,7 @@ export function DeviceDetail() {
   const [error, setError] = useState<unknown>(null);
   const [newCreds, setNewCreds] = useState<{ device: Device; credentials: Credentials } | null>(null);
   const [editing, setEditing] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const [confirm, setConfirm] = useState<null | 'rotate' | 'revoke' | 'suspend'>(null);
   const [controls, setControls] = useState<Control[]>([]);
 
@@ -162,14 +164,21 @@ export function DeviceDetail() {
             <span className="muted">Last seen {ago(device.lastSeenAt, now)}</span>
           </div>
         </div>
-        {canEdit(org?.role) && !dead && (
+        {!dead && (
           <div className="row">
+            <button className="btn" onClick={() => setShowCode(true)}>
+              Arduino code
+            </button>
+            {canEdit(org?.role) && (
+              <>
             <button className="btn" onClick={() => setEditing(true)}>
               Edit
             </button>
             <button className="btn" onClick={() => setConfirm('rotate')}>
               Replace password
             </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -402,6 +411,11 @@ export function DeviceDetail() {
             void load();
           }}
         />
+      )}
+      {showCode && (
+        <Modal open wide onClose={() => setShowCode(false)} title={`Arduino code for ${device.displayName}`}>
+          <ArduinoCodePanel device={device} />
+        </Modal>
       )}
       {newCreds && <CredentialsDialog replaced device={newCreds.device} credentials={newCreds.credentials} onClose={() => setNewCreds(null)} />}
     </>

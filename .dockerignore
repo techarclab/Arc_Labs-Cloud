@@ -6,6 +6,7 @@ device*.json
 .arc-session.json
 infra/certs/out
 firmware
+!firmware/arduino-library
 tests
 coverage
 **/*.tsbuildinfo
