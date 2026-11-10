@@ -213,6 +213,8 @@ interface Invite {
   role: string | null;
   maxUses: number;
   usedCount: number;
+  /** People currently in the organization because of this code. */
+  members?: number;
   expiresAt: string;
   revokedAt: string | null;
   createdAt: string;
@@ -236,11 +238,12 @@ function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
   }, []);
   usePoll(load, 60_000, [load]);
 
-  async function revoke(i: Invite) {
-    if (!confirm(`Revoke “${i.label}”? Nobody can sign up with it afterwards; accounts already created stay.`)) return;
+  const [revoking, setRevoking] = useState<Invite | null>(null);
+  async function revoke(i: Invite, removeMembers: boolean) {
     try {
-      await api('POST', `/platform/invites/${i.id}/revoke`);
-      toast('Invite code revoked');
+      const r = await api<{ removedMembers: number }>('POST', `/platform/invites/${i.id}/revoke`, { removeMembers });
+      toast(removeMembers ? `Code revoked; ${r.removedMembers} ${r.removedMembers === 1 ? 'person' : 'people'} removed from ${i.organizationName}` : 'Invite code revoked');
+      setRevoking(null);
       void load();
     } catch (e) {
       setError(e);
@@ -289,9 +292,9 @@ function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
                   <span className={`pill${i.status === 'active' ? ' ok' : ''}`}>{STATUS_LABEL[i.status]}</span>
                 </td>
                 <td style={{ textAlign: 'right' }}>
-                  {i.status === 'active' && (
-                    <button className="btn small quiet danger" onClick={() => void revoke(i)}>
-                      Revoke
+                  {(i.status === 'active' || (i.organizationId && (i.members ?? 0) > 0)) && (
+                    <button className="btn small quiet danger" onClick={() => setRevoking(i)}>
+                      {i.status === 'active' ? 'Revoke' : `Remove ${i.members} ${i.members === 1 ? 'person' : 'people'}`}
                     </button>
                   )}
                 </td>
@@ -334,6 +337,37 @@ function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
           </p>
         </Modal>
       )}
+      <Modal open={!!revoking} onClose={() => setRevoking(null)} title={revoking?.status === 'active' ? `Revoke “${revoking?.label}”?` : `Remove the people who joined with “${revoking?.label}”?`}>
+        {revoking && (
+          <div className="form">
+            {revoking.status === 'active' && <p>Nobody can use this code any more.</p>}
+            {revoking.organizationId ? (
+              <p>
+                <b>{revoking.members ?? 0}</b> {revoking.members === 1 ? 'person is' : 'people are'} in <b>{revoking.organizationName}</b> because of this code. You can keep them, or
+                remove them too (for example at the end of a course). Their own accounts and organizations stay; they only lose access to {revoking.organizationName}. Admins
+                are never removed this way.
+              </p>
+            ) : (
+              <p className="muted">Accounts already created with it stay: each one has its own organization.</p>
+            )}
+            <div className="row">
+              {revoking.status === 'active' && (
+                <button className="btn" onClick={() => void revoke(revoking, false)}>
+                  {revoking.organizationId && (revoking.members ?? 0) > 0 ? 'Revoke, keep them' : 'Revoke'}
+                </button>
+              )}
+              {revoking.organizationId && (revoking.members ?? 0) > 0 && (
+                <button className="btn danger" onClick={() => void revoke(revoking, true)}>
+                  {revoking.status === 'active' ? 'Revoke and remove them' : 'Remove them'}
+                </button>
+              )}
+              <button className="btn quiet" onClick={() => setRevoking(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </section>
   );
 }

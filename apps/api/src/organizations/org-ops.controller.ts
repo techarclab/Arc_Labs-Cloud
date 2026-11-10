@@ -182,6 +182,8 @@ export class OrgOpsController {
   }
 }
 
+const revokeInviteBody = z.object({ removeMembers: z.boolean().optional() });
+
 const inviteBody = z
   .object({
     label: z.string().trim().min(1).max(120),
@@ -217,7 +219,9 @@ export class PlatformController {
   async invites(@CurrentUser() user: AuthUser) {
     this.requireStaff(user);
     const rows = await this.db.query(
-      `SELECT i.*, o.name AS organization_name FROM invite_codes i LEFT JOIN organizations o ON o.id = i.organization_id
+      `SELECT i.*, o.name AS organization_name,
+         (SELECT count(*)::int FROM organization_members m WHERE m.invite_id = i.id) AS members
+       FROM invite_codes i LEFT JOIN organizations o ON o.id = i.organization_id
        ORDER BY i.created_at DESC LIMIT 200`,
     );
     return {
@@ -229,6 +233,8 @@ export class PlatformController {
         role: i.role,
         maxUses: i.max_uses,
         usedCount: i.used_count,
+        /** People currently in the code's organization because of this code. */
+        members: i.members,
         expiresAt: i.expires_at,
         revokedAt: i.revoked_at,
         createdAt: i.created_at,
@@ -263,15 +269,28 @@ export class PlatformController {
     return { id: row.id, code, label: row.label, maxUses: row.max_uses, expiresAt: row.expires_at, organizationId: row.organization_id, role: row.role };
   }
 
-  @Doc('Revoke invite code')
+  @Doc('Revoke invite code; optionally also remove the people who joined an organization with it', { body: revokeInviteBody })
   @Post('invites/:id/revoke')
   @HttpCode(200)
-  async revokeInvite(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
+  async revokeInvite(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     this.requireStaff(user);
-    const row = await this.db.one(`UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 RETURNING id, organization_id`, [id]);
-    if (!row) throw new NotFoundException({ code: 'not_found' });
-    await this.audit.record({ ...actor(user), organizationId: row.organization_id, action: 'platform.invite_revoke', resourceType: 'invite_code', resourceId: id });
-    return { id, status: 'revoked' };
+    const { removeMembers } = parse(revokeInviteBody, body ?? {});
+    return this.db.tx(async (c) => {
+      const row = (await c.query(`UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 RETURNING id, organization_id`, [id])).rows[0];
+      if (!row) throw new NotFoundException({ code: 'not_found' });
+      // Admins stay (an organization must never lose its last admin this way); they can be removed from Team.
+      const removed = removeMembers
+        ? (await c.query<{ user_id: string }>(`DELETE FROM organization_members WHERE invite_id = $1 AND role <> 'org_admin' RETURNING user_id`, [id])).rows
+        : [];
+      for (const r of removed) {
+        await this.audit.record({ ...actor(user), organizationId: row.organization_id, action: 'member.remove', resourceType: 'user', resourceId: r.user_id, metadata: { inviteId: id } }, c);
+      }
+      await this.audit.record(
+        { ...actor(user), organizationId: row.organization_id, action: 'platform.invite_revoke', resourceType: 'invite_code', resourceId: id, metadata: { removedMembers: removed.length } },
+        c,
+      );
+      return { id, status: 'revoked', removedMembers: removed.length };
+    });
   }
 
   @Doc('Organizations')
