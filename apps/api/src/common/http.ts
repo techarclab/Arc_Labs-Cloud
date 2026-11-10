@@ -62,6 +62,13 @@ export const API_KEY_PREFIX = 'arc_sk_';
 const IS_PUBLIC = 'isPublic';
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
+const ALLOW_INCOMPLETE = 'allowIncompleteAccount';
+/**
+ * Lets a signed-in person whose account is not finished yet (email not confirmed, or age group not given) call
+ * this route. Everything else refuses them with 403 email_unverified / profile_incomplete.
+ */
+export const AllowIncomplete = () => SetMetadata(ALLOW_INCOMPLETE, true);
+
 export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext): AuthUser => {
   return ctx.switchToHttp().getRequest().user;
 });
@@ -106,10 +113,18 @@ export class JwtAuthGuard implements CanActivate {
     }
     // Re-check on every request so disabled users lose access immediately.
     const user = await this.db.one(
-      `SELECT id, email, is_platform_admin FROM users WHERE id = $1 AND status = 'active'`,
+      `SELECT id, email, is_platform_admin, email_verified_at, age_group FROM users WHERE id = $1 AND status = 'active'`,
       [payload.sub],
     );
     if (!user) throw new UnauthorizedException({ code: 'invalid_token' });
+    if (!user.email_verified_at || !user.age_group) {
+      const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_INCOMPLETE, [ctx.getHandler(), ctx.getClass()]);
+      if (!allowed) {
+        throw user.age_group
+          ? new ForbiddenException({ code: 'email_unverified', message: 'Confirm your email address first: open the link we emailed you.' })
+          : new ForbiddenException({ code: 'profile_incomplete', message: 'Finish setting up your account first.' });
+      }
+    }
     req.user = { id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin || isPlatformAdminEmail(user.email), kind: 'user' } satisfies AuthUser;
     return true;
   }

@@ -46,6 +46,15 @@ const schema = z.object({
     .transform((v) => v === 'true'),
   /** Comma-separated emails of ARC LABS staff who manage plans for every organization. */
   PLATFORM_ADMIN_EMAILS: z.string().default(''),
+  /** Organizations a person may create (platform admins: unlimited). Each starts on the free plan. */
+  ORGS_PER_USER: z.coerce.number().int().min(1).max(100).default(1),
+  /**
+   * New email/password accounts must confirm their address (link sent by the worker, so the worker needs SMTP_URL).
+   * "off" only for local development without email.
+   */
+  EMAIL_VERIFICATION: z.enum(['required', 'off']).default('required'),
+  /** Console origin, used in links sent by email (e.g. https://arcloud.arclabs.in). */
+  CONSOLE_URL: z.string().default('http://localhost:5173'),
 });
 
 export type AppConfig = z.infer<typeof schema>;

@@ -29,6 +29,8 @@ services:
       JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-3600}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      # Local development has no email server: new accounts are confirmed at once. Production keeps "required".
+      EMAIL_VERIFICATION: ${EMAIL_VERIFICATION:-off}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       INTERNAL_HOOK_TOKEN: ${INTERNAL_HOOK_TOKEN}
       MQTT_SERVICE_USERNAME: ${MQTT_SERVICE_USERNAME:-arc-ingest}

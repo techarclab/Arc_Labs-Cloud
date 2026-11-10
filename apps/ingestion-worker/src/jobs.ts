@@ -377,6 +377,10 @@ export class Jobs {
 
     if (ok) {
       await this.pool.query(`UPDATE deliveries SET status = 'sent', sent_at = now(), response_code = $2, last_error = NULL WHERE id = $1`, [d.id, code]);
+      // Account emails carry a sign-up link: keep only the subject once it is sent.
+      if (String(d.event_type).startsWith('auth.')) {
+        await this.pool.query(`UPDATE deliveries SET payload = jsonb_build_object('subject', payload->>'subject', 'redacted', true) WHERE id = $1`, [d.id]);
+      }
       if (d.webhook_id) await this.pool.query('UPDATE webhooks SET last_success_at = now(), consecutive_failures = 0 WHERE id = $1', [d.webhook_id]);
       if (d.alert_id) await this.pool.query(`INSERT INTO alert_events (alert_id, event, actor_type, note) VALUES ($1, 'notified', 'system', $2)`, [d.alert_id, `${d.kind} → ${d.recipient}`]);
       this.counters.inc(`arc_deliveries_sent_total|${d.kind}`);

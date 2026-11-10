@@ -778,3 +778,28 @@ dialog.modal .tabs button[aria-selected='true'] { background: #fff; color: var(-
 .btn.danger.solid:hover { background: #b93a32; border-color: #b93a32; }
 @media (max-width: 900px) { .settings-pair { grid-template-columns: 1fr; } }
 .widget header[hidden] { display: none; }
+
+/* ---------- Self-service sign-up (2026-11) ---------- */
+fieldset.choice { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+fieldset.choice legend { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-bottom: 6px; padding: 0; }
+fieldset.choice label { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; line-height: 1.45; color: #33415a; cursor: pointer; }
+fieldset.choice input { width: 18px; height: 18px; min-height: 0; margin: 1px 0 0; padding: 0; flex: none; accent-color: var(--accent); }
+.link-btn, .link-btn.small { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-align: left; font: inherit; align-self: flex-start; }
+.link-btn:hover { text-decoration: underline; }
+.onboarding { min-height: 100vh; }
+.onboarding .auth-card { width: min(440px, 100%); }
+.use-cases { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 22px; }
+.use-cases h2 { color: #fff; font-size: 18px; font-weight: 650; margin: 0 0 12px; letter-spacing: -0.01em; }
+.use-cases ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px 20px; }
+.use-cases li { display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.4; color: #9fb0c9; }
+.use-cases li b { color: #e6ecf5; font-weight: 600; font-size: 14px; }
+.auth-art .use-cases-how, .use-cases-how { font-size: 13.5px; margin-top: 14px; max-width: 60ch; }
+.use-cases.light { display: none; border-top: 0; padding-top: 0; width: min(400px, 100%); margin-top: 28px; }
+.use-cases.light h2 { color: var(--ink); }
+.use-cases.light li { color: var(--muted); }
+.use-cases.light li b { color: var(--ink); }
+.use-cases.light .use-cases-how { color: var(--muted); }
+@media (max-width: 900px) {
+  .auth-form { flex-direction: column; }
+  .use-cases.light { display: block; }
+}

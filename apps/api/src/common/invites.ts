@@ -4,7 +4,7 @@ import { createHash, randomInt } from 'node:crypto';
  * Version of the privacy notice (apps/console/src/pages/Privacy.tsx, PRIVACY_VERSION). Bump both when the notice changes:
  * every signed-in person is then asked to accept the new version before using the console.
  */
-export const TERMS_VERSION = '2026-10-30';
+export const TERMS_VERSION = '2026-11-10';
 
 // No 0/O, 1/I/L: codes are read aloud in classrooms and typed from slides.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

@@ -20,6 +20,7 @@ import { FirmwarePage } from './pages/Firmware';
 import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
+import { ProfileGate, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -67,10 +68,12 @@ function Gate() {
   const { user, loading, reload, signOut } = useSession();
   if (loading) return null;
   if (!user) return <LoginPage />;
-  // People (not API keys) must have accepted the privacy notice in force before using the console.
+  // Onboarding, in order: age group (Google sign-ups), the privacy notice in force, then a confirmed email address.
+  if (user.ageGroup === null) return <ProfileGate onDone={reload} onSignOut={signOut} />;
   if (user.currentTermsVersion && user.termsVersion !== user.currentTermsVersion) {
     return <TermsGate accepted={user.termsVersion ?? null} onAccepted={reload} onSignOut={signOut} />;
   }
+  if (user.emailVerified === false) return <VerifyGate email={user.email} onReload={reload} onSignOut={signOut} />;
   return (
     <Routes>
       <Route path="/" element={<Home />} />
@@ -109,6 +112,7 @@ createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route path="/lab" element={<LabPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="*" element={<Gate />} />
           </Routes>
         </SessionProvider>

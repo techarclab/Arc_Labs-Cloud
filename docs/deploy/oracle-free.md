@@ -113,8 +113,12 @@ ALLOW_SIGNUP=true
 PLATFORM_ADMIN_EMAILS=<your email>
 EOF
 ```
-After deploying (step 8), register in the console with that email, then set `ALLOW_SIGNUP=false` in the same file
-and run `sudo arc-deploy` again. Further people join with invite codes (Platform → Invites).
+After deploying (step 8), register in the console with that email. New accounts must confirm their email address,
+so set up email (step 10) first, or confirm this one account by hand:
+`sudo docker exec -i -u postgres arc-cloud-postgres-1 psql -d arc_cloud -c "UPDATE users SET email_verified_at = now() WHERE email = '<your email>'"`.
+
+`ALLOW_SIGNUP=true` is open self-service sign-up (anyone 18+; under-18s only with an institution's invite code). Set
+`ALLOW_SIGNUP=false` to make every sign-up need an invite code (Platform → Invite codes), then `sudo arc-deploy`.
 
 ## 7. Move your data from AWS (optional, keeps accounts, devices and history)
 
@@ -194,6 +198,36 @@ Check: open the console and sign in; `curl -s https://api.arcloud.arclabs.in/hea
 - **Uptime:** there is no CloudWatch here. Add a free external monitor (for example UptimeRobot or Better Stack):
   an HTTPS keyword check on `https://api.arcloud.arclabs.in/health/deep` for `"status":"ok"`, and a TCP check on
   `mqtt.arcloud.arclabs.in:8883`, alerting your email.
+
+## 10. Email: account confirmation and alerts (Brevo)
+
+New accounts get a confirmation link from `no-reply@arclabs.in`; until they open it they can only sign in and ask
+for another link. Alert emails use the same settings. Without this step nobody can finish signing up.
+
+1. **Brevo account** (free plan: 300 emails/day, shared by all sending) at brevo.com, with a company address.
+2. **Authenticate `arclabs.in`:** Brevo → Senders, Domains & Dedicated IPs → Domains → Add a domain. Brevo shows a
+   *Brevo code* TXT record and DKIM records (two CNAMEs `brevo1._domainkey` / `brevo2._domainkey`, or one TXT), and a
+   DMARC record. Add them in **Wix DNS exactly as Brevo shows them**, then click *Authenticate* in Brevo. Add the DMARC
+   record only if `arclabs.in` has none yet (one per domain; check with `dig +short TXT _dmarc.arclabs.in`). No SPF
+   change is needed on Brevo's shared IPs. Do not change the domain's MX records: Microsoft 365 mail is unaffected.
+3. **Sender:** Senders → add `no-reply@arclabs.in` (name "ARC Cloud"). If Brevo asks to confirm the address by email,
+   that address must receive mail once: create it as an alias or shared mailbox in Microsoft 365 first.
+4. **SMTP key:** SMTP & API → SMTP → *Generate a new SMTP key*. Note the **SMTP login** shown on that page and the key.
+   Never paste the key into chat, email or git.
+5. **On the VM**, add to `/etc/arc-cloud/extra.env` (in the login, write `@` as `%40`):
+   ```bash
+   sudo nano /etc/arc-cloud/extra.env
+   ```
+   ```
+   SMTP_URL=smtp://<smtp-login-with-%40>:<smtp-key>@smtp-relay.brevo.com:587/?requireTLS=true
+   MAIL_FROM=ARC Cloud <no-reply@arclabs.in>
+   ALLOW_SIGNUP=true
+   ```
+   then `sudo arc-deploy`. The file stays root-only (0600); `write-env` copies these two values only into the worker's
+   settings, never the API's.
+6. **Test:** sign up in a private window with an address you can read. The email should arrive within a minute; if
+   not, `sudo docker logs --since 10m arc-cloud-worker-1 2>&1 | grep -i deliver`, and
+   `SELECT status, last_error FROM deliveries ORDER BY id DESC LIMIT 3;` in `psql`.
 
 ## Operating it
 

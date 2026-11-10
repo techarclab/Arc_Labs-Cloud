@@ -9,7 +9,14 @@ interface User {
   /** Privacy notice version this person accepted (null: never), and the version in force. */
   termsVersion?: string | null;
   currentTermsVersion?: string;
+  /** False until the emailed link is opened. */
+  emailVerified?: boolean;
+  /** Null for Google sign-ups that have not said yet. */
+  ageGroup?: 'adult' | 'minor' | null;
 }
+
+/** An account that must finish onboarding sees only the onboarding screens (the API refuses everything else). */
+export const accountIncomplete = (u: User | null) => !!u && (u.emailVerified === false || u.ageGroup === null);
 interface SessionValue {
   user: User | null;
   orgs: Org[];
@@ -50,8 +57,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       const me = await api('GET', '/auth/me');
-      setUser({ ...me.user, isPlatformAdmin: !!me.isPlatformAdmin, currentTermsVersion: me.currentTermsVersion });
-      await refreshOrgs();
+      const u: User = { ...me.user, isPlatformAdmin: !!me.isPlatformAdmin, currentTermsVersion: me.currentTermsVersion };
+      setUser(u);
+      if (!accountIncomplete(u)) await refreshOrgs();
+      else setOrgs([]);
     } catch {
       setUser(null);
     } finally {

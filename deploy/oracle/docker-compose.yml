@@ -5,10 +5,16 @@
 #   - Secrets are generated once on the server (/etc/arc-cloud/secrets.env), instead of Secrets Manager.
 name: arc-cloud
 
+# Container logs are capped (5 × 10 MB per service), so they can never fill the disk; the oldest lines are overwritten.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
 services:
   caddy:
     image: caddy:2.10
     restart: unless-stopped
+    logging: *logging
     ports:
       - "80:80"     # Let's Encrypt HTTP-01 challenge + redirect to HTTPS
       - "443:443"   # console + API
@@ -27,6 +33,7 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_PASSWORD_FILE: /run/arc-db/pg-superuser-password   # superuser `postgres`: maintenance only, never given to the app
       PGDATA: /var/lib/postgresql/data/pgdata
@@ -46,6 +53,7 @@ services:
   api:
     build: { context: ../.., dockerfile: Dockerfile }
     restart: unless-stopped
+    logging: *logging
     command: ["node", "apps/api/dist/main.js"]
     env_file: /etc/arc-cloud/api.env
     environment:
@@ -70,6 +78,7 @@ services:
   emqx:
     build: { context: ../.., dockerfile: Dockerfile.emqx }
     restart: unless-stopped
+    logging: *logging
     env_file: /etc/arc-cloud/emqx.env
     environment:
       API_HOOKS_URL: http://api:3001
@@ -91,6 +100,7 @@ services:
   worker:
     build: { context: ../.., dockerfile: Dockerfile }
     restart: unless-stopped
+    logging: *logging
     command: ["node", "apps/ingestion-worker/dist/main.js"]
     env_file: /etc/arc-cloud/worker.env
     environment:
@@ -106,6 +116,7 @@ services:
     # Built without VITE_API_URL: the console calls /api on its own origin, which Caddy routes to the API.
     build: { context: ../.., dockerfile: Dockerfile.console }
     restart: unless-stopped
+    logging: *logging
     expose: ["80"]
     mem_limit: 128m
 

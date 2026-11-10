@@ -8,7 +8,7 @@ import { TimeChart } from '../components/viz';
 interface Usage {
   plan: string;
   retentionDays: number;
-  limits: Record<'devices' | 'projects' | 'rules' | 'apiKeys' | 'webhooks', number>;
+  limits: Record<'devices' | 'projects' | 'rules' | 'apiKeys' | 'webhooks', number> & { widgetsPerDashboard?: number };
   used: Record<'devices' | 'projects' | 'rules' | 'apiKeys' | 'webhooks', number>;
   messagesPerDay: { day: string; messages: number; measurements: number }[];
   topDevices: { deviceId: string; name: string; projectName: string; messages: number }[];
@@ -100,6 +100,7 @@ export function UsagePage() {
                 </tbody>
               </table>
             </div>
+            {u.limits.widgetsPerDashboard ? <p className="small muted" style={{ padding: '10px 16px 14px' }}>Up to {u.limits.widgetsPerDashboard} widgets on each channel’s dashboard.</p> : null}
           </section>
 
           <div className="overview-grid" style={{ marginTop: 0 }}>

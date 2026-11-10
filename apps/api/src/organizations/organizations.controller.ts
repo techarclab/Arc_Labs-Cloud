@@ -1,7 +1,8 @@
 import { ApiTags } from '@nestjs/swagger';
 import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Doc } from '../common/docs';
-import { Body, ConflictException, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { loadConfig } from '../config';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
@@ -47,7 +48,17 @@ export class OrganizationsController {
     const input = parse(createBody, body);
     try {
       return await this.db.tx(async (c) => {
-        const org = (await c.query('INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING *', [input.name, input.slug])).rows[0];
+        // One free organization per person (so the free plan's limits mean something). Platform admins are exempt;
+        // anyone else who needs more asks ARC LABS. The lock makes parallel requests count one at a time.
+        if (!user.isPlatformAdmin) {
+          await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`org-create:${user.id}`]);
+          const limit = loadConfig().ORGS_PER_USER;
+          const n = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM organizations WHERE created_by = $1', [user.id])).rows[0].n;
+          if (n >= limit) {
+            throw new ForbiddenException({ code: 'org_limit', limit, message: `You can create ${limit} organization${limit === 1 ? '' : 's'}. Contact ARC LABS if you need more.` });
+          }
+        }
+        const org = (await c.query('INSERT INTO organizations (name, slug, created_by) VALUES ($1, $2, $3) RETURNING *', [input.name, input.slug, user.id])).rows[0];
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'org_admin')`, [org.id, user.id]);
         await this.audit.record({ ...actor(user), organizationId: org.id, action: 'organization.create', resourceType: 'organization', resourceId: org.id }, c);
         return mapOrg(org, 'org_admin');

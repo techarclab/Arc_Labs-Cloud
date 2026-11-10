@@ -4,6 +4,7 @@ import { api, isAdmin, Org } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { slugify } from '../format';
 import { useSession } from '../session';
+import { JoinInviteDialog } from './Onboarding';
 
 /** Create the first organization (if needed) and a project. */
 export function SetupPage() {
@@ -19,6 +20,7 @@ export function SetupPage() {
   const [projectName, setProjectName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [joining, setJoining] = useState(false);
 
   const creatingOrg = orgChoice === 'new';
 
@@ -110,6 +112,14 @@ export function SetupPage() {
         <button className="btn primary" disabled={busy} type="submit">
           {busy ? 'Creating…' : 'Create channel'}
         </button>
+        {creatingOrg && !orgs.length && (
+          <p className="small muted">
+            Got an invite code from your college or company?{' '}
+            <button type="button" className="link-btn" onClick={() => setJoining(true)}>
+              Join their organization instead
+            </button>
+          </p>
+        )}
         <div className="row small">
           {orgs.length > 0 && (
             <button type="button" className="btn quiet small" onClick={() => nav(-1)}>
@@ -121,6 +131,7 @@ export function SetupPage() {
           </button>
         </div>
       </form>
+      <JoinInviteDialog open={joining} onClose={() => setJoining(false)} />
     </div>
   );
 }

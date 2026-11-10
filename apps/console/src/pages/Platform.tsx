@@ -253,7 +253,7 @@ function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
         <div>
           <h3 style={{ margin: 0 }}>Invite codes</h3>
           <p className="muted small" style={{ margin: '4px 0 0' }}>
-            Sign-up is invite-only. Give each class or customer a code: it works for a limited number of people until it expires or you revoke it.
+            Anyone 18 or older can sign up alone. Codes put a class or customer into an organization (new or existing accounts, entered at sign-up or with “Join with invite code”), and are the only way for under-18 students to sign up. A code works for a limited number of people until it expires or you revoke it.
           </p>
         </div>
         <button className="btn primary" onClick={() => setCreating(true)}>
@@ -396,9 +396,9 @@ function InviteModal({ orgs, onClose, onCreated }: { orgs: PlatformOrg[]; onClos
           </label>
         </div>
         <label className="field">
-          After sign-up
+          What the code does
           <select value={orgId} onChange={(e) => setOrgId(e.target.value)}>
-            <option value="">Each person creates their own organization (students, separate customers)</option>
+            <option value="">Lets people sign up (e.g. under-18 students); each creates their own organization</option>
             {orgs.map((o) => (
               <option key={o.id} value={o.id}>
                 Join {o.name}

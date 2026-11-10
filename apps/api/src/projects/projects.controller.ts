@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpException, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { AccessService } from '../common/access.service';
@@ -251,6 +251,18 @@ export class ProjectsController {
     const { widgets } = parse(dashboardBody, body);
     const ids = new Set(widgets.map((w) => w.id));
     if (ids.size !== widgets.length) throw new BadRequestException({ code: 'duplicate_widget' });
+    // Plan limit. A dashboard already above it (e.g. after a downgrade) can still be edited, just not grown.
+    const cap = await this.db.one<{ max: number; plan: string; current: number }>(
+      `SELECT o.max_widgets AS max, o.plan, COALESCE((SELECT jsonb_array_length(widgets) FROM dashboards WHERE project_id = $2), 0) AS current
+       FROM organizations o WHERE o.id = $1`,
+      [project.organization_id, id],
+    );
+    if (cap && widgets.length > cap.max && widgets.length > cap.current) {
+      throw new HttpException(
+        { code: 'quota_exceeded', resource: 'widgets', limit: cap.max, plan: cap.plan, message: `Your ${cap.plan} plan allows ${cap.max} widgets per dashboard.` },
+        403,
+      );
+    }
     const row = await this.db.one(
       `INSERT INTO dashboards (project_id, widgets, updated_at, updated_by) VALUES ($1, $2, now(), $3)
        ON CONFLICT (project_id) DO UPDATE SET widgets = EXCLUDED.widgets, updated_at = now(), updated_by = EXCLUDED.updated_by

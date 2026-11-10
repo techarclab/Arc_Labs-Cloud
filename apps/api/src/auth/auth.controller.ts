@@ -1,6 +1,7 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, HttpException, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { createHash, randomBytes } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
 import { OAuth2Client } from 'google-auth-library';
@@ -9,18 +10,30 @@ import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
-import { AuthUser, CurrentUser, parse, Public } from '../common/http';
+import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
+import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Db } from '../db/db.service';
 
 const registerBody = z.object({
   email: z.email().max(254),
   displayName: z.string().trim().min(1).max(120),
   password: z.string().min(12, 'password must be at least 12 characters').max(256),
-  /** Required when sign-up is closed (ALLOW_SIGNUP=false); always checked when given. */
+  /** Required for people under 18, and for everyone when sign-up is closed (ALLOW_SIGNUP=false); always checked when given. */
   inviteCode: z.string().trim().max(64).optional(),
-  /** The person confirmed they are 18 or older and accepted the privacy notice (TERMS_VERSION). */
+  /** What the person declared: 18 or older, or under 18 (allowed only with an institution's invite code). */
+  ageGroup: z.enum(['adult', 'minor'], { message: 'say whether you are 18 or older' }),
+  /** The person accepted the privacy notice (TERMS_VERSION). */
   acceptTerms: z.literal(true, { message: 'accept the privacy notice to create an account' }),
 });
+
+const verifyEmailBody = z.object({ token: z.string().min(20).max(200) });
+const completeProfileBody = z.object({ ageGroup: z.enum(['adult', 'minor']), inviteCode: z.string().trim().max(64).optional() });
+const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64) });
+
+const VERIFY_LINK_HOURS = 24;
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+
+type Invite = { id: string; organization_id: string | null; role: string | null };
 
 const loginBody = z.object({
   email: z.email(),
@@ -66,35 +79,28 @@ export class AuthController {
   @Post('register')
   async register(@Body() body: unknown) {
     const input = parse(registerBody, body);
-    if (!input.inviteCode && !loadConfig().ALLOW_SIGNUP) throw new ForbiddenException({ code: 'invite_required' });
+    const config = loadConfig();
+    // Under-18s join only through an institution's invite code (the institution arranges a parent's consent).
+    if (input.ageGroup === 'minor' && !input.inviteCode) throw new ForbiddenException({ code: 'minor_needs_invite' });
+    if (!input.inviteCode && !config.ALLOW_SIGNUP) throw new ForbiddenException({ code: 'invite_required' });
+    const verifyNow = config.EMAIL_VERIFICATION === 'off';
     const passwordHash = await hashSecret(input.password);
     try {
       const user = await this.db.tx(async (c) => {
         // Claim one use of the invite atomically; a failed insert below rolls the claim back.
-        let invite: { id: string; organization_id: string | null; role: string | null } | undefined;
-        if (input.inviteCode) {
-          invite = (
-            await c.query(
-              `UPDATE invite_codes SET used_count = used_count + 1
-               WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
-               RETURNING id, organization_id, role`,
-              [hashInviteCode(input.inviteCode)],
-            )
-          ).rows[0];
-          // One answer for unknown, expired, revoked and used-up codes: nothing to learn by guessing.
-          if (!invite) throw new ForbiddenException({ code: 'invite_invalid' });
-        }
+        const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
         const u = (
           await c.query(
-            `INSERT INTO users (email, display_name, password_hash, terms_accepted_at, terms_version, invite_id)
-             VALUES ($1, $2, $3, now(), $4, $5)
-             RETURNING id, email, display_name, created_at`,
-            [input.email, input.displayName, passwordHash, TERMS_VERSION, invite?.id ?? null],
+            `INSERT INTO users (email, display_name, password_hash, terms_accepted_at, terms_version, invite_id, age_group, email_verified_at)
+             VALUES ($1, $2, $3, now(), $4, $5, $6, CASE WHEN $7 THEN now() END)
+             RETURNING id, email, display_name, created_at, email_verified_at`,
+            [input.email, input.displayName, passwordHash, TERMS_VERSION, invite?.id ?? null, input.ageGroup, verifyNow],
           )
         ).rows[0];
         if (invite?.organization_id) {
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [invite.organization_id, u.id, invite.role]);
         }
+        if (!verifyNow) await this.sendVerification(c, u.id, u.email, u.display_name);
         await this.audit.record(
           {
             actorType: 'user',
@@ -103,13 +109,13 @@ export class AuthController {
             action: 'user.register',
             resourceType: 'user',
             resourceId: u.id,
-            metadata: { termsVersion: TERMS_VERSION, ...(invite ? { inviteId: invite.id } : {}) },
+            metadata: { termsVersion: TERMS_VERSION, ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) },
           },
           c,
         );
         return u;
       });
-      return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at }, ...(await this.issueToken(user.id)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });
       throw err;
@@ -184,7 +190,8 @@ export class AuthController {
           }
           if (!account.identity_provider_id) {
             const linked = await client.query<GoogleUserRow>(
-              `UPDATE users SET identity_provider_id = $1 WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
+              `UPDATE users SET identity_provider_id = $1, email_verified_at = COALESCE(email_verified_at, now())
+               WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
                RETURNING id, email, display_name, identity_provider_id, status, created_at`,
               [identityProviderId, account.id],
             );
@@ -193,8 +200,9 @@ export class AuthController {
         } else {
           if (!config.ALLOW_SIGNUP) throw new ForbiddenException({ code: 'signup_disabled' });
           const created = await client.query<GoogleUserRow>(
-            `INSERT INTO users (email, display_name, password_hash, identity_provider_id)
-             VALUES ($1, $2, NULL, $3) ON CONFLICT DO NOTHING
+            // Google has verified the address. Age group and consent are asked on first sign-in (complete-profile, TermsGate).
+            `INSERT INTO users (email, display_name, password_hash, identity_provider_id, email_verified_at)
+             VALUES ($1, $2, NULL, $3, now()) ON CONFLICT DO NOTHING
              RETURNING id, email, display_name, identity_provider_id, status, created_at`,
             [email, displayName, identityProviderId],
           );
@@ -235,6 +243,7 @@ export class AuthController {
   }
 
   @Doc('Me')
+  @AllowIncomplete()
   @Get('me')
   async me(@CurrentUser() current: AuthUser) {
     if (current.scope) {
@@ -246,14 +255,25 @@ export class AuthController {
         isPlatformAdmin: false,
       };
     }
-    const user = await this.db.one('SELECT id, email, display_name, created_at, terms_version, terms_accepted_at FROM users WHERE id = $1', [current.id]);
+    const user = await this.db.one(
+      'SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group FROM users WHERE id = $1',
+      [current.id],
+    );
     const memberships = await this.db.query(
       `SELECT o.id, o.name, o.slug, m.role FROM organization_members m
        JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = $1 ORDER BY o.name`,
       [current.id],
     );
     return {
-      user: { ...this.publicUser(user), termsVersion: user.terms_version ?? null, termsAcceptedAt: user.terms_accepted_at ?? null },
+      user: {
+        ...this.publicUser(user),
+        termsVersion: user.terms_version ?? null,
+        termsAcceptedAt: user.terms_accepted_at ?? null,
+        /** False until the person opens the link we emailed; the console then shows only the "check your inbox" screen. */
+        emailVerified: !!user.email_verified_at,
+        /** Null for Google sign-ups that have not said yet; the console asks before anything else. */
+        ageGroup: user.age_group ?? null,
+      },
       memberships,
       isPlatformAdmin: current.isPlatformAdmin,
       /** The privacy notice version in force; the console asks the person to accept it when user.termsVersion differs. */
@@ -262,6 +282,7 @@ export class AuthController {
   }
 
   @Doc('Accept the current privacy notice', { body: acceptTermsBody })
+  @AllowIncomplete()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('accept-terms')
   @HttpCode(200)
@@ -283,6 +304,150 @@ export class AuthController {
       metadata: { termsVersion: TERMS_VERSION },
     });
     return { termsVersion: row!.terms_version, termsAcceptedAt: row!.terms_accepted_at };
+  }
+
+  @Doc('Confirm an email address with the token from the emailed link', { body: verifyEmailBody })
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('verify-email')
+  @HttpCode(200)
+  async verifyEmail(@Body() body: unknown) {
+    const { token } = parse(verifyEmailBody, body);
+    const userId = await this.db.tx(async (c) => {
+      const t = (
+        await c.query<{ user_id: string; email: string }>(
+          `UPDATE email_verifications SET used_at = now()
+           WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id, email`,
+          [sha256(token)],
+        )
+      ).rows[0];
+      // The address must still be the one the link was sent to.
+      const u = t && (await c.query<{ id: string }>(`UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1 AND email = $2 RETURNING id`, [t.user_id, t.email])).rows[0];
+      if (!u) throw new BadRequestException({ code: 'verification_invalid', message: 'This link is invalid, used already, or expired. Sign in and ask for a new one.' });
+      await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.verify_email', resourceType: 'user', resourceId: u.id }, c);
+      return u.id;
+    });
+    return { verified: true, userId };
+  }
+
+  @Doc('Send the email-confirmation link again')
+  @AllowIncomplete()
+  @SystemDb()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('resend-verification')
+  @HttpCode(200)
+  async resendVerification(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    const u = await this.db.one('SELECT id, email, display_name, email_verified_at FROM users WHERE id = $1', [current.id]);
+    if (u.email_verified_at) return { alreadyVerified: true };
+    const recent = await this.db.one<{ last: Date | null; n: number }>(
+      `SELECT max(created_at) AS last, count(*)::int AS n FROM email_verifications WHERE user_id = $1 AND created_at > now() - interval '24 hours'`,
+      [u.id],
+    );
+    if (recent?.last && Date.now() - new Date(recent.last).getTime() < 60_000) {
+      throw new HttpException({ code: 'resend_too_soon', message: 'We just sent a link. Wait a minute before asking again.' }, 429);
+    }
+    if ((recent?.n ?? 0) >= 5) throw new HttpException({ code: 'resend_limit', message: 'Too many links today. Try again tomorrow, or contact ARC LABS.' }, 429);
+    await this.db.tx((c) => this.sendVerification(c, u.id, u.email, u.display_name));
+    return { sent: true, email: u.email };
+  }
+
+  @Doc('Finish an account created through Google: age group (and an invite code for under-18s)', { body: completeProfileBody })
+  @AllowIncomplete()
+  @SystemDb()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('complete-profile')
+  @HttpCode(200)
+  async completeProfile(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const input = parse(completeProfileBody, body);
+    if (input.ageGroup === 'minor' && !input.inviteCode) throw new ForbiddenException({ code: 'minor_needs_invite' });
+    return this.db.tx(async (c) => {
+      const u = (await c.query('SELECT id, age_group FROM users WHERE id = $1 FOR UPDATE', [current.id])).rows[0];
+      if (u.age_group) throw new ConflictException({ code: 'profile_complete' });
+      const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
+      await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
+      if (invite?.organization_id) {
+        await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role]);
+      }
+      await this.audit.record(
+        { actorType: 'user', actorId: u.id, organizationId: invite?.organization_id ?? undefined, action: 'user.complete_profile', resourceType: 'user', resourceId: u.id, metadata: { ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) } },
+        c,
+      );
+      return { ageGroup: input.ageGroup };
+    });
+  }
+
+  @Doc('Join an organization with an invite code from ARC LABS or your institution', { body: redeemInviteBody })
+  @SystemDb()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('redeem-invite')
+  @HttpCode(200)
+  async redeemInvite(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const { inviteCode } = parse(redeemInviteBody, body);
+    return this.db.tx(async (c) => {
+      const invite = (
+        await c.query<Invite & { name: string }>(
+          `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
+           WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+          [hashInviteCode(inviteCode)],
+        )
+      ).rows[0];
+      // Unknown, expired, revoked, used-up, or a code that only creates accounts: one answer.
+      if (!invite) throw new ForbiddenException({ code: 'invite_invalid', message: 'This code is not valid for joining an organization. It may have expired or been used up.' });
+      const already = (await c.query('SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rows[0];
+      if (already) throw new ConflictException({ code: 'already_member', message: `You are already a member of ${invite.name}.` });
+      await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+      await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [invite.organization_id, current.id, invite.role]);
+      await this.audit.record(
+        { actorType: 'user', actorId: current.id, organizationId: invite.organization_id!, action: 'user.join_organization', resourceType: 'organization', resourceId: invite.organization_id!, metadata: { inviteId: invite.id, role: invite.role } },
+        c,
+      );
+      return { organization: { id: invite.organization_id, name: invite.name, role: invite.role } };
+    });
+  }
+
+  /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
+  private async claimInvite(c: any, code: string): Promise<Invite> {
+    const invite = (
+      await c.query(
+        `UPDATE invite_codes SET used_count = used_count + 1
+         WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+         RETURNING id, organization_id, role`,
+        [hashInviteCode(code)],
+      )
+    ).rows[0];
+    if (!invite) throw new ForbiddenException({ code: 'invite_invalid' });
+    return invite;
+  }
+
+  /** Stores a single-use link (hash only) and queues the email; the worker sends it through SMTP_URL. */
+  private async sendVerification(c: any, userId: string, email: string, name: string) {
+    const token = randomBytes(32).toString('base64url');
+    await c.query(`INSERT INTO email_verifications (token_hash, user_id, email, expires_at) VALUES ($1, $2, $3, now() + make_interval(hours => $4))`, [
+      sha256(token),
+      userId,
+      email,
+      VERIFY_LINK_HOURS,
+    ]);
+    // In the URL fragment, so the token is never sent to a server or written to access logs.
+    const link = `${loadConfig().CONSOLE_URL.replace(/\/+$/, '')}/verify-email#token=${token}`;
+    const text = [
+      `Hi ${name},`,
+      '',
+      'Confirm your email address to start using ARC Cloud:',
+      link,
+      '',
+      `The link works once and expires in ${VERIFY_LINK_HOURS} hours. If you did not create an ARC Cloud account, ignore this email; nothing will happen.`,
+      '',
+      'This mailbox is not monitored, so please do not reply.',
+      'ARC LABS, Hyderabad',
+    ].join('\n');
+    await c.query(
+      `INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES (NULL, 'email', $1, 'auth.verify_email', $2)`,
+      [email, { subject: 'Confirm your email for ARC Cloud', text }],
+    );
   }
 
   private async issueToken(userId: string) {
