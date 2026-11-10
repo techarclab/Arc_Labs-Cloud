@@ -9,7 +9,7 @@ type GoogleIdentityApi = {
   initialize: (options: { client_id: string; callback: (response: GoogleCredentialResponse) => void }) => void;
   renderButton: (
     element: HTMLElement,
-    options: { type: 'standard'; theme: 'outline'; size: 'large'; text: 'signin_with'; shape: 'rectangular'; width: number },
+    options: { type: 'standard'; theme: 'outline'; size: 'large'; text: 'signin_with' | 'signup_with'; shape: 'rectangular'; width: number },
   ) => void;
 };
 
@@ -19,7 +19,7 @@ declare global {
   }
 }
 
-function GoogleSignInButton({ clientId, onCredential }: { clientId: string; onCredential: (credential: string) => void }) {
+function GoogleSignInButton({ clientId, onCredential, text = 'signin_with' }: { clientId: string; onCredential: (credential: string) => void; text?: 'signin_with' | 'signup_with' }) {
   const button = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
 
@@ -40,7 +40,7 @@ function GoogleSignInButton({ clientId, onCredential }: { clientId: string; onCr
         type: 'standard',
         theme: 'outline',
         size: 'large',
-        text: 'signin_with',
+        text,
         shape: 'rectangular',
         width: Math.min(400, Math.max(200, Math.floor(container.getBoundingClientRect().width))),
       });
@@ -253,10 +253,11 @@ export function LoginPage() {
               {mode === 'signin' ? 'Use the email and password you signed up with.' : 'Free: up to 5 devices and 3 channels. No card needed.'}
             </p>
           </div>
-          {mode === 'signin' && (
+          {(mode === 'signin' || googleClientId) && (
             <div className="google-auth-section">
               {googleClientId ? (
-                <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogle} />
+                // Google has confirmed the address, so these accounts skip the confirmation email.
+                <GoogleSignInButton key={mode} clientId={googleClientId} onCredential={signInWithGoogle} text={mode === 'signup' ? 'signup_with' : 'signin_with'} />
               ) : (
                 <p className="google-auth-status" role="status">
                   {!googleConfigLoaded

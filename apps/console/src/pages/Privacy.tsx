@@ -22,7 +22,8 @@ export function PrivacyNotice() {
         <li>
           <b>Your account:</b> name, email address and when you confirmed it, your password (stored only as a salted scrypt hash, never readable), whether
           you said you are 18 or older, the organizations you belong to and your role in each, any invite code you used, and which version of this notice
-          you accepted and when.
+          you accepted and when. If you sign in with Google, we also receive your Google account ID, name and email address from Google, which confirms
+          the address; we do not get your Google password or anything else from your Google account.
         </li>
         <li>
           <b>What your devices send and receive:</b> readings, device state, firmware versions, commands and alerts, in the organization they belong to.
