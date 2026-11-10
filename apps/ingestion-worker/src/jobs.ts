@@ -19,7 +19,8 @@ export const ACCOUNT_EMAIL_BACKOFF = [30, 120, 600, 1800, ...Array<number>(25).f
 
 /** Seconds to wait before attempt `attempts + 1`, or null when the delivery has used all its attempts. */
 export function retryDelay(eventType: string, attempts: number): number | null {
-  const schedule = eventType.startsWith('auth.') ? ACCOUNT_EMAIL_BACKOFF : BACKOFF;
+  // Confirmation links last 24 h, so they are worth retrying for a day; password-reset links last 60 minutes.
+  const schedule = eventType === 'auth.verify_email' ? ACCOUNT_EMAIL_BACKOFF : BACKOFF;
   return attempts > schedule.length ? null : schedule[attempts - 1];
 }
 

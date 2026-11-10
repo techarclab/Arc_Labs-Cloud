@@ -3,7 +3,8 @@
  *  - /verify-email#token=…  (public) confirms the address from the emailed link;
  *  - ProfileGate: an account created through Google says whether the person is 18+ (under-18s need an invite code);
  *  - VerifyGate: "check your inbox" until the address is confirmed;
- *  - JoinInviteDialog: a signed-in person joins an institution's organization with an invite code.
+ *  - JoinInviteDialog: a signed-in person joins an institution's organization with an invite code;
+ *  - ForgotPasswordForm and /reset-password#token=… set a new password from an emailed link.
  * The API enforces all of this (403 email_unverified / profile_incomplete); these screens only explain it.
  */
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
@@ -250,5 +251,135 @@ export function JoinInviteDialog({ open, onClose }: { open: boolean; onClose: ()
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Shown in place of the sign-in form. The answer is the same whether or not the address has an account. */
+export function ForgotPasswordForm({ initialEmail, onBack }: { initialEmail: string; onBack: () => void }) {
+  const [email, setEmail] = useState(initialEmail);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api('POST', '/auth/forgot-password', { email: email.trim() });
+      setSent(true);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="auth-card form" onSubmit={submit}>
+      <div className="auth-card-heading">
+        <p className="auth-kicker">
+          <span aria-hidden="true" /> ARC CLOUD CONSOLE
+        </p>
+        <h2 className="auth-title">Forgot your password?</h2>
+        {!sent && <p className="muted">Enter your account’s email address and we’ll send you a link to set a new password.</p>}
+      </div>
+      {sent ? (
+        <p className="muted">
+          If an ARC Cloud account uses <b>{email.trim()}</b>, a link is on its way. It works once, for 60 minutes. Check spam too. Accounts made with
+          “Sign in with Google” can simply use that button instead.
+        </p>
+      ) : (
+        <>
+          <label className="field">
+            Email
+            <input type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+          </label>
+          <ErrorBox error={error} />
+          <button className="btn primary" disabled={busy} type="submit">
+            {busy ? 'Please wait…' : 'Email me a link'}
+          </button>
+        </>
+      )}
+      <p className="small muted">
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            onBack();
+          }}
+        >
+          Back to sign in
+        </a>
+      </p>
+    </form>
+  );
+}
+
+/** Opened from the reset email. The token is in the URL fragment, so it never reaches a server log. */
+export function ResetPasswordPage() {
+  const { signIn } = useSession();
+  const nav = useNavigate();
+  const [token] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('token'));
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    window.history.replaceState(null, '', window.location.pathname); // drop the token from the address bar and history
+  }, []);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (password !== again) {
+      setError(new Error('The two passwords are different.'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ accessToken: string }>('POST', '/auth/reset-password', { token, password });
+      await signIn(r.accessToken);
+      nav('/', { replace: true });
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  if (!token) {
+    return (
+      <OnboardingCard title="This link is incomplete">
+        <p className="muted">Open the newest “Set a new password” email from ARC Cloud and use its full link, or ask for a new one from the sign-in page.</p>
+        <button className="btn primary" type="button" onClick={() => nav('/', { replace: true })}>
+          Go to sign in
+        </button>
+      </OnboardingCard>
+    );
+  }
+  return (
+    <div className="auth-form onboarding">
+      <form className="auth-card form" onSubmit={submit}>
+        <div className="brand" style={{ color: 'var(--ink)' }}>
+          <ArcMark size={28} />
+          ARC Cloud
+        </div>
+        <h2 className="auth-title">Set a new password</h2>
+        <p className="muted small">At least 12 characters. You will be signed out on every other device.</p>
+        <label className="field">
+          New password
+          <input type="password" required minLength={12} autoFocus value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+        </label>
+        <label className="field">
+          New password again
+          <input type="password" required minLength={12} value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" />
+        </label>
+        <ErrorBox error={error} />
+        <button className="btn primary" disabled={busy} type="submit">
+          {busy ? 'Please wait…' : 'Save and sign in'}
+        </button>
+      </form>
+    </div>
   );
 }

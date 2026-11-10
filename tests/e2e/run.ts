@@ -276,6 +276,32 @@ async function main() {
       assert.equal((await http('GET', '/api/v1/organizations', tD)).status, 200);
       assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult' })).body.code, 'profile_complete');
     });
+    await check('forgot password: same answer for any address; the emailed link sets a new password once and signs out other sessions', async () => {
+      const unknown = await http('POST', '/api/v1/auth/forgot-password', undefined, { email: 'nobody@nowhere.test' });
+      const known = await http('POST', '/api/v1/auth/forgot-password', undefined, { email: 'Carol@Join.test' });
+      assert.equal(unknown.status, 200);
+      assert.deepEqual(unknown.body, known.body, 'no way to tell whether an account exists');
+      const old = (await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password: 'carol-password-123' })).body.accessToken as string;
+      const mail = await eventually(async () => [...sinks.emails].reverse().find((e) => e.to === 'carol@join.test' && e.raw.includes('reset-password')), 'reset email');
+      const text = mail.raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+      const token = /reset-password#token=([A-Za-z0-9_-]+)/.exec(text)![1];
+      assert.equal((await http('POST', '/api/v1/auth/reset-password', undefined, { token, password: 'short' })).status, 400, 'password rules apply');
+      await new Promise((r) => setTimeout(r, 1100)); // the old token must be from an earlier second than the reset
+      const r = await http('POST', '/api/v1/auth/reset-password', undefined, { token, password: 'carol-new-password-456' });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal((await http('GET', '/api/v1/auth/me', r.body.accessToken)).status, 200, 'signed in with the new password');
+      const stale = await http('GET', '/api/v1/auth/me', old);
+      assert.equal(stale.status, 401);
+      assert.equal(stale.body.code, 'session_revoked');
+      assert.equal((await http('POST', '/api/v1/auth/reset-password', undefined, { token, password: 'carol-other-password-789' })).body.code, 'reset_invalid', 'single use');
+      assert.equal((await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password: 'carol-password-123' })).status, 401);
+      assert.equal((await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password: 'carol-new-password-456' })).status, 200);
+      await http('POST', '/api/v1/auth/forgot-password', undefined, { email: 'carol@join.test' });
+      await http('POST', '/api/v1/auth/forgot-password', undefined, { email: 'carol@join.test' });
+      await http('POST', '/api/v1/auth/forgot-password', undefined, { email: 'carol@join.test' });
+      const n = await sql(`SELECT count(*)::int AS n FROM password_resets p JOIN users u ON u.id = p.user_id WHERE u.email = 'carol@join.test'`);
+      assert.equal(n[0].n, 3, 'at most 3 links an hour per account');
+    });
     await check('rotated DB password: warm pool still works, but the health check sees refused logins; file update fixes both', async () => {
       // Regression (pilot, 2026-10-31): RDS rotated the password; pooled connections kept working, so health checks
       // stayed green for ~21 h while every new login was refused.
