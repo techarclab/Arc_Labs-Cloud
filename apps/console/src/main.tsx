@@ -20,7 +20,7 @@ import { FirmwarePage } from './pages/Firmware';
 import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
-import { ProfileGate, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -113,6 +113,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/lab" element={<LabPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="*" element={<Gate />} />
           </Routes>
         </SessionProvider>

@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { useSession } from '../session';
-import { AgeChoice, AgeGroup } from './Onboarding';
+import { AgeChoice, AgeGroup, ForgotPasswordForm } from './Onboarding';
 
 type GoogleCredentialResponse = { credential?: string };
 type GoogleIdentityApi = {
@@ -155,6 +155,7 @@ function UseCases({ light = false }: { light?: boolean }) {
 
 export function LoginPage() {
   const { signIn } = useSession();
+  const [forgot, setForgot] = useState(false);
   const [mode, setMode] = useState<'signin' | 'signup'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'signup' : 'signin'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -245,6 +246,9 @@ export function LoginPage() {
         <UseCases />
       </section>
       <section className="auth-form">
+        {forgot ? (
+          <ForgotPasswordForm initialEmail={email} onBack={() => setForgot(false)} />
+        ) : (
         <form className="auth-card form" onSubmit={submit}>
           <div className="auth-card-heading">
             <p className="auth-kicker"><span aria-hidden="true" /> ARC CLOUD CONSOLE</p>
@@ -292,6 +296,18 @@ export function LoginPage() {
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             />
           </label>
+          {mode === 'signin' && (
+            <button
+              type="button"
+              className="link-btn small"
+              onClick={() => {
+                setError(null);
+                setForgot(true);
+              }}
+            >
+              Forgot password?
+            </button>
+          )}
           {mode === 'signup' && (
             <>
               <AgeChoice value={age} onChange={setAge} />
@@ -345,6 +361,7 @@ export function LoginPage() {
             </a>
           </p>
         </form>
+        )}
         <p className="auth-footnote"><span aria-hidden="true">✦</span> Secure access to your connected devices</p>
         {/* On phones the dark panel is hidden, so the same list follows the form. */}
         <UseCases light />

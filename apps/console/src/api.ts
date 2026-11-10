@@ -73,6 +73,8 @@ const MESSAGES: Record<string, string> = {
   resend_limit: 'Too many links today. Try again tomorrow, or contact ARC LABS.',
   already_member: 'You are already a member of that organization.',
   profile_complete: 'Your account is already set up. Reload the page.',
+  reset_invalid: 'This password link is invalid, already used, or expired. Ask for a new one from the sign-in page.',
+  session_revoked: 'You were signed out because the password was changed. Sign in again.',
   platform_admin_only: 'Only ARC LABS administrators can do this.',
   not_found: 'Not found, or you don’t have access to it.',
   not_a_control: 'That field isn’t a control field.',

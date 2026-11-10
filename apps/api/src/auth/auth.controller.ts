@@ -30,7 +30,11 @@ const verifyEmailBody = z.object({ token: z.string().min(20).max(200) });
 const completeProfileBody = z.object({ ageGroup: z.enum(['adult', 'minor']), inviteCode: z.string().trim().max(64).optional() });
 const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64) });
 
+const forgotPasswordBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
+const resetPasswordBody = z.object({ token: z.string().min(20).max(200), password: registerBody.shape.password });
+
 const VERIFY_LINK_HOURS = 24;
+const RESET_LINK_MINUTES = 60;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 type Invite = { id: string; organization_id: string | null; role: string | null };
@@ -406,6 +410,85 @@ export class AuthController {
       );
       return { organization: { id: invite.organization_id, name: invite.name, role: invite.role } };
     });
+  }
+
+  @Doc('Email a link to set a new password. Same answer whether or not the address has an account', { body: forgotPasswordBody })
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('forgot-password')
+  @HttpCode(200)
+  async forgotPassword(@Body() body: unknown) {
+    const { email } = parse(forgotPasswordBody, body);
+    const answer = { sent: true, message: 'If an ARC Cloud account uses that address, we have emailed it a link to set a new password.' };
+    const u = await this.db.one<{ id: string; email: string; display_name: string }>(
+      `SELECT id, email, display_name FROM users WHERE email = $1 AND status = 'active'`,
+      [email],
+    );
+    if (!u) return answer; // no account: send nothing, say the same
+    await this.db.tx(async (c) => {
+      // At most 3 links an hour per account (on top of the per-IP limit); silently, so the answer reveals nothing.
+      const recent = (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id])).rows[0].n;
+      if (recent >= 3) return;
+      const token = randomBytes(32).toString('base64url');
+      await c.query(`INSERT INTO password_resets (token_hash, user_id, email, expires_at) VALUES ($1, $2, $3, now() + make_interval(mins => $4))`, [
+        sha256(token),
+        u.id,
+        u.email,
+        RESET_LINK_MINUTES,
+      ]);
+      const link = `${loadConfig().CONSOLE_URL.replace(/\/+$/, '')}/reset-password#token=${token}`;
+      const text = [
+        `Hi ${u.display_name},`,
+        '',
+        'Someone, hopefully you, asked to set a new password for your ARC Cloud account. Open this link to choose one:',
+        link,
+        '',
+        `The link works once and expires in ${RESET_LINK_MINUTES} minutes. Setting a new password signs you out on every other device.`,
+        'If you did not ask for this, ignore this email: your password stays the same.',
+        '',
+        'This mailbox is not monitored, so please do not reply.',
+        'ARC LABS, Hyderabad',
+      ].join('\n');
+      await c.query(`INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES (NULL, 'email', $1, 'auth.password_reset', $2)`, [
+        u.email,
+        { subject: 'Set a new password for ARC Cloud', text },
+      ]);
+      await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.password_reset_requested', resourceType: 'user', resourceId: u.id }, c);
+    });
+    return answer;
+  }
+
+  @Doc('Set a new password with the token from the emailed link; signs out every other session', { body: resetPasswordBody })
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('reset-password')
+  @HttpCode(200)
+  async resetPassword(@Body() body: unknown) {
+    const input = parse(resetPasswordBody, body);
+    const passwordHash = await hashSecret(input.password);
+    const userId = await this.db.tx(async (c) => {
+      const t = (
+        await c.query<{ user_id: string; email: string }>(
+          `UPDATE password_resets SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id, email`,
+          [sha256(input.token)],
+        )
+      ).rows[0];
+      // Opening the link proves the address, so it also counts as confirming it.
+      const u =
+        t &&
+        (
+          await c.query<{ id: string }>(
+            `UPDATE users SET password_hash = $3, sessions_revoked_at = date_trunc('second', now()), email_verified_at = COALESCE(email_verified_at, now())
+             WHERE id = $1 AND email = $2 AND status = 'active' RETURNING id`,
+            [t.user_id, t.email, passwordHash],
+          )
+        ).rows[0];
+      if (!u) throw new BadRequestException({ code: 'reset_invalid', message: 'This link is invalid, already used, or expired. Ask for a new one.' });
+      await c.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]); // other open links die too
+      await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.password_reset', resourceType: 'user', resourceId: u.id }, c);
+      return u.id;
+    });
+    return { reset: true, ...(await this.issueToken(userId)) };
   }
 
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */

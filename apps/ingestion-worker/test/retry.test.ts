@@ -15,5 +15,6 @@ describe('delivery retry schedule', () => {
     expect(retryDelay('auth.verify_email', 1)).toBe(30);
     expect(retryDelay('auth.verify_email', 10)).toBe(3600);
     expect(retryDelay('auth.verify_email', ACCOUNT_EMAIL_BACKOFF.length + 1)).toBeNull();
+    expect(retryDelay('auth.password_reset', 5)).toBe(7200); // a 60-minute link: normal schedule
   });
 });

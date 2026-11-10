@@ -97,7 +97,7 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    let payload: { sub: string; typ?: string; lms?: string };
+    let payload: { sub: string; typ?: string; lms?: string; iat?: number };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
@@ -113,10 +113,12 @@ export class JwtAuthGuard implements CanActivate {
     }
     // Re-check on every request so disabled users lose access immediately.
     const user = await this.db.one(
-      `SELECT id, email, is_platform_admin, email_verified_at, age_group FROM users WHERE id = $1 AND status = 'active'`,
+      `SELECT id, email, is_platform_admin, email_verified_at, age_group, extract(epoch FROM sessions_revoked_at)::bigint AS revoked FROM users WHERE id = $1 AND status = 'active'`,
       [payload.sub],
     );
     if (!user) throw new UnauthorizedException({ code: 'invalid_token' });
+    // Signed out everywhere (password reset): tokens issued before that second no longer work.
+    if (user.revoked != null && (payload.iat ?? 0) < Number(user.revoked)) throw new UnauthorizedException({ code: 'session_revoked' });
     if (!user.email_verified_at || !user.age_group) {
       const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_INCOMPLETE, [ctx.getHandler(), ctx.getClass()]);
       if (!allowed) {
