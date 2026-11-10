@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { api, Device, MetricDef } from '../api';
 import { arduinoSketch } from '../arduinoSketch';
 import { CopyButton } from './ui';
+import { CppBlock } from './CodeHighlight';
 
 export function useLibraryDownload() {
   const [file, setFile] = useState<string | null>(null);
@@ -69,9 +70,7 @@ export function ArduinoCodePanel({ device, token, onCopied }: { device: Device; 
             ? 'This sketch contains the device token. Keep it private: don’t share it, commit it to GitHub, or host the compiled file.'
             : 'Paste the token you saved when the device was added. Lost it? “Replace password” gives a new one (the old one stops working).'}
       </p>
-      <pre className="code" style={{ maxHeight: 360 }}>
-        {code}
-      </pre>
+      <CppBlock code={code} />
       <div className="row">
         <span onClick={onCopied}>
           <CopyButton text={code} label="Copy sketch" />

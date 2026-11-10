@@ -431,7 +431,7 @@ a.kpi:hover { background: #f6f8fa; text-decoration: none; }
 .progress { height: 8px; background: var(--line-soft); border-radius: 999px; overflow: hidden; min-width: 80px; }
 .progress > span { display: block; height: 100%; background: var(--accent); }
 .progress.over > span { background: var(--off); }
-pre.code { background: #f4f6f8; border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; margin: 0; }
+pre.code { background: #f4f6f8; color: var(--ink); border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; margin: 0; }
 @media (max-width: 900px) {
   .overview-grid { grid-template-columns: minmax(0, 1fr) !important; }
   .kpi { border-bottom: 1px solid var(--line-soft); }
@@ -803,3 +803,12 @@ fieldset.choice input { width: 18px; height: 18px; min-height: 0; margin: 1px 0 
   .auth-form { flex-direction: column; }
   .use-cases.light { display: block; }
 }
+
+/* Arduino sketch: dark editor look with syntax colours (CodeHighlight.tsx). Contrast ≥ 4.5:1 on #0f1729. */
+pre.code.sketch { background: #0f1729; color: #e2e8f0; border-color: #0f1729; font: 12.5px/1.6 var(--mono); white-space: pre; word-break: normal; overflow: auto; tab-size: 2; }
+pre.code.sketch .tk-com { color: #8b9bb4; font-style: italic; }
+pre.code.sketch .tk-str { color: #a5e3a0; }
+pre.code.sketch .tk-pre { color: #f0a7d8; }
+pre.code.sketch .tk-num { color: #fbbf72; }
+pre.code.sketch .tk-kw { color: #8fb8ff; font-weight: 600; }
+pre.code.sketch .tk-fn { color: #7fdcf0; }
