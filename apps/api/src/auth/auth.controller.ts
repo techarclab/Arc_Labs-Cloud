@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, HttpException, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, HttpException, Patch, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
@@ -32,6 +32,9 @@ const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64)
 
 const forgotPasswordBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
 const resetPasswordBody = z.object({ token: z.string().min(20).max(200), password: registerBody.shape.password });
+
+const updateMeBody = z.object({ displayName: z.string().trim().min(1).max(120) });
+const changePasswordBody = z.object({ currentPassword: z.string().min(1).max(256), newPassword: registerBody.shape.password });
 
 const VERIFY_LINK_HOURS = 24;
 const RESET_LINK_MINUTES = 60;
@@ -102,7 +105,7 @@ export class AuthController {
           )
         ).rows[0];
         if (invite?.organization_id) {
-          await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [invite.organization_id, u.id, invite.role]);
+          await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
         }
         if (!verifyNow) await this.sendVerification(c, u.id, u.email, u.display_name);
         await this.audit.record(
@@ -260,7 +263,9 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      'SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group FROM users WHERE id = $1',
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group,
+              password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
+       FROM users WHERE id = $1`,
       [current.id],
     );
     const memberships = await this.db.query(
@@ -277,6 +282,9 @@ export class AuthController {
         emailVerified: !!user.email_verified_at,
         /** Null for Google sign-ups that have not said yet; the console asks before anything else. */
         ageGroup: user.age_group ?? null,
+        emailVerifiedAt: user.email_verified_at ?? null,
+        /** How this person can sign in (for the profile page). */
+        signIn: { password: !!user.has_password, google: !!user.google },
       },
       memberships,
       isPlatformAdmin: current.isPlatformAdmin,
@@ -287,6 +295,7 @@ export class AuthController {
 
   @Doc('Accept the current privacy notice', { body: acceptTermsBody })
   @AllowIncomplete()
+  @SystemDb() // the audit row belongs to no organization, which tenant row-level security would refuse
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('accept-terms')
   @HttpCode(200)
@@ -372,7 +381,7 @@ export class AuthController {
       const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
       await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
       if (invite?.organization_id) {
-        await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role]);
+        await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
       }
       await this.audit.record(
         { actorType: 'user', actorId: u.id, organizationId: invite?.organization_id ?? undefined, action: 'user.complete_profile', resourceType: 'user', resourceId: u.id, metadata: { ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) } },
@@ -403,7 +412,7 @@ export class AuthController {
       const already = (await c.query('SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rows[0];
       if (already) throw new ConflictException({ code: 'already_member', message: `You are already a member of ${invite.name}.` });
       await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
-      await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [invite.organization_id, current.id, invite.role]);
+      await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, current.id, invite.role, invite.id]);
       await this.audit.record(
         { actorType: 'user', actorId: current.id, organizationId: invite.organization_id!, action: 'user.join_organization', resourceType: 'organization', resourceId: invite.organization_id!, metadata: { inviteId: invite.id, role: invite.role } },
         c,
@@ -489,6 +498,47 @@ export class AuthController {
       return u.id;
     });
     return { reset: true, ...(await this.issueToken(userId)) };
+  }
+
+  @Doc('Change your display name', { body: updateMeBody })
+  @SystemDb() // account-level audit row (no organization)
+  @Patch('me')
+  async updateMe(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const { displayName } = parse(updateMeBody, body);
+    const u = await this.db.one('UPDATE users SET display_name = $2 WHERE id = $1 RETURNING id, email, display_name, created_at', [current.id, displayName]);
+    await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.update_profile', resourceType: 'user', resourceId: current.id });
+    return { user: this.publicUser(u) };
+  }
+
+  @Doc('Change your password (needs the current one); signs out every other session', { body: changePasswordBody })
+  @SystemDb() // account-level audit row (no organization)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('change-password')
+  @HttpCode(200)
+  async changePassword(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const input = parse(changePasswordBody, body);
+    const u = await this.db.one<{ password_hash: string | null }>('SELECT password_hash FROM users WHERE id = $1', [current.id]);
+    // Google-only accounts set a first password through the emailed link (proves the mailbox, not just a session).
+    if (!u?.password_hash) throw new ConflictException({ code: 'no_password', message: 'You sign in with Google. To add a password, use “Forgot password?” on the sign-in page.' });
+    if (!(await verifySecret(input.currentPassword, u.password_hash))) throw new ForbiddenException({ code: 'wrong_password', message: 'The current password is not right.' });
+    await this.db.query(`UPDATE users SET password_hash = $2, sessions_revoked_at = date_trunc('second', now()) WHERE id = $1`, [current.id, await hashSecret(input.newPassword)]);
+    await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.change_password', resourceType: 'user', resourceId: current.id });
+    return { changed: true, ...(await this.issueToken(current.id)) };
+  }
+
+  @Doc('Sign out on every device, including this one')
+  @SystemDb() // account-level audit row (no organization)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('sign-out-everywhere')
+  @HttpCode(200)
+  async signOutEverywhere(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    // Round up to the next second, so a token issued earlier in this same second is refused too.
+    await this.db.query(`UPDATE users SET sessions_revoked_at = date_trunc('second', now()) + interval '1 second' WHERE id = $1`, [current.id]);
+    await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.sign_out_everywhere', resourceType: 'user', resourceId: current.id });
+    return { signedOut: true };
   }
 
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */

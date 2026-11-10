@@ -812,3 +812,10 @@ pre.code.sketch .tk-pre { color: #f0a7d8; }
 pre.code.sketch .tk-num { color: #fbbf72; }
 pre.code.sketch .tk-kw { color: #8fb8ff; font-weight: 600; }
 pre.code.sketch .tk-fn { color: #7fdcf0; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 22px 0 0; font-size: 14px; }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+@media (max-width: 600px) { dl.facts { grid-template-columns: 1fr; gap: 2px; } dl.facts dd { margin-bottom: 8px; } }
+.side-foot .me { cursor: pointer; border-radius: 8px; }
+.side-foot .me:hover, .side-foot .me:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
+.pill.ok { background: var(--on-soft, #e3f6ee); color: #12603f; }

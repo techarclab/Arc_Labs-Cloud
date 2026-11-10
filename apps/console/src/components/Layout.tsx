@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { api, isAdmin, ROLE_LABEL } from '../api';
+import { api, ApiError, isAdmin, ROLE_LABEL } from '../api';
 import { useSession } from '../session';
-import { ArcMark, usePoll } from './ui';
+import { ArcMark, usePoll, useToast } from './ui';
 import { Icon } from './icons';
 import { JoinInviteDialog } from '../pages/Onboarding';
 
@@ -13,7 +13,8 @@ function initials(name?: string) {
 
 export function Layout() {
   const { orgId = '', projectId } = useParams();
-  const { orgs, projects, refreshProjects, user, signOut } = useSession();
+  const { orgs, projects, refreshProjects, refreshOrgs, user, signOut } = useSession();
+  const toast = useToast();
   const nav = useNavigate();
   const org = orgs.find((o) => o.id === orgId);
   const list = projects[orgId];
@@ -25,9 +26,17 @@ export function Layout() {
       orgId
         ? api<{ alerts: { triggered: number } }>('GET', `/organizations/${orgId}/overview`)
             .then((o) => setOpenAlerts(o.alerts.triggered))
-            .catch(() => undefined)
+            .catch(async (err) => {
+              // Removed from this organization (or it was deleted): leave it instead of showing stale data.
+              if (err instanceof ApiError && err.status === 404) {
+                const name = org?.name ?? 'this organization';
+                const left = await refreshOrgs().catch(() => []);
+                toast(`You no longer have access to ${name}.`);
+                nav(left[0] ? `/o/${left[0].id}` : '/', { replace: true });
+              }
+            })
         : undefined,
-    30_000,
+    15_000,
     [orgId],
   );
 
@@ -73,8 +82,10 @@ export function Layout() {
             aria-label="Organization"
             value={orgId}
             onChange={async (e) => {
-              const ps = await refreshProjects(e.target.value);
-              nav(ps[0] ? `/o/${e.target.value}/p/${ps[0].id}` : '/setup');
+              const id = e.target.value;
+              // An organization without channels opens its overview (it used to open "create organization").
+              const ps = await refreshProjects(id).catch(() => []);
+              nav(ps[0] ? `/o/${id}/p/${ps[0].id}` : `/o/${id}`);
             }}
           >
             {orgs.map((o) => (
@@ -149,7 +160,14 @@ export function Layout() {
         )}
 
         <div className="side-foot">
-          <div className="me">
+          <div
+            className="me"
+            role="link"
+            tabIndex={0}
+            title="Your account"
+            onClick={() => nav(`/o/${orgId}/account`)}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && nav(`/o/${orgId}/account`)}
+          >
             <span className="avatar" aria-hidden="true">
               {initials(user?.displayName)}
             </span>

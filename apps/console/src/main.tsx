@@ -20,6 +20,7 @@ import { FirmwarePage } from './pages/Firmware';
 import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
+import { AccountPage } from './pages/Account';
 import { ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
@@ -98,6 +99,7 @@ function Gate() {
         <Route path="team" element={<TeamPage />} />
         <Route path="rejected" element={<RejectedPage />} />
         <Route path="audit" element={<AuditPage />} />
+        <Route path="account" element={<AccountPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

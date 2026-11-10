@@ -302,6 +302,55 @@ async function main() {
       const n = await sql(`SELECT count(*)::int AS n FROM password_resets p JOIN users u ON u.id = p.user_id WHERE u.email = 'carol@join.test'`);
       assert.equal(n[0].n, 3, 'at most 3 links an hour per account');
     });
+    await check('profile: rename, change password (signs out other sessions), sign out everywhere', async () => {
+      const login = async (password: string) => (await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password })).body.accessToken as string;
+      const t1 = await login('carol-new-password-456');
+      const me = (await http('GET', '/api/v1/auth/me', t1)).body;
+      assert.deepEqual(me.user.signIn, { password: true, google: false });
+      assert.ok(me.user.emailVerifiedAt);
+      assert.equal((await http('PATCH', '/api/v1/auth/me', t1, { displayName: '  Carol K  ' })).body.user.displayName, 'Carol K');
+      assert.equal((await http('POST', '/api/v1/auth/change-password', t1, { currentPassword: 'wrong-password-1', newPassword: 'carol-third-password-789' })).body.code, 'wrong_password');
+      await new Promise((r) => setTimeout(r, 1100));
+      const changed = await http('POST', '/api/v1/auth/change-password', t1, { currentPassword: 'carol-new-password-456', newPassword: 'carol-third-password-789' });
+      assert.equal(changed.status, 200, JSON.stringify(changed.body));
+      assert.equal((await http('GET', '/api/v1/auth/me', t1)).body.code, 'session_revoked', 'the old session is signed out');
+      const t2 = changed.body.accessToken as string;
+      assert.equal((await http('GET', '/api/v1/auth/me', t2)).status, 200, 'this browser stays signed in');
+      assert.equal((await http('POST', '/api/v1/auth/sign-out-everywhere', t2)).status, 200);
+      assert.equal((await http('GET', '/api/v1/auth/me', t2)).status, 401);
+      await new Promise((r) => setTimeout(r, 1100));
+      const tg = await login('carol-third-password-789');
+      assert.equal((await http('GET', '/api/v1/auth/me', tg)).status, 200, 'signing in again works');
+      await sql(`UPDATE users SET password_hash = NULL WHERE email = 'carol@join.test'`); // as if created with Google
+      assert.equal((await http('POST', '/api/v1/auth/change-password', tg, { currentPassword: 'x', newPassword: 'carol-fourth-password-0' })).body.code, 'no_password', 'Google-only accounts add a password through the emailed link');
+    });
+    await check('revoking an invite code can also remove the people who joined with it (never admins)', async () => {
+      const team = (await http('POST', '/api/v1/platform/invites', tA, { label: 'Course batch', maxUses: 5, expiresInDays: 7, organizationId: orgA.id, role: 'viewer' })).body;
+      // (Reuses an existing account: registration is rate-limited per IP.)
+      await sql(`UPDATE users SET email_verified_at = now() WHERE email = 'minor1@school.test'`);
+      const dan = (await http('POST', '/api/v1/auth/login', undefined, { email: 'minor1@school.test', password: 'student-password-123' })).body;
+      assert.equal((await http('POST', '/api/v1/auth/redeem-invite', dan.accessToken, { inviteCode: team.code })).status, 200);
+      const listed = (await http('GET', '/api/v1/platform/invites', tA)).body.items.find((i: any) => i.id === team.id);
+      assert.equal(listed.members, 1);
+      const keep = await http('POST', `/api/v1/platform/invites/${team.id}/revoke`, tA, {});
+      assert.equal(keep.body.removedMembers, 0, 'plain revoke keeps people');
+      assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'minor1@school.test'`))[0].n, 1);
+      const out = await http('POST', `/api/v1/platform/invites/${team.id}/revoke`, tA, { removeMembers: true });
+      assert.equal(out.body.removedMembers, 1);
+      assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'minor1@school.test'`))[0].n, 0);
+      assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}/overview`, dan.accessToken)).status, 404, 'removed people lose access at once');
+    });
+    await check('a person who is not a platform admin can accept a new privacy notice (account-level audit row)', async () => {
+      await sql(`UPDATE users SET terms_version = '2000-01-01' WHERE email = 'bob@other.test'`);
+      const me = (await http('GET', '/api/v1/auth/me', tB)).body;
+      const r = await http('POST', '/api/v1/auth/accept-terms', tB, { version: me.currentTermsVersion, accept: true });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const zero = (await http('POST', '/api/v1/auth/login', undefined, { email: 'minor1@school.test', password: 'student-password-123' })).body;
+      await sql(`UPDATE users SET terms_version = NULL WHERE email = 'minor1@school.test'`); // like a new Google account: no organization yet
+      assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'minor1@school.test'`))[0].n, 0);
+      const r2 = await http('POST', '/api/v1/auth/accept-terms', zero.accessToken, { version: me.currentTermsVersion, accept: true });
+      assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    });
     await check('rotated DB password: warm pool still works, but the health check sees refused logins; file update fixes both', async () => {
       // Regression (pilot, 2026-10-31): RDS rotated the password; pooled connections kept working, so health checks
       // stayed green for ~21 h while every new login was refused.
