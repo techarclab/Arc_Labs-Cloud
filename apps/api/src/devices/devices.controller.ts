@@ -364,6 +364,7 @@ export class DevicesController {
   }
 
   map(d: any) {
+    const cfg = loadConfig();
     const connectivity = computeConnectivity({
       now: new Date(),
       lastSeenAt: d.last_seen_at,
@@ -373,6 +374,12 @@ export class DevicesController {
     });
     return {
       id: d.id,
+      /** Where and how the device connects (nothing secret): used by the console's code generator. */
+      connection: {
+        mqttHost: cfg.MQTT_PUBLIC_HOST,
+        mqttPort: cfg.MQTT_PUBLIC_PORT,
+        topicBase: buildTopic({ orgId: d.organization_id, projectId: d.project_id, deviceId: d.id }, 'telemetry').replace(/\/telemetry$/, ''),
+      },
       organizationId: d.organization_id,
       projectId: d.project_id,
       displayName: d.display_name,

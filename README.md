@@ -117,6 +117,15 @@ npm run simulate -- --creds device.json --ca infra/certs/out/ca.crt --interval 5
 
 Real ESP32: copy `firmware/esp32-arduino/arc_device/config.example.h` to `config.h`, fill it from `device.json`, and flash. Set `MQTT_PUBLIC_HOST` in `.env` to your computer's LAN IP and regenerate certs with `HOST_IP=<that IP> npm run certs:dev` so the ESP32 can verify the broker.
 
+### Arduino (ESP32): the ArcCloud library
+
+`firmware/arduino-library/ArcCloud` is an Arduino library: `arc.begin(...)`, `arc.add("temperature", t)`,
+`arc.send()`, `arc.onControl("led1", ...)`, `arc.run()`. MQTT over TLS with pinned roots (no insecure mode),
+back-off reconnects, and optional USB provisioning so no secret is compiled in. The console serves it as a zip
+(`/downloads/ArcCloud-<version>.zip`) and generates a ready sketch for any device from its channel's fields
+(device page → **Arduino code**, or the **Arduino code** tab when a device is added). CI compiles the examples and
+generated sketches for ESP32 and ESP32-S3. See the library's [README](firmware/arduino-library/ArcCloud/README.md).
+
 ### Read it back
 
 ```bash

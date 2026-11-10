@@ -141,6 +141,7 @@ export interface Project { id: string; organizationId: string; name: string; des
 export interface Connectivity { status: 'online' | 'offline' | 'unknown'; source: string; thresholdSeconds: number }
 export interface Device {
   id: string;
+  connection?: { mqttHost: string; mqttPort: number; topicBase: string };
   organizationId: string;
   projectId: string;
   displayName: string;

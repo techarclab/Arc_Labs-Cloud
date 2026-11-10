@@ -108,9 +108,21 @@ jobs:
           for s in arc_device arc_dht_mqtt arc_http; do
             arduino-cli compile --warnings all -b esp32:esp32:esp32s3 "firmware/esp32-arduino/$s"
           done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ArcCloud library — its examples, and sketches made by the console's generator (ESP32 and ESP32-S3)
+        run: |
+          node --experimental-strip-types tools/gen-arduino-samples.ts /tmp/gen
+          for board in esp32:esp32:esp32 esp32:esp32:esp32s3; do
+            for s in firmware/arduino-library/ArcCloud/examples/* /tmp/gen/*; do
+              arduino-cli compile --warnings all --library firmware/arduino-library/ArcCloud -b "$board" "$s"
+            done
+          done
+          node tools/pack-arduino-library.mjs /tmp/zip && unzip -l /tmp/zip/ArcCloud-*.zip
       - name: Firmware must never skip TLS verification or put keys in URLs
         run: |
-          ! grep -rn "setInsecure\|api_key=" firmware/esp32-arduino --include=*.ino --include=*.h
+          ! grep -rn "setInsecure\|api_key=" firmware/esp32-arduino firmware/arduino-library --include=*.ino --include=*.h --include=*.cpp
       - name: Fleet images must not carry per-device credentials (arc_dht_mqtt provisions them over USB)
         run: |
           ! grep -nE "^#define +(WIFI_SSID|WIFI_PASSWORD|DEVICE_ID|DEVICE_PASSWORD|TOPIC_)" firmware/esp32-arduino/arc_dht_mqtt/config.example.h
