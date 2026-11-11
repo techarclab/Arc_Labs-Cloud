@@ -1,4 +1,5 @@
 #include "ArcCloud.h"
+#include "ArcCloudFieldName.h"
 
 #include <Preferences.h>
 #include <esp_heap_caps.h>
@@ -22,15 +23,7 @@ static bool isUuid(const char *s) {
   return true;
 }
 
-static bool validField(const char *f) {
-  size_t n = strlen(f);
-  if (n == 0 || n > 32) return false;
-  for (size_t i = 0; i < n; i++) {
-    char c = f[i];
-    if (!(isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.')) return false;
-  }
-  return true;
-}
+static bool validField(const char *f) { return arcValidFieldName(f); }
 
 // ---------------------------------------------------------------- setup
 
@@ -310,7 +303,7 @@ void ArcCloud::publishState() {
 
 bool ArcCloud::add(const char *field, float value) {
   if (!validField(field)) {
-    Serial.printf("[arc] field name \"%s\" is not valid (1-32 letters, digits, _ - .)\n", field);
+    Serial.printf("[arc] field name \"%s\" is not valid: a letter, then letters, digits or _ (at most 32), as in ARC Cloud\n", field);
     return false;
   }
   if (isnan(value) || isinf(value)) {

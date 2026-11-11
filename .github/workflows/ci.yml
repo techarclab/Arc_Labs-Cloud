@@ -72,6 +72,8 @@ jobs:
           node-version: 22
       - run: sudo apt-get install -y -q libmbedtls-dev g++ >/dev/null
       - run: node tests/firmware/run.mjs
+      - name: ArcCloud library accepts exactly the field names the server accepts
+        run: node tests/firmware/field-names.mjs
 
   firmware-build:
     runs-on: ubuntu-24.04
