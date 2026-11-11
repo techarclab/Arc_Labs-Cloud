@@ -1,1 +1,3 @@
-# ZAP High-risk alerts accepted after review: <pluginid>\t<reason, who, date>. Keep this empty unless justified.
+# ZAP High-risk alerts accepted after review. One line per rule AND route:
+#   <pluginid> TAB <regex matched against "METHOD url"> TAB <reason, reviewer, date>
+# Keep it short. Never accept a rule for every route.
