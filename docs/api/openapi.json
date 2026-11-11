@@ -43,6 +43,20 @@
         ]
       }
     },
+    "/health/deep": {
+      "get": {
+        "operationId": "HealthController_deep",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "operationId": "AuthController_register",
@@ -69,12 +83,29 @@
                     "type": "string",
                     "minLength": 12,
                     "maxLength": 256
+                  },
+                  "inviteCode": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "ageGroup": {
+                    "type": "string",
+                    "enum": [
+                      "adult",
+                      "minor"
+                    ]
+                  },
+                  "acceptTerms": {
+                    "type": "boolean",
+                    "const": true
                   }
                 },
                 "required": [
                   "email",
                   "displayName",
-                  "password"
+                  "password",
+                  "ageGroup",
+                  "acceptTerms"
                 ]
               }
             }
@@ -192,6 +223,338 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "Auth"
+        ]
+      },
+      "patch": {
+        "operationId": "AuthController_updateMe",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": [
+                  "displayName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Change your display name",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/accept-terms": {
+      "post": {
+        "operationId": "AuthController_acceptTerms",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  },
+                  "accept": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "version",
+                  "accept"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Accept the current privacy notice",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/verify-email": {
+      "post": {
+        "operationId": "AuthController_verifyEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Confirm an email address with the token from the emailed link",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/resend-verification": {
+      "post": {
+        "operationId": "AuthController_resendVerification",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Send the email-confirmation link again",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/complete-profile": {
+      "post": {
+        "operationId": "AuthController_completeProfile",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ageGroup": {
+                    "type": "string",
+                    "enum": [
+                      "adult",
+                      "minor"
+                    ]
+                  },
+                  "inviteCode": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "ageGroup"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Finish an account created through Google: age group (and an invite code for under-18s)",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/redeem-invite": {
+      "post": {
+        "operationId": "AuthController_redeemInvite",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "inviteCode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "inviteCode"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Join an organization with an invite code from ARC LABS or your institution",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/forgot-password": {
+      "post": {
+        "operationId": "AuthController_forgotPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Email a link to set a new password. Same answer whether or not the address has an account",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/reset-password": {
+      "post": {
+        "operationId": "AuthController_resetPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 200
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "token",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set a new password with the token from the emailed link; signs out every other session",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/change-password": {
+      "post": {
+        "operationId": "AuthController_changePassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "currentPassword",
+                  "newPassword"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Change your password (needs the current one); signs out every other session",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/sign-out-everywhere": {
+      "post": {
+        "operationId": "AuthController_signOutEverywhere",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Sign out on every device, including this one",
         "tags": [
           "Auth"
         ]
@@ -713,6 +1076,11 @@
                     "minimum": 1,
                     "maximum": 10000
                   },
+                  "maxWidgets": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
                   "retentionDays": {
                     "type": "integer",
                     "minimum": 1,
@@ -734,6 +1102,118 @@
         "summary": "Plan",
         "tags": [
           "Organizations"
+        ]
+      }
+    },
+    "/api/v1/platform/invites": {
+      "get": {
+        "operationId": "PlatformController_invites",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Invite codes",
+        "tags": [
+          "Platform administration"
+        ]
+      },
+      "post": {
+        "operationId": "PlatformController_createInvite",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "org_admin",
+                      "engineer",
+                      "viewer"
+                    ]
+                  }
+                },
+                "required": [
+                  "label",
+                  "maxUses",
+                  "expiresInDays"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create invite code",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/invites/{id}/revoke": {
+      "post": {
+        "operationId": "PlatformController_revokeInvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "removeMembers": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke invite code; optionally also remove the people who joined an organization with it",
+        "tags": [
+          "Platform administration"
         ]
       }
     },

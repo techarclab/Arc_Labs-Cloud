@@ -29,3 +29,4 @@ crash.log
 
 # Built by tools/pack-arduino-library.mjs during the console build
 apps/console/public/downloads/
+tests/authz/out/
