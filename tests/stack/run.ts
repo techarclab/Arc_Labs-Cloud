@@ -365,11 +365,6 @@ async function main() {
     const notAcked = await sendRound(early);
     note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
     const workerBack = await eventually(async () => workerSubscribedSince(restartedAt) && Date.now(), `worker subscribed again (${label})`, 120_000, 500);
-    try {
-      note(`${label}_emqx_subscriptions_of_worker`, docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'subscriptions', 'show', 'svc-ingest-1').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty)');
-    } catch (e) {
-      note(`${label}_emqx_subscriptions_of_worker`, `ctl failed: ${(e as Error).message.slice(0, 120)}`);
-    }
     note(`${label}_reconnect_all_ms`, back - t0);
     note(`${label}_refused_attempts`, sims.reduce((n, s) => n + s.refusals, 0));
     note(`${label}_worker_resubscribed_ms`, workerBack - t0);
