@@ -1,0 +1,7 @@
+# CI-only override for deploy/oracle/docker-compose.yml (see tests/stack/up.sh). Keep it this small: every line here
+# is a difference between what CI tests and what runs in production.
+services:
+  caddy:
+    volumes:
+      # The production Caddyfile with `acme_ca …` replaced by `local_certs` (no public DNS in CI).
+      - ${ARC_CI_CADDYFILE:?run tests/stack/up.sh}:/etc/caddy/Caddyfile:ro

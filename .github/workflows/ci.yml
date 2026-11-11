@@ -159,7 +159,7 @@ jobs:
             docker compose -f deploy/aws/docker-compose.yml config --quiet
       - name: Oracle Always Free deployment (docs/deploy/oracle-free.md)
         run: |
-          shellcheck -S warning deploy/oracle/*.sh deploy/oracle/postgres-init/*.sh
+          shellcheck -S warning deploy/oracle/*.sh deploy/oracle/postgres-init/*.sh tests/stack/*.sh
           python3 -m py_compile deploy/oracle/write-env.py
           # Regression: arc-deploy runs write-env under umask 077; the DB password must still be group-readable (0640).
           t="$(mktemp -d)"; mkdir "$t/conf"; printf 'CONSOLE_HOST=a.example.com\nAPI_HOST=b.example.com\nMQTT_HOST=c.example.com\n' > "$t/conf/config"
@@ -185,3 +185,40 @@ jobs:
         run: |
           docker build -f Dockerfile -t arc-cloud-api:ci .
           docker run --rm --entrypoint node arc-cloud-api:ci -e "require('zod'); require('pg'); console.log('ok')"
+
+  stack:
+    # The PRODUCTION stack, started the way arc-deploy starts it on the Oracle VM: deploy/oracle/docker-compose.yml,
+    # the real EMQX 5.8 image and config (TLS listener, auth/authz hooks, limits), Caddy, API, worker, PostgreSQL.
+    # arm64 like the VM. Only difference: Caddy's internal CA instead of Let's Encrypt (tests/stack/up.sh).
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Start the production stack
+        run: bash tests/stack/up.sh
+      - name: Production-stack tests (real EMQX, 200 simulated devices)
+        run: npx tsx tests/stack/run.ts
+      - name: Results in the job summary
+        if: always()
+        run: cat tests/stack/out/results.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no results file" >> "$GITHUB_STEP_SUMMARY"
+      - name: Container logs
+        if: always()
+        run: |
+          mkdir -p tests/stack/out/logs
+          for s in emqx api worker caddy postgres console; do
+            sudo docker logs --tail 2000 "arc-cloud-$s-1" > "tests/stack/out/logs/$s.log" 2>&1 || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stack-results
+          path: |
+            tests/stack/out/results.*
+            tests/stack/out/Caddyfile.diff
+            tests/stack/out/logs/
+          retention-days: 30
