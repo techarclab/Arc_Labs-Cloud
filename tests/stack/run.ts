@@ -5,7 +5,7 @@
  * decides: the TLS listener, the authentication/authorization hooks as EMQX calls them, listener and protocol
  * limits, EMQX's own client events, the management API, and restarts.
  *
- *   bash tests/stack/up.sh && npx tsx tests/stack/run.ts          (STACK_DEVICES=200 by default)
+ *   bash tests/stack/up.sh && NODE_EXTRA_CA_CERTS=tests/stack/out/ca.crt npx tsx tests/stack/run.ts   (STACK_DEVICES=200)
  *
  * Writes tests/stack/out/results.json and results.md (evidence for docs/operations/).
  */
@@ -66,6 +66,7 @@ const handshake = (opts: { minVersion?: any; maxVersion?: any } = {}) =>
   });
 
 async function main() {
+  if (!process.env.NODE_EXTRA_CA_CERTS) throw new Error('set NODE_EXTRA_CA_CERTS=tests/stack/out/ca.crt (Caddy\'s root, written by up.sh) so HTTPS calls trust the stack');
   console.log(`Production stack: EMQX ${docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'broker').match(/version\s*:\s*(\S+)/)?.[1] ?? '?'}, ${N} simulated devices\n`);
 
   // ---------- Setup through the public API ----------
