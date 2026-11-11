@@ -254,7 +254,7 @@ jobs:
           zap "$ZAP_IMAGE" zap-baseline.py --autooff -t https://console.arc.test -I -m 3 -J console-baseline.json -r console-baseline.html
           zap "$ZAP_IMAGE" zap-baseline.py --autooff -t https://api.arc.test -I -m 2 -J api-baseline.json -r api-baseline.html
           zap -e ZAP_AUTH_HEADER=Authorization -e ZAP_AUTH_HEADER_VALUE="Bearer $(cat tests/stack/out/zap-token)" -e ZAP_AUTH_HEADER_SITE=api.arc.test \
-            "$ZAP_IMAGE" zap-api-scan.py --autooff -t https://api.arc.test/api/openapi.json -f openapi -O https://api.arc.test -I \
+            "$ZAP_IMAGE" zap-api-scan.py -t https://api.arc.test/api/openapi.json -f openapi -O https://api.arc.test -I \
             -J api-active.json -r api-active.html -z "-config scanner.maxScanDurationInMins=25 -config scanner.threadPerHost=4"
       - name: Results in the job summary, gate on High risk
         run: |
