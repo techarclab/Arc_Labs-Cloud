@@ -224,3 +224,50 @@ jobs:
             tests/stack/out/Caddyfile.diff
             tests/stack/out/logs/
           retention-days: 30
+
+  zap:
+    # OWASP ZAP against the ISOLATED production stack started inside this runner (tests/stack/up.sh): never against
+    # arcloud.arclabs.in. Passive baseline of the console and API, then an authenticated active scan of every
+    # OpenAPI operation as an organization admin. Fails on High-risk alerts not accepted in security/zap/accepted.tsv.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Start the isolated production stack
+        run: bash tests/stack/up.sh
+      - name: Seed a test organization (token stays in tests/stack/out)
+        run: npx tsx tests/stack/seed.ts
+        env:
+          NODE_EXTRA_CA_CERTS: tests/stack/out/ca.crt
+      - name: ZAP baseline (passive) of the console and API, and authenticated API scan (active)
+        run: |
+          mkdir -p security/zap/out && chmod 777 security/zap/out
+          zap() { docker run --rm --network host --add-host console.arc.test:127.0.0.1 --add-host api.arc.test:127.0.0.1 \
+                    -v "$PWD/security/zap/out:/zap/wrk:rw" "$@"; }
+          zap "$ZAP_IMAGE" zap-baseline.py -t https://console.arc.test -I -m 3 -J console-baseline.json -r console-baseline.html
+          zap "$ZAP_IMAGE" zap-baseline.py -t https://api.arc.test -I -m 2 -J api-baseline.json -r api-baseline.html
+          zap -e ZAP_AUTH_HEADER=Authorization -e ZAP_AUTH_HEADER_VALUE="Bearer $(cat tests/stack/out/zap-token)" -e ZAP_AUTH_HEADER_SITE=api.arc.test \
+            "$ZAP_IMAGE" zap-api-scan.py -t https://api.arc.test/api/openapi.json -f openapi -O https://api.arc.test -I \
+            -J api-active.json -r api-active.html -z "-config scanner.maxScanDurationInMins=25 -config scanner.threadPerHost=4"
+      - name: Results in the job summary, gate on High risk
+        run: |
+          set -o pipefail
+          { echo '### OWASP ZAP (isolated CI stack)'; node tools/zap-report.mjs security/zap/out; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Stack still healthy after the scan
+        if: always()
+        run: |
+          curl -fsS --cacert tests/stack/out/ca.crt https://api.arc.test/health/deep || true
+          sudo docker ps --format '{{.Names}} {{.Status}}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-reports
+          path: security/zap/out/
+          retention-days: 30
