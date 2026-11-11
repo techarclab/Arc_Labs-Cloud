@@ -23,11 +23,26 @@ Before this job, every MQTT test ran against Aedes, an in-process stand-in. The 
 
 | ID | Severity | Finding |
 |---|---|---|
-| DEF-002 | see results | Readings a device sends right after an EMQX restart, before the worker has re-subscribed, are acknowledged by EMQX and dropped (QoS 1 to a topic with no subscriber). The suite measures it on every run |
+| DEF-002 | open question, low | Suspected: a reading a device sends after an EMQX restart but before the ingest worker has re-subscribed is acknowledged by EMQX and dropped (MQTT drops QoS 1 messages that match no subscription). **Not reproduced on 2026-11-11:** readings sent the moment all 200 devices were back were all stored, in both restart scenarios. A device that reconnects earlier than the worker can still hit the window, and the suite does not yet measure each device's first reading. The suite re-checks this on every run and records it as a known defect if readings go missing |
 | DEF-003 | low | `base.hocon` sets `max_connections = 100000` but EMQX enforces 65,536, most likely the container's open-file limit (to confirm). The config overstates capacity |
 
 ## Runs
 
 | Date | Run | Result | Notes |
 |---|---|---|---|
-| — | first full run pending | | |
+| 2026-11-11 | [run 43003163463](https://github.com/techarclab/Arc_Labs-Cloud/actions/runs/43003163463), EMQX 5.8.9, arm64, 200 devices | **25/25 pass** (1 known defect: DEF-003) | see measurements below |
+
+### Measurements, 2026-11-11
+
+| Measurement | Value |
+|---|---|
+| 200 devices connecting at once | all connected in 2.6 s, 0 refused; EMQX memory 245 MiB of 1 GiB |
+| Rotation → live session cut | 245 ms (through the EMQX management API) |
+| EMQX restart, devices with jittered back-off | all 200 back after 12.6 s; 371 connection attempts refused while EMQX started; 200/200 readings stored |
+| EMQX restart, all devices retrying every second | all 200 back after 11.1 s; 400 refused attempts; 200/200 readings stored |
+| Device that never returns after an EMQX restart | shown offline after 51 s (limit 60 s for a 10 s interval) |
+| Worker restart | readings sent while it was down: all stored once it was back (persistent session) |
+| API restart | no device dropped; readings stored during the restart |
+| Listener limit | 65,536 enforced (config: 100,000), see DEF-003 |
+
+Earlier runs on the same day failed because of test-harness bugs, all fixed in this PR: `credentials.topics.commands` misnamed, a CA certificate not trusted by Node, restart detection, and worker-subscription detection. They were not product defects.
