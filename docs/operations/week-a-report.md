@@ -49,7 +49,7 @@ Scope as approved:
 | Pure-logic coverage | shared protocol files 100% lines; sketch generator 100% lines / 83.7% branches |
 | Library field names | red before the fix (21 wrong names accepted), green after (212/212) |
 | Trivy gate (application images) | **pass**: API 0 critical / 0 high; console 0 at every severity |
-| ZAP | 1 High reviewed and reproduced as a false positive (accepted for that route only); 2 Medium; 6 Low. Final gate run pending at the time of writing |
+| ZAP | **gate pass** (run 43004092377): 0 unaccepted High; 1 High reproduced as a false positive and accepted for that route only; 2 Medium (console CSP); Low: cross-origin and Permissions-Policy headers, plus the expected 503 from unconfigured Google sign-in |
 
 ## Defect register
 
