@@ -70,7 +70,8 @@ export interface Creds {
   clientId: string;
   username: string;
   password: string;
-  topics: { telemetry: string; state: string; cmd: string };
+  /** As returned by POST /api/v1/devices (credentials.topics). */
+  topics: { telemetry: string; state: string; commands: string; commandAcks: string };
 }
 
 export function mqttOptions(creds: Partial<Creds>, extra: IClientOptions = {}): IClientOptions {
@@ -161,7 +162,7 @@ export class SimDevice {
           this.connects++;
           this.failures = 0;
           this.lastConnectedAt = Date.now();
-          c.subscribe(this.creds.topics.cmd, { qos: 1 });
+          c.subscribe(this.creds.topics.commands, { qos: 1 });
           resolveFirst();
         });
         c.on('message', (_t, buf) => {
