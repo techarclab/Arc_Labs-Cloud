@@ -311,8 +311,17 @@ async function main() {
     note('emqx_memory_after_connect', docker('stats', '--no-stream', '--format', '{{.MemUsage}}', 'arc-cloud-emqx-1').trim());
   });
 
+  /** One reading per device; returns how many publishes the broker did not acknowledge (connection dropped meanwhile). */
   const sendRound = async (round: number) => {
-    await Promise.all(sims.map((s) => (s.client ? publish(s.client, s.creds.topics.telemetry, telemetry({ seq: round, temperature: 20 })) : undefined)));
+    const r = await Promise.allSettled(sims.map((s) => (s.client ? publish(s.client, s.creds.topics.telemetry, telemetry({ seq: round, temperature: 20 })) : Promise.reject(new Error('offline')))));
+    return r.filter((x) => x.status === 'rejected').length;
+  };
+  const emqxReady = () => {
+    try {
+      return /is started|started/.test(docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'status'));
+    } catch {
+      return false;
+    }
   };
   const storedRound = (round: number) => Number(sql(`SELECT count(DISTINCT device_id) FROM telemetry_measurements WHERE device_id IN (${fleetIds}) AND metric_key = 'seq' AND metric_value = ${round}`));
 
@@ -344,12 +353,15 @@ async function main() {
     for (const s of sims) await s.stop();
     sims = fleet.map((d) => new SimDevice(d.creds, jitter ? { jitter: true } : { jitter: false, baseMs: 1000 }));
     await Promise.race([Promise.all(sims.map((s) => s.start())), sleep(120_000).then(() => { throw new Error('fleet did not connect before the restart'); })]);
+    const before = sims.map((s) => s.connects);
     const t0 = Date.now();
     docker('restart', 'arc-cloud-emqx-1');
-    const back = await eventually(async () => allConnected() && Date.now(), `${N} devices reconnected (${label})`, 300_000, 200);
+    // Back = every device has connected again AFTER the restart (old sockets can look open for a moment).
+    const back = await eventually(async () => sims.every((s, i) => s.connects > before[i] && s.connected) && Date.now(), `${N} devices reconnected (${label})`, 300_000, 200);
     // Readings sent the moment each device is back, as firmware does: are they all stored?
     const early = jitter ? 2003 : 2004;
-    await sendRound(early);
+    const notAcked = await sendRound(early);
+    note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
     const workerBack = await eventually(async () => workerSubscribed() && Date.now(), `worker subscribed again (${label})`, 120_000, 200);
     note(`${label}_reconnect_all_ms`, back - t0);
     note(`${label}_refused_attempts`, sims.reduce((n, s) => n + s.refusals, 0));
@@ -357,15 +369,15 @@ async function main() {
     await eventually(deepOk, `API back on the broker (${label})`, 120_000, 2000);
     await eventually(async () => onlineCount() === N, `${N} devices recorded online (${label})`, 120_000, 2000);
     const round = jitter ? 1003 : 1004;
-    await sendRound(round);
+    assert.equal(await sendRound(round), 0, 'publishes not acknowledged after recovery');
     await eventually(async () => storedRound(round) === N, `readings sent after the worker is back stored (${label})`, 60_000, 2000);
     await sleep(5000);
     const earlyStored = storedRound(early);
-    note(`${label}_readings_sent_on_reconnect_stored`, `${earlyStored}/${N}`);
-    if (earlyStored < N) {
+    note(`${label}_readings_sent_on_reconnect_stored`, `${earlyStored}/${N - notAcked} acknowledged`);
+    if (earlyStored < N - notAcked) {
       throw new KnownDefect(
         'DEF-002',
-        `${N - earlyStored} of ${N} readings sent right after reconnecting were lost: devices were back ${back - t0} ms after the restart, the worker re-subscribed at ${workerBack - t0} ms, and EMQX drops QoS 1 messages that have no subscriber while acknowledging them to the device`,
+        `${N - notAcked - earlyStored} of ${N - notAcked} readings acknowledged right after reconnecting were lost: devices were back ${back - t0} ms after the restart, the worker re-subscribed at ${workerBack - t0} ms, and EMQX drops QoS 1 messages that have no subscriber while acknowledging them to the device`,
       );
     }
   };
@@ -373,6 +385,7 @@ async function main() {
   await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, () => brokerRestart('herd', false));
   await check('after an EMQX restart, a device that never comes back is shown offline within interval × 3 + 30 s', async () => {
     const lost = await newDevice('Never returns', 10);
+    await eventually(async () => emqxReady() && (await deepOk()), 'EMQX and API ready', 120_000, 1000);
     const c = await connect(lost.creds);
     await publish(c, lost.creds.topics.telemetry, telemetry({ temperature: 5 }));
     await eventually(async () => (await status(t, lost.id)) === 'online', 'online');
@@ -390,7 +403,12 @@ async function main() {
   // ---------- Evidence ----------
   const failed = results.filter((r) => !r.ok);
   const when = new Date().toISOString();
-  const emqxVersion = docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'broker').match(/version\s*:\s*(\S+)/)?.[1] ?? '?';
+  let emqxVersion = '?';
+  try {
+    emqxVersion = docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'broker').match(/version\s*:\s*(\S+)/)?.[1] ?? '?';
+  } catch {
+    /* broker restarting: the version was printed at the start */
+  }
   const arch = docker('info', '--format', '{{.Architecture}}').trim();
   writeFileSync(resolve(OUT, 'results.json'), JSON.stringify({ when, emqxVersion, arch, devices: N, results, measurements }, null, 2));
   const md = [
