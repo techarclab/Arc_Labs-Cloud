@@ -240,6 +240,15 @@ jobs:
           name: supply-chain
           path: security/out/
           retention-days: 30
+      - name: Summary in the log too (artifact downloads may be unavailable to reviewers)
+        if: always()
+        run: |
+          node tools/trivy-summary.mjs security/out
+          for f in security/out/image-api.json security/out/image-console.json; do
+            echo "== $f: HIGH/CRITICAL with a fix, and where they are"
+            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select((.Severity=="HIGH" or .Severity=="CRITICAL") and .FixedVersion) | "\(.Severity) \(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)  [\(.PkgPath // $t)]"' "$f"
+          done
+          echo "== The API image must not ship npm:"; docker run --rm --entrypoint sh arc-cloud-api:scan -c 'command -v npm npx corepack || echo "none (good)"'
       - name: Gate, application images (HIGH/CRITICAL with a fix available)
         run: |
           trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL arc-cloud-api:scan

@@ -32,11 +32,15 @@ COPY --from=build /app/apps/ingestion-worker/package.json apps/ingestion-worker/
 COPY --from=build /app/apps/ingestion-worker/node_modules apps/ingestion-worker/node_modules
 COPY --from=build /app/apps/ingestion-worker/dist apps/ingestion-worker/dist
 COPY infra/db/migrations infra/db/migrations
-# Root package.json lets `npm run start -w @arc/api` (a common platform default) work too.
 COPY package.json ./
 COPY tools/check-runtime-deps.cjs tools/
 # Fail the image build, not the first boot, if a runtime dependency is missing from the final image.
-RUN node tools/check-runtime-deps.cjs packages/shared apps/api apps/ingestion-worker
+# Then remove npm, npx, yarn and corepack: the services start with `node` (CMD below, arc-deploy's migration step),
+# and the npm CLI bundled in node:22 carries its own dependencies with known vulnerabilities (pacote, sigstore,
+# brace-expansion, …; Trivy, 2026-11-11) that nothing at runtime needs.
+RUN node tools/check-runtime-deps.cjs packages/shared apps/api apps/ingestion-worker \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn* \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 USER node
 ENV ARC_ROLE=api
 CMD ["sh", "-c", "if [ \"$ARC_ROLE\" = worker ]; then exec node apps/ingestion-worker/dist/main.js; else exec node apps/api/dist/main.js; fi"]
