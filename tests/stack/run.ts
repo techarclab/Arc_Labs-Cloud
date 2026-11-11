@@ -342,9 +342,10 @@ async function main() {
     await eventually(deepOk, '/health/deep after API restart', 120_000, 2000);
   });
 
-  const workerSubscribed = () => {
+  /** The worker logs "subscribed" each time its subscriptions are granted; true once that happened after `since`. */
+  const workerSubscribedSince = (since: Date) => {
     try {
-      return docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'subscriptions', 'show', 'svc-ingest-1').includes('telemetry');
+      return /"subscribed"/.test(docker('logs', '--since', since.toISOString(), 'arc-cloud-worker-1'));
     } catch {
       return false;
     }
@@ -355,6 +356,7 @@ async function main() {
     await Promise.race([Promise.all(sims.map((s) => s.start())), sleep(120_000).then(() => { throw new Error('fleet did not connect before the restart'); })]);
     const before = sims.map((s) => s.connects);
     const t0 = Date.now();
+    const restartedAt = new Date(t0);
     docker('restart', 'arc-cloud-emqx-1');
     // Back = every device has connected again AFTER the restart (old sockets can look open for a moment).
     const back = await eventually(async () => sims.every((s, i) => s.connects > before[i] && s.connected) && Date.now(), `${N} devices reconnected (${label})`, 300_000, 200);
@@ -362,7 +364,12 @@ async function main() {
     const early = jitter ? 2003 : 2004;
     const notAcked = await sendRound(early);
     note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
-    const workerBack = await eventually(async () => workerSubscribed() && Date.now(), `worker subscribed again (${label})`, 120_000, 200);
+    const workerBack = await eventually(async () => workerSubscribedSince(restartedAt) && Date.now(), `worker subscribed again (${label})`, 120_000, 500);
+    try {
+      note(`${label}_emqx_subscriptions_of_worker`, docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'subscriptions', 'show', 'svc-ingest-1').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty)');
+    } catch (e) {
+      note(`${label}_emqx_subscriptions_of_worker`, `ctl failed: ${(e as Error).message.slice(0, 120)}`);
+    }
     note(`${label}_reconnect_all_ms`, back - t0);
     note(`${label}_refused_attempts`, sims.reduce((n, s) => n + s.refusals, 0));
     note(`${label}_worker_resubscribed_ms`, workerBack - t0);
