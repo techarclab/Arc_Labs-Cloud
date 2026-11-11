@@ -27,7 +27,7 @@ CI job `supply-chain` (Trivy) and job `security` (`npm audit`, secret scan). Rep
 - **Console:** the first scan had 3 critical and 72 high, all in Alpine packages (OpenSSL, curl, expat, brotli, c-ares). After `apk upgrade`, 5 HIGH remained in the nginx package itself (1.28.3-r1). The move to the 1.30 stable image cleared those.
 
 **Upstream images (not gated, need action):**
-- **Caddy** is the only container reachable from the internet. Most fixable findings in such images are usually in the Go standard library; the per-package list is in the job log. Move to the newest 2.x patch release and re-scan.
+- **Caddy** is the only container reachable from the internet. Its listed fixable findings are in the image's Alpine 3.22.3 packages (OpenSSL `libssl3`/`libcrypto3`, curl, musl, libcap, c-ares). The log list is capped at 150 rows, so check the JSON report for findings in the Caddy binary itself. Fix: a newer `caddy:2.x` image, or the same `apk upgrade` layer as the console in a small `Dockerfile.caddy`. Re-scan either way.
 - **EMQX:** the fixable findings are Debian packages (GnuTLS, OpenSSL, brotli, …) in the 5.8.9 base. A newer EMQX patch image, or an `apt-get upgrade` layer in `Dockerfile.emqx` like the console fix, would clear most of them. Check EMQX's licence terms before moving to a newer minor version.
 - **Postgres:** 28 fixable. `postgres:16` is a floating tag, so the next deploy that pulls it picks up rebuilt images.
 
