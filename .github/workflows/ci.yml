@@ -239,6 +239,7 @@ jobs:
         run: npx tsx tests/stack/run.ts
         env:
           NODE_EXTRA_CA_CERTS: tests/stack/out/ca.crt   # Caddy's internal root, trusted like ISRG Root X1 in production
+          STACK_RESTART_LOOPS: 2   # two extra EMQX restarts per run: recovery after restarts is where DEF-014 showed up
       - name: Results in the job summary
         if: always()
         run: cat tests/stack/out/results.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no results file" >> "$GITHUB_STEP_SUMMARY"
