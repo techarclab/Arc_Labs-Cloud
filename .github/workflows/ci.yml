@@ -305,3 +305,71 @@ jobs:
           name: zap-reports
           path: security/zap/out/
           retention-days: 30
+
+  supply-chain:
+    # Trivy on every image the Oracle VM runs (application images built here, infrastructure images at the versions
+    # in deploy/oracle/docker-compose.yml), the full npm lockfile including dev dependencies, and the Dockerfiles.
+    # Trivy is installed as a pinned binary with a pinned SHA-256: its GitHub Actions (trivy-action, setup-trivy)
+    # were compromised in March 2026 (GHSA-69fq-xp46-6x23), so they are not used.
+    # Gate: application images fail on HIGH/CRITICAL with a fix available (production npm dependencies are already
+    # gated by the security job). Upstream infrastructure images, dev dependencies and Dockerfile checks are
+    # reported (job summary + artifact), not gated.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TRIVY_VERSION: 0.76.2
+      TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+      TRIVY_CACHE_DIR: /tmp/trivy-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Install Trivy (pinned binary, verified checksum)
+        run: |
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL -o "/tmp/$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "${TRIVY_SHA256}  /tmp/$f" | sha256sum -c -
+          sudo tar -xzf "/tmp/$f" -C /usr/local/bin trivy
+          trivy --version
+      - name: Build application images, pull infrastructure images
+        run: |
+          docker build -q -f Dockerfile -t arc-cloud-api:scan .
+          docker build -q -f Dockerfile.console -t arc-cloud-console:scan .
+          docker build -q -f Dockerfile.emqx -t arc-cloud-emqx:scan .
+          for i in $(grep -oE 'image: [^ ]+' deploy/oracle/docker-compose.yml | awk '{print $2}' | sort -u); do docker pull -q "$i"; echo "$i" >> /tmp/infra-images; done
+          echo "Users the containers run as:"
+          for i in arc-cloud-api:scan arc-cloud-console:scan arc-cloud-emqx:scan; do echo "  $i: $(docker run --rm --entrypoint id "$i" 2>&1 | head -1)"; done
+      - name: Scan (reports)
+        run: |
+          mkdir -p security/out
+          trivy image --quiet --format json --output security/out/image-api.json arc-cloud-api:scan
+          trivy image --quiet --format json --output security/out/image-console.json arc-cloud-console:scan
+          trivy image --quiet --format json --output security/out/image-emqx.json arc-cloud-emqx:scan
+          while read -r i; do trivy image --quiet --format json --output "security/out/infra-$(echo "$i" | tr '/:' '__').json" "$i"; done < /tmp/infra-images
+          trivy fs --quiet --scanners vuln --include-dev-deps --format json --output security/out/npm-all-deps.json package-lock.json
+          trivy config --quiet --format json --output security/out/config.json --skip-dirs node_modules --skip-dirs infra/terraform .
+          for i in api console; do trivy image --quiet --format cyclonedx --output "security/out/sbom-$i.cdx.json" "arc-cloud-$i:scan"; done
+          npm audit --json > security/out/npm-audit-all.txt || true
+          { echo '### Supply chain (Trivy '"$TRIVY_VERSION"')'; echo; node tools/trivy-summary.mjs security/out; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: supply-chain
+          path: security/out/
+          retention-days: 30
+      - name: Summary in the log too (artifact downloads may be unavailable to reviewers)
+        if: always()
+        run: |
+          node tools/trivy-summary.mjs security/out
+          for f in security/out/image-api.json security/out/image-console.json; do
+            echo "== $f: HIGH/CRITICAL with a fix, and where they are"
+            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select((.Severity=="HIGH" or .Severity=="CRITICAL") and .FixedVersion) | "\(.Severity) \(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)  [\(.PkgPath // $t)]"' "$f"
+          done
+          echo "== The API image must not ship npm:"; docker run --rm --entrypoint sh arc-cloud-api:scan -c 'command -v npm npx corepack || echo "none (good)"'
+      - name: Gate, application images (HIGH/CRITICAL with a fix available)
+        run: |
+          trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL arc-cloud-api:scan
+          trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL arc-cloud-console:scan

@@ -34,3 +34,4 @@ apps/console/public/downloads/
 tests/stack/out/
 security/zap/out/
 tests/authz/out/
+security/out/
