@@ -1,0 +1,12 @@
+# Keeps the commit-SHA pins in .github/workflows current: Dependabot opens a PR when an action releases a new version,
+# with the release notes, and updates the "# vX.Y.Z" comment. Pins by SHA (not tag) because a tag can be moved to a
+# malicious commit, as happened to trivy-action in March 2026 (GHSA-69fq-xp46-6x23).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

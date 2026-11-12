@@ -23,8 +23,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U arc" --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -44,7 +44,7 @@ jobs:
         run: |
           npm run coverage:e2e
           { echo '### Coverage'; echo; node tools/coverage-summary.mjs; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: coverage
@@ -73,7 +73,7 @@ jobs:
       - name: Authorization matrix in the job summary
         if: always()
         run: cat tests/authz/out/results.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: authz-matrix
@@ -83,8 +83,8 @@ jobs:
   security:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: npm ci --no-audit --no-fund --ignore-scripts
@@ -98,8 +98,8 @@ jobs:
     # The device's OTA signature check (C/mbedTLS) must accept exactly what the signing tool and API produce.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: sudo apt-get install -y -q libmbedtls-dev g++ >/dev/null
@@ -114,7 +114,7 @@ jobs:
       ARDUINO_CLI_VERSION: 1.5.1
       ESP32_CORE: 3.3.12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install arduino-cli, ESP32 core and libraries (pinned)
         run: |
           curl -fsSL -o /tmp/cli.tgz "https://github.com/arduino/arduino-cli/releases/download/v${ARDUINO_CLI_VERSION}/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz"
@@ -142,7 +142,7 @@ jobs:
           for s in arc_device arc_dht_mqtt arc_http; do
             arduino-cli compile --warnings all -b esp32:esp32:esp32s3 "firmware/esp32-arduino/$s"
           done
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: ArcCloud library — its examples, and sketches made by the console's generator (ESP32 and ESP32-S3)
@@ -166,8 +166,8 @@ jobs:
     # the production compose file, and the server scripts.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: 1.13.2
       - name: Terraform fmt + validate
@@ -214,7 +214,7 @@ jobs:
     # runtime dependency missing from the final image fails here instead of crash-looping on a server.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: API / worker image
         run: |
           docker build -f Dockerfile -t arc-cloud-api:ci .
@@ -227,8 +227,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -249,7 +249,7 @@ jobs:
           for s in emqx api worker caddy postgres console; do
             sudo docker logs --tail 2000 "arc-cloud-$s-1" > "tests/stack/out/logs/$s.log" 2>&1 || true
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: stack-results
@@ -268,8 +268,8 @@ jobs:
     env:
       ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -299,7 +299,7 @@ jobs:
         run: |
           curl -fsS --cacert tests/stack/out/ca.crt https://api.arc.test/health/deep || true
           sudo docker ps --format '{{.Names}} {{.Status}}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: zap-reports
@@ -321,8 +321,8 @@ jobs:
       TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
       TRIVY_CACHE_DIR: /tmp/trivy-cache
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -354,7 +354,7 @@ jobs:
           for i in api console; do trivy image --quiet --format cyclonedx --output "security/out/sbom-$i.cdx.json" "arc-cloud-$i:scan"; done
           npm audit --json > security/out/npm-audit-all.txt || true
           { echo '### Supply chain (Trivy '"$TRIVY_VERSION"')'; echo; node tools/trivy-summary.mjs security/out; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: supply-chain
