@@ -5,6 +5,8 @@ import { SliderWidget, SwitchWidget } from '../components/widgets';
 import { Chart, Point } from '../components/Chart';
 import { CredentialsDialog } from '../components/Credentials';
 import { ArduinoCodePanel } from '../components/ArduinoCode';
+import { PythonCodePanel } from '../components/PythonCode';
+import { isLinuxDevice } from '../pythonScript';
 import { ErrorBox, Lifecycle, LIFECYCLE_TEXT, Modal, Status, Strip, useNow, usePoll, useToast } from '../components/ui';
 import { ago, dateTime, metricLabel, num } from '../format';
 import { useSession } from '../session';
@@ -167,7 +169,7 @@ export function DeviceDetail() {
         {!dead && (
           <div className="row">
             <button className="btn" onClick={() => setShowCode(true)}>
-              Arduino code
+              {isLinuxDevice(device.deviceType) ? 'Python code' : 'Arduino code'}
             </button>
             {canEdit(org?.role) && (
               <>
@@ -413,8 +415,8 @@ export function DeviceDetail() {
         />
       )}
       {showCode && (
-        <Modal open wide onClose={() => setShowCode(false)} title={`Arduino code for ${device.displayName}`}>
-          <ArduinoCodePanel device={device} />
+        <Modal open wide onClose={() => setShowCode(false)} title={`${isLinuxDevice(device.deviceType) ? 'Python' : 'Arduino'} code for ${device.displayName}`}>
+          {isLinuxDevice(device.deviceType) ? <PythonCodePanel device={device} /> : <ArduinoCodePanel device={device} />}
         </Modal>
       )}
       {newCreds && <CredentialsDialog replaced device={newCreds.device} credentials={newCreds.credentials} onClose={() => setNewCreds(null)} />}

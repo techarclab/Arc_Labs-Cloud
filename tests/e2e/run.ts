@@ -123,6 +123,8 @@ async function main() {
       const me = (await http('GET', '/api/v1/auth/me', tA)).body;
       assert.equal(me.user.emailVerified, false);
       assert.equal(me.user.ageGroup, 'adult');
+      assert.equal(me.user.accountType, null, 'asked after the email is confirmed');
+      assert.equal((await http('POST', '/api/v1/auth/account-type', tA, { accountType: 'individual' })).body.code, 'email_unverified');
       const r = await http('POST', '/api/v1/organizations', tA, { name: 'Too early', slug: 'too-early' });
       assert.equal(r.status, 403);
       assert.equal(r.body.code, 'email_unverified');
@@ -133,6 +135,10 @@ async function main() {
     });
     await check('the emailed link confirms the address, once; bad and reused tokens are refused', async () => {
       const token = await emailedToken(sinks, 'alice@arclabs.test');
+      const mail = [...sinks.emails].reverse().find((e) => e.to === 'alice@arclabs.test' && e.raw.includes('verify-email'))!;
+      assert.match(mail.raw, /Content-Type: text\/html/i, 'an HTML part');
+      assert.match(mail.raw, /Content-Type: text\/plain/i, 'and a plain-text part');
+      assert.match(mail.raw, /Confirm my email/, 'with the button');
       assert.equal((await http('POST', '/api/v1/auth/verify-email', undefined, { token: 'x'.repeat(43) })).body.code, 'verification_invalid');
       const ok = await http('POST', '/api/v1/auth/verify-email', undefined, { token });
       assert.equal(ok.status, 200, JSON.stringify(ok.body));
@@ -147,7 +153,7 @@ async function main() {
     });
     await check('sent account emails keep no link in the outbox', async () => {
       await eventually(
-        async () => (await sql(`SELECT payload FROM deliveries WHERE event_type = 'auth.verify_email' AND recipient = 'alice@arclabs.test'`)).every((d) => d.payload.redacted === true && !d.payload.text),
+        async () => (await sql(`SELECT payload FROM deliveries WHERE event_type = 'auth.verify_email' AND recipient = 'alice@arclabs.test'`)).every((d) => d.payload.redacted === true && !d.payload.text && !d.payload.html),
         'redacted payload',
       );
     });
@@ -239,6 +245,7 @@ async function main() {
       assert.equal(r.status, 201, JSON.stringify(r.body));
       const me = await (await fetch(`${CLOSED}/api/v1/auth/me`, { headers: { authorization: `Bearer ${r.body.accessToken}` } })).json();
       assert.deepEqual(me.memberships.map((m: any) => [m.id, m.role]), [[orgA.id, 'viewer']]);
+      assert.equal(me.user.accountType, 'organization', 'joining with the code answers the question');
     });
     await check('under-18s can sign up only with an invite code', async () => {
       const minor = (n: number, extra: Record<string, unknown> = {}) => ({ email: `minor${n}@school.test`, displayName: `Minor ${n}`, password: 'student-password-123', ageGroup: 'minor', acceptTerms: true, ...extra });
@@ -264,7 +271,38 @@ async function main() {
       assert.deepEqual((await http('GET', '/api/v1/auth/me', tC)).body.memberships.map((m: any) => [m.id, m.role]), [[orgA.id, 'viewer']]);
       assert.equal((await http('POST', '/api/v1/auth/redeem-invite', tC, { inviteCode: team.code })).body.code, 'already_member');
       assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [team.id]))[0].used_count, 1, 'a refused redeem does not use up the code');
-      assert.equal((await http('POST', `/api/v1/organizations`, tC, { name: 'Carol Co', slug: 'carol-co' })).status, 201, 'joining does not count as creating');
+      const own = await http('POST', `/api/v1/organizations`, tC, { name: 'Carol Co', slug: 'carol-co' });
+      assert.equal(own.status, 201, 'joining does not count as creating');
+      assert.equal(own.body.kind, 'personal', 'not ARC LABS staff: a personal workspace');
+    });
+    await check('after confirming the email: individual, organization (ARC LABS code) or other, answered once', async () => {
+      // Sign in through the second API: sign-in is rate-limited per IP (10/min) on each API, and this suite is near it.
+      const closedLogin = async (email: string, password: string) =>
+        (await (await fetch(`${CLOSED}/api/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) })).json()).accessToken as string;
+      const tC = await closedLogin('carol@join.test', 'carol-password-123');
+      assert.equal((await http('GET', '/api/v1/auth/me', tC)).body.user.accountType, null);
+      assert.equal((await http('POST', '/api/v1/auth/account-type', tC, { accountType: 'organization' })).body.code, 'organization_needs_invite');
+      const accountsOnly = (await http('POST', '/api/v1/platform/invites', tA, { label: 'accounts only (account type)', maxUses: 3, expiresInDays: 7 })).body;
+      assert.equal((await http('POST', '/api/v1/auth/account-type', tC, { accountType: 'organization', inviteCode: accountsOnly.code })).body.code, 'invite_not_for_organization');
+      assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [accountsOnly.id]))[0].used_count, 0, 'nothing claimed');
+      const other = await http('POST', '/api/v1/auth/account-type', tC, { accountType: 'other', note: 'Robotics club' });
+      assert.equal(other.status, 200, JSON.stringify(other.body));
+      assert.deepEqual(await sql(`SELECT account_type, account_type_note FROM users WHERE email = 'carol@join.test'`), [{ account_type: 'other', account_type_note: 'Robotics club' }]);
+      assert.equal((await http('POST', '/api/v1/auth/account-type', tC, { accountType: 'individual' })).body.code, 'account_type_set');
+
+      // Organization path: ARC LABS staff set up a real organization and give out its code.
+      const staffOrg = await http('POST', '/api/v1/organizations', tA, { name: 'Staff College', slug: 'staff-college' });
+      assert.equal(staffOrg.body.kind, 'organization', 'created by ARC LABS staff');
+      const code = (await http('POST', '/api/v1/platform/invites', tA, { label: 'Staff College admins', maxUses: 2, expiresInDays: 7, organizationId: staffOrg.body.id, role: 'engineer' })).body;
+      await sql(`UPDATE users SET email_verified_at = now() WHERE email = 'student2@college.test'`);
+      const tS = await closedLogin('student2@college.test', 'student-password-123');
+      const joined = await http('POST', '/api/v1/auth/account-type', tS, { accountType: 'organization', inviteCode: code.code });
+      assert.equal(joined.status, 200, JSON.stringify(joined.body));
+      assert.deepEqual(joined.body.organization, { id: staffOrg.body.id, name: 'Staff College', role: 'engineer' });
+      const me = (await http('GET', '/api/v1/auth/me', tS)).body;
+      assert.equal(me.user.accountType, 'organization');
+      assert.ok(me.memberships.some((m: any) => m.id === staffOrg.body.id && m.role === 'engineer'));
+      assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [code.id]))[0].used_count, 1);
     });
     await check('an account without an age group (Google sign-up) can only finish its profile', async () => {
       const tD = (await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password: 'carol-password-123' })).body.accessToken as string;
@@ -759,6 +797,7 @@ async function main() {
     });
 
     await phases4to7({ tA, tB, orgA, orgB, proj, dev2, key2, sinks });
+    await accountDeletion({ tA, orgA, kicked });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -855,6 +894,82 @@ async function eventually<T>(fn: () => Promise<T | undefined | null | false>, wh
     await sleep(300);
   }
   throw new Error(`timed out waiting for ${what}${last ? `: ${(last as Error).message}` : ''}`);
+}
+
+/** A sign-in token for an existing account, made with the test API's JWT secret (sign-in is rate-limited per IP). */
+async function tokenFor(email: string) {
+  const { createHmac } = await import('node:crypto');
+  const id = (await sql(`SELECT id FROM users WHERE email = $1`, [email]))[0].id as string;
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const head = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: id, iat: now, exp: now + 600, iss: 'arc-cloud', aud: 'arc-cloud-api' })}`;
+  return { id, token: `${head}.${createHmac('sha256', SECRETS.JWT_SECRET).update(head).digest('base64url')}` };
+}
+
+async function accountDeletion(ctx: { tA: string; orgA: any; kicked: string[] }) {
+  const { tA, orgA, kicked } = ctx;
+  console.log('\nAccount deletion');
+  // Carol: signs in with Google only by now (no password), a member of orgA, and owner of the personal workspace "Carol Co".
+  const { id: carolId, token: tC } = await tokenFor('carol@join.test');
+  const carolCo = (await sql(`SELECT id FROM organizations WHERE slug = 'carol-co'`))[0].id as string;
+  let device: any;
+  await check('setup: a channel, a Raspberry Pi device and readings in the personal workspace', async () => {
+    const p = await http('POST', '/api/v1/projects', tC, { organizationId: carolCo, name: 'Home' });
+    assert.equal(p.status, 201, JSON.stringify(p.body));
+    const d = await http('POST', '/api/v1/devices', tC, { projectId: p.body.id, displayName: 'Pi', deviceType: 'raspberry-pi' });
+    assert.equal(d.status, 201, JSON.stringify(d.body));
+    device = d.body.device;
+    await sql(
+      `INSERT INTO telemetry_measurements (organization_id, project_id, device_id, metric_key, metric_value, ts, received_at, message_id) VALUES ($1, $2, $3, 'temp', 21.5, now(), now(), 'm1')`,
+      [carolCo, p.body.id, device.id],
+    );
+    await sql(`INSERT INTO ingested_messages (device_id, message_id) VALUES ($1, 'm1')`, [device.id]);
+    await sql(`INSERT INTO rejected_messages (organization_id, device_id, topic, reason) VALUES ($1, $2, 't', 'schema_invalid')`, [carolCo, device.id]);
+  });
+  await check('deleting needs the exact email and the password; ARC LABS staff cannot delete themselves', async () => {
+    // (At most 5 tries a minute per IP: this section makes exactly 5.)
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+    assert.equal((await http('POST', '/api/v1/auth/delete-account', tA, { confirmEmail: 'someone@else.test', currentPassword: 'correct-horse-battery' })).body.code, 'confirm_email_mismatch');
+    assert.equal((await http('POST', '/api/v1/auth/delete-account', tA, { confirmEmail: 'alice@arclabs.test', currentPassword: 'wrong-password-1' })).body.code, 'wrong_password');
+    assert.equal((await http('POST', '/api/v1/auth/delete-account', tA, { confirmEmail: 'alice@arclabs.test', currentPassword: 'correct-horse-battery' })).body.code, 'platform_admin_delete');
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM users WHERE email = 'alice@arclabs.test'`))[0].n, 1);
+  });
+  await check('the only admin of a workspace with other members must hand over first', async () => {
+    await sql(`INSERT INTO organization_members (organization_id, user_id, role) SELECT $1, id, 'viewer' FROM users WHERE email = 'bob@other.test'`, [carolCo]);
+    const plan = (await http('GET', '/api/v1/auth/delete-account', tC)).body;
+    assert.deepEqual(plan.blockers.map((o: any) => o.id), [carolCo]);
+    const r = await http('POST', '/api/v1/auth/delete-account', tC, { confirmEmail: 'carol@join.test' });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'sole_admin');
+    await sql(`DELETE FROM organization_members WHERE organization_id = $1 AND user_id <> $2`, [carolCo, carolId]);
+  });
+  await check('preview: the personal workspace is deleted, the organization is only left', async () => {
+    const plan = (await http('GET', '/api/v1/auth/delete-account', tC)).body;
+    assert.deepEqual(plan.deleteWorkspaces, [{ id: carolCo, name: 'Carol Co', devices: 1 }]);
+    assert.ok(plan.leave.some((o: any) => o.id === orgA.id));
+    assert.deepEqual(plan.blockers, []);
+  });
+  await check('delete: account, personal workspace, devices and readings gone; devices kicked; organizations keep their data', async () => {
+    const orgADevices = (await sql(`SELECT count(*)::int AS n FROM devices WHERE organization_id = $1`, [orgA.id]))[0].n;
+    const r = await http('POST', '/api/v1/auth/delete-account', tC, { confirmEmail: 'Carol@Join.test' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { deleted: true, deletedWorkspaces: 1, deletedDevices: 1, leftOrganizations: 1 });
+    const count = async (q: string, params: unknown[]) => (await sql(q, params))[0].n;
+    assert.equal(await count(`SELECT count(*)::int AS n FROM users WHERE id = $1`, [carolId]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM organizations WHERE id = $1`, [carolCo]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM devices WHERE id = $1`, [device.id]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM device_credentials WHERE device_id = $1`, [device.id]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM telemetry_measurements WHERE organization_id = $1`, [carolCo]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM ingested_messages WHERE device_id = $1`, [device.id]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM rejected_messages WHERE organization_id = $1`, [carolCo]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM organization_members WHERE user_id = $1`, [carolId]), 0);
+    assert.equal(await count(`SELECT count(*)::int AS n FROM devices WHERE organization_id = $1`, [orgA.id]), orgADevices, 'orgA is untouched');
+    assert.ok(kicked.includes(device.id), 'the broker was asked to disconnect the deleted device');
+    assert.equal((await http('GET', '/api/v1/auth/me', tC)).status, 401, 'the old session no longer works');
+    const audit = await sql(`SELECT metadata FROM audit_logs WHERE action = 'user.delete' AND actor_id = $1`, [carolId]);
+    assert.equal(audit.length, 1);
+    assert.ok(!JSON.stringify(audit[0].metadata).includes('carol'), 'no personal data in the record');
+  });
 }
 
 async function phases4to7(ctx: { tA: string; tB: string; orgA: any; orgB: any; proj: any; dev2: any; key2: string; sinks: Sinks }) {

@@ -819,3 +819,19 @@ dl.facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .side-foot .me { cursor: pointer; border-radius: 8px; }
 .side-foot .me:hover, .side-foot .me:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
 .pill.ok { background: var(--on-soft, #e3f6ee); color: #12603f; }
+
+/* "Who is this account for?" (AccountTypeGate): each choice is a card. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+fieldset.account-types { gap: 10px; }
+fieldset.account-types label { border: 1px solid #d9dfe8; border-radius: 10px; padding: 12px 14px; background: #fff; transition: border-color .15s, background .15s; }
+fieldset.account-types label:hover { border-color: var(--accent); }
+fieldset.account-types label.selected { border-color: var(--accent); background: #f3f5ff; box-shadow: 0 0 0 1px var(--accent) inset; }
+fieldset.account-types b { display: block; color: var(--ink); font-size: 14.5px; }
+fieldset.account-types .hint { display: block; margin-top: 2px; font-size: 12.5px; color: var(--muted); }
+
+/* Delete account: what will be deleted, and the typed-code challenge. */
+.note.warn { background: #fdecea; color: #8a2a23; }
+.delete-plan p { margin: 0 0 4px; }
+.delete-plan ul { margin: 0 0 10px; padding-left: 20px; }
+.challenge-row { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
+.challenge { width: 200px; height: 56px; user-select: none; -webkit-user-select: none; pointer-events: none; }

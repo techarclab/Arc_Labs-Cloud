@@ -427,6 +427,52 @@
         ]
       }
     },
+    "/api/v1/auth/account-type": {
+      "post": {
+        "operationId": "AuthController_setAccountType",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountType": {
+                    "type": "string",
+                    "enum": [
+                      "individual",
+                      "organization",
+                      "other"
+                    ]
+                  },
+                  "inviteCode": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "accountType"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Say who the account is for (once, after confirming the email); organizations join with an ARC LABS invite code",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
     "/api/v1/auth/forgot-password": {
       "post": {
         "operationId": "AuthController_forgotPassword",
@@ -555,6 +601,57 @@
           }
         },
         "summary": "Sign out on every device, including this one",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/delete-account": {
+      "get": {
+        "operationId": "AuthController_deleteAccountPreview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "What deleting your account would delete, leave or block",
+        "tags": [
+          "Auth"
+        ]
+      },
+      "post": {
+        "operationId": "AuthController_deleteAccount",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmEmail": {
+                    "type": "string",
+                    "maxLength": 254
+                  },
+                  "currentPassword": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "confirmEmail"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Delete your account for good: your personal workspaces with their devices and data, and your memberships",
         "tags": [
           "Auth"
         ]

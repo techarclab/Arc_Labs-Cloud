@@ -174,7 +174,10 @@ export class OrgOpsController {
       retentionDays: input.retentionDays ?? p.retentionDays,
     };
     await this.db.query(
-      `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9 WHERE id = $1`,
+      // A paid plan makes a personal workspace a real organization (ARC LABS has set it up).
+      `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9,
+         kind = CASE WHEN $2 <> 'free' THEN 'organization' ELSE kind END
+       WHERE id = $1`,
       [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets],
     );
     await this.audit.record({ ...actor(user), organizationId: id, action: 'organization.plan', resourceType: 'organization', resourceId: id, metadata: { plan: input.plan, ...v } });
@@ -298,7 +301,7 @@ export class PlatformController {
   async organizations(@CurrentUser() user: AuthUser) {
     this.requireStaff(user);
     const rows = await this.db.query(
-      `SELECT o.id, o.name, o.slug, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.max_widgets, o.created_at,
+      `SELECT o.id, o.name, o.slug, o.kind, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.max_widgets, o.created_at,
          (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members,
          (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id AND d.lifecycle_status NOT IN ('revoked','retired')) AS devices,
          (SELECT count(*)::int FROM projects p WHERE p.organization_id = o.id) AS projects,
@@ -311,6 +314,7 @@ export class PlatformController {
         id: o.id,
         name: o.name,
         slug: o.slug,
+        kind: o.kind,
         plan: o.plan,
         retentionDays: o.retention_days,
         limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks, widgetsPerDashboard: o.max_widgets },

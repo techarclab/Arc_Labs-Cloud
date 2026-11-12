@@ -353,7 +353,8 @@ export class Jobs {
           skipped = true;
           error = 'Email is not set up on this server (SMTP_URL).';
         } else {
-          await this.mailer.sendMail({ from: this.cfg.MAIL_FROM, to: d.recipient, subject: d.payload.subject, text: d.payload.text });
+          // Account emails also carry an HTML version (apps/api/src/common/email.ts); the text part stays for every client.
+          await this.mailer.sendMail({ from: this.cfg.MAIL_FROM, to: d.recipient, subject: d.payload.subject, text: d.payload.text, ...(typeof d.payload.html === 'string' ? { html: d.payload.html } : {}) });
           ok = true;
         }
       } else {

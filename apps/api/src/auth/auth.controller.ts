@@ -8,7 +8,9 @@ import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
+import { BrokerAdmin } from '../common/broker-admin.service';
 import { hashSecret, verifySecret } from '../common/crypto';
+import { renderAccountEmail } from '../common/email';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
 import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
@@ -28,10 +30,40 @@ const registerBody = z.object({
 
 const verifyEmailBody = z.object({ token: z.string().min(20).max(200) });
 const completeProfileBody = z.object({ ageGroup: z.enum(['adult', 'minor']), inviteCode: z.string().trim().max(64).optional() });
+/**
+ * "Who is this account for?", answered once, after the email address is confirmed.
+ *   individual    free plan, a personal workspace
+ *   organization  needs an invite code from ARC LABS that adds the person to that organization
+ *   other         free plan for now; `note` says what it is (a club, a research group…) so ARC LABS can follow up
+ */
+const accountTypeBody = z.object({
+  accountType: z.enum(['individual', 'organization', 'other']),
+  inviteCode: z.string().trim().max(64).optional(),
+  note: z.string().trim().max(200).optional(),
+});
 const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64) });
 
 const forgotPasswordBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
 const resetPasswordBody = z.object({ token: z.string().min(20).max(200), password: registerBody.shape.password });
+
+/**
+ * Deleting the account. `confirmEmail` must be the account's address (typed by the person, as the console's
+ * confirmation challenge asks); `currentPassword` is required when the account has one.
+ */
+const deleteAccountBody = z.object({
+  confirmEmail: z.string().trim().max(254),
+  currentPassword: z.string().max(256).optional(),
+});
+
+type DeletionPlan = {
+  /** Personal workspaces where the person is the only member: deleted with all their data. */
+  deleteWorkspaces: { id: string; name: string; devices: number }[];
+  /** Organizations the person just leaves (someone else stays admin, or they are not an admin). */
+  leave: { id: string; name: string }[];
+  /** Organizations where the person is the only admin but not the only member: they must hand over first. */
+  blockers: { id: string; name: string }[];
+  platformAdmin: boolean;
+};
 
 const updateMeBody = z.object({ displayName: z.string().trim().min(1).max(120) });
 const changePasswordBody = z.object({ currentPassword: z.string().min(1).max(256), newPassword: registerBody.shape.password });
@@ -78,6 +110,7 @@ export class AuthController {
     private readonly db: Db,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    private readonly broker: BrokerAdmin,
   ) {}
 
   @Doc('Register', { body: registerBody })
@@ -106,6 +139,9 @@ export class AuthController {
         ).rows[0];
         if (invite?.organization_id) {
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
+          // Joined an organization with the code: that answers "who is this account for?".
+          await c.query(`UPDATE users SET account_type = 'organization' WHERE id = $1`, [u.id]);
+          u.account_type = 'organization';
         }
         if (!verifyNow) await this.sendVerification(c, u.id, u.email, u.display_name);
         await this.audit.record(
@@ -122,7 +158,7 @@ export class AuthController {
         );
         return u;
       });
-      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at }, ...(await this.issueToken(user.id)) };
+      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type ?? null }, ...(await this.issueToken(user.id)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });
       throw err;
@@ -263,7 +299,7 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group,
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type,
               password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
        FROM users WHERE id = $1`,
       [current.id],
@@ -282,6 +318,8 @@ export class AuthController {
         emailVerified: !!user.email_verified_at,
         /** Null for Google sign-ups that have not said yet; the console asks before anything else. */
         ageGroup: user.age_group ?? null,
+        /** 'individual', 'organization' or 'other'; null until the person answers (after confirming the email). */
+        accountType: user.account_type ?? null,
         emailVerifiedAt: user.email_verified_at ?? null,
         /** How this person can sign in (for the profile page). */
         signIn: { password: !!user.has_password, google: !!user.google },
@@ -382,6 +420,7 @@ export class AuthController {
       await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
       if (invite?.organization_id) {
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
+        await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [u.id]);
       }
       await this.audit.record(
         { actorType: 'user', actorId: u.id, organizationId: invite?.organization_id ?? undefined, action: 'user.complete_profile', resourceType: 'user', resourceId: u.id, metadata: { ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) } },
@@ -421,6 +460,56 @@ export class AuthController {
     });
   }
 
+  @Doc('Say who the account is for (once, after confirming the email); organizations join with an ARC LABS invite code', { body: accountTypeBody })
+  @SystemDb()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('account-type')
+  @HttpCode(200)
+  async setAccountType(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const input = parse(accountTypeBody, body);
+    // Organizations join only through ARC LABS, so an organization account must come with a code.
+    if (input.accountType === 'organization' && !input.inviteCode) throw new ForbiddenException({ code: 'organization_needs_invite' });
+    return this.db.tx(async (c) => {
+      const u = (await c.query<{ account_type: string | null }>('SELECT account_type FROM users WHERE id = $1 FOR UPDATE', [current.id])).rows[0];
+      if (u.account_type) throw new ConflictException({ code: 'account_type_set' });
+      let organization: { id: string; name: string; role: string } | undefined;
+      if (input.accountType === 'organization') {
+        const invite = (
+          await c.query<Invite & { name: string }>(
+            `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
+             WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+            [hashInviteCode(input.inviteCode!)],
+          )
+        ).rows[0];
+        // Unknown, expired, revoked, used up, or a code that only creates accounts: one answer.
+        if (!invite) throw new ForbiddenException({ code: 'invite_not_for_organization' });
+        const joined = await c.query(
+          `INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING user_id`,
+          [invite.organization_id, current.id, invite.role, invite.id],
+        );
+        // Already a member (e.g. joined at sign-up with this code): no second use.
+        if (joined.rowCount) await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+        organization = { id: invite.organization_id!, name: invite.name, role: invite.role! };
+      }
+      const note = input.accountType === 'other' ? input.note || null : null;
+      await c.query('UPDATE users SET account_type = $2, account_type_note = $3 WHERE id = $1', [current.id, input.accountType, note]);
+      await this.audit.record(
+        {
+          actorType: 'user',
+          actorId: current.id,
+          organizationId: organization?.id,
+          action: 'user.account_type',
+          resourceType: 'user',
+          resourceId: current.id,
+          metadata: { accountType: input.accountType, ...(note ? { note } : {}), ...(organization ? { organizationId: organization.id } : {}) },
+        },
+        c,
+      );
+      return { accountType: input.accountType, ...(organization ? { organization } : {}) };
+    });
+  }
+
   @Doc('Email a link to set a new password. Same answer whether or not the address has an account', { body: forgotPasswordBody })
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -446,21 +535,20 @@ export class AuthController {
         RESET_LINK_MINUTES,
       ]);
       const link = `${loadConfig().CONSOLE_URL.replace(/\/+$/, '')}/reset-password#token=${token}`;
-      const text = [
-        `Hi ${u.display_name},`,
-        '',
-        'Someone, hopefully you, asked to set a new password for your ARC Cloud account. Open this link to choose one:',
-        link,
-        '',
-        `The link works once and expires in ${RESET_LINK_MINUTES} minutes. Setting a new password signs you out on every other device.`,
-        'If you did not ask for this, ignore this email: your password stays the same.',
-        '',
-        'This mailbox is not monitored, so please do not reply.',
-        'ARC LABS, Hyderabad',
-      ].join('\n');
+      const { html, text } = renderAccountEmail({
+        preheader: `Choose a new password. The link expires in ${RESET_LINK_MINUTES} minutes.`,
+        heading: 'Set a new password',
+        greeting: `Hi ${u.display_name},`,
+        intro: 'Someone, hopefully you, asked to set a new password for your ARC Cloud account. Press the button to choose one.',
+        button: { label: 'Set a new password', url: link },
+        notes: [
+          `The link works once and expires in ${RESET_LINK_MINUTES} minutes. Setting a new password signs you out on every other device.`,
+          'If you did not ask for this, ignore this email: your password stays the same.',
+        ],
+      });
       await c.query(`INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES (NULL, 'email', $1, 'auth.password_reset', $2)`, [
         u.email,
-        { subject: 'Set a new password for ARC Cloud', text },
+        { subject: 'Set a new password for ARC Cloud', text, html },
       ]);
       await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.password_reset_requested', resourceType: 'user', resourceId: u.id }, c);
     });
@@ -541,6 +629,102 @@ export class AuthController {
     return { signedOut: true };
   }
 
+  @Doc('What deleting your account would delete, leave or block')
+  @SystemDb()
+  @Get('delete-account')
+  async deleteAccountPreview(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    return this.db.tx((c) => this.deletionPlan(c, current.id, current.isPlatformAdmin));
+  }
+
+  @Doc('Delete your account for good: your personal workspaces with their devices and data, and your memberships', { body: deleteAccountBody })
+  @SystemDb() // removes rows in workspaces the person owns, and an account-level audit row
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('delete-account')
+  @HttpCode(200)
+  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const input = parse(deleteAccountBody, body);
+    const u = await this.db.one<{ email: string; password_hash: string | null }>('SELECT email, password_hash FROM users WHERE id = $1', [current.id]);
+    if (!u) throw new UnauthorizedException({ code: 'invalid_token' });
+    if (input.confirmEmail.toLowerCase() !== u.email.toLowerCase()) {
+      throw new BadRequestException({ code: 'confirm_email_mismatch', message: 'Type your account’s email address exactly to confirm.' });
+    }
+    if (u.password_hash && !(await verifySecret(input.currentPassword ?? '', u.password_hash))) {
+      throw new ForbiddenException({ code: 'wrong_password', message: 'The current password is not right.' });
+    }
+
+    const { plan, deviceIds } = await this.db.tx(async (c) => {
+      // Lock the account first, so two requests cannot both run.
+      await c.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [current.id]);
+      const plan = await this.deletionPlan(c, current.id, current.isPlatformAdmin);
+      if (plan.platformAdmin) {
+        throw new ConflictException({ code: 'platform_admin_delete', message: 'ARC LABS staff accounts must have platform admin removed (operator tool) before they can be deleted.' });
+      }
+      if (plan.blockers.length) {
+        throw new ConflictException({
+          code: 'sole_admin',
+          organizations: plan.blockers,
+          message: `You are the only admin of ${plan.blockers.map((o) => o.name).join(', ')}. Make someone else an admin there first (Team page), or ask ARC LABS to close it.`,
+        });
+      }
+      const deviceIds: string[] = [];
+      for (const w of plan.deleteWorkspaces) {
+        const ids = (await c.query<{ id: string }>('SELECT id FROM devices WHERE organization_id = $1', [w.id])).rows.map((r) => r.id);
+        deviceIds.push(...ids);
+        // These tables have no foreign key to the workspace (telemetry is a hypertable on TimescaleDB), so clear them first.
+        await c.query('DELETE FROM telemetry_measurements WHERE organization_id = $1', [w.id]);
+        await c.query('DELETE FROM ingested_messages WHERE device_id = ANY($1::uuid[])', [ids]);
+        await c.query('DELETE FROM rejected_messages WHERE organization_id = $1', [w.id]);
+        await c.query('DELETE FROM audit_logs WHERE organization_id = $1', [w.id]);
+        // Everything else (channels, devices, credentials, alerts, rules, keys, webhooks, firmware…) cascades.
+        await c.query('DELETE FROM organizations WHERE id = $1', [w.id]);
+      }
+      // Account emails still waiting to be sent to this address.
+      await c.query(`DELETE FROM deliveries WHERE organization_id IS NULL AND recipient = $1 AND status = 'pending'`, [u.email]);
+      // Memberships, sessions, verification and reset links cascade; "created by" columns elsewhere become empty.
+      await c.query('DELETE FROM users WHERE id = $1', [current.id]);
+      // A security record without personal data: the id only, no email or name.
+      await this.audit.record(
+        {
+          actorType: 'user',
+          actorId: current.id,
+          action: 'user.delete',
+          resourceType: 'user',
+          resourceId: current.id,
+          metadata: { deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length },
+        },
+        c,
+      );
+      return { plan, deviceIds };
+    });
+    // The devices' credentials are gone: end any live broker sessions now rather than at the next ACL check.
+    await Promise.all(deviceIds.map((id) => this.broker.disconnect(id)));
+    return { deleted: true, deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length };
+  }
+
+  private async deletionPlan(c: any, userId: string, platformAdmin: boolean): Promise<DeletionPlan> {
+    const rows = (
+      await c.query(
+        `SELECT o.id, o.name, o.kind, m.role,
+                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1) AS others,
+                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1 AND x.role = 'org_admin') AS other_admins,
+                (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id) AS devices
+         FROM organization_members m JOIN organizations o ON o.id = m.organization_id
+         WHERE m.user_id = $1 ORDER BY o.name`,
+        [userId],
+      )
+    ).rows as { id: string; name: string; kind: string; role: string; others: number; other_admins: number; devices: number }[];
+    const plan: DeletionPlan = { deleteWorkspaces: [], leave: [], blockers: [], platformAdmin };
+    for (const o of rows) {
+      if (o.role !== 'org_admin' || o.other_admins > 0) plan.leave.push({ id: o.id, name: o.name });
+      // Only a personal workspace with nobody else in it is deleted; an organization ARC LABS set up never is.
+      else if (o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      else plan.blockers.push({ id: o.id, name: o.name });
+    }
+    return plan;
+  }
+
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
   private async claimInvite(c: any, code: string): Promise<Invite> {
     const invite = (
@@ -566,20 +750,25 @@ export class AuthController {
     ]);
     // In the URL fragment, so the token is never sent to a server or written to access logs.
     const link = `${loadConfig().CONSOLE_URL.replace(/\/+$/, '')}/verify-email#token=${token}`;
-    const text = [
-      `Hi ${name},`,
-      '',
-      'Confirm your email address to start using ARC Cloud:',
-      link,
-      '',
-      `The link works once and expires in ${VERIFY_LINK_HOURS} hours. If you did not create an ARC Cloud account, ignore this email; nothing will happen.`,
-      '',
-      'This mailbox is not monitored, so please do not reply.',
-      'ARC LABS, Hyderabad',
-    ].join('\n');
+    const { html, text } = renderAccountEmail({
+      preheader: 'One click and your ARC Cloud account is ready.',
+      heading: 'Confirm your email',
+      greeting: `Hi ${name},`,
+      intro: 'Welcome to ARC Cloud. Confirm your email address to start connecting your devices.',
+      button: { label: 'Confirm my email', url: link },
+      steps: [
+        'Tell us who the account is for: just you, your college, school or company, or something else.',
+        'Just you: create your first channel; the free plan covers up to 5 devices. An organization: enter the invite code ARC LABS gave you.',
+        'Connect an ESP32, ESP8266 or Raspberry Pi over MQTT or HTTP and watch its readings live.',
+      ],
+      notes: [
+        `The button works once and expires in ${VERIFY_LINK_HOURS} hours. Open it on any device; you can sign in afterwards.`,
+        'If you did not create an ARC Cloud account, ignore this email; nothing will happen.',
+      ],
+    });
     await c.query(
       `INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES (NULL, 'email', $1, 'auth.verify_email', $2)`,
-      [email, { subject: 'Confirm your email for ARC Cloud', text }],
+      [email, { subject: 'Confirm your email for ARC Cloud', text, html }],
     );
   }
 

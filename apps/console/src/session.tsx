@@ -13,6 +13,8 @@ interface User {
   emailVerified?: boolean;
   /** Null for Google sign-ups that have not said yet. */
   ageGroup?: 'adult' | 'minor' | null;
+  /** Who the account is for; null until answered (asked right after the email is confirmed). */
+  accountType?: 'individual' | 'organization' | 'other' | null;
 }
 
 /** An account that must finish onboarding sees only the onboarding screens (the API refuses everything else). */

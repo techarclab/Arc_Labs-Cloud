@@ -21,7 +21,7 @@ import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
 import { AccountPage } from './pages/Account';
-import { ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { AccountTypeGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -75,6 +75,8 @@ function Gate() {
     return <TermsGate accepted={user.termsVersion ?? null} onAccepted={reload} onSignOut={signOut} />;
   }
   if (user.emailVerified === false) return <VerifyGate email={user.email} onReload={reload} onSignOut={signOut} />;
+  // Then, once: who is this account for? (individual, organization with an ARC LABS code, or something else)
+  if (user.accountType === null) return <AccountTypeGate name={user.displayName} onDone={reload} onSignOut={signOut} />;
   return (
     <Routes>
       <Route path="/" element={<Home />} />

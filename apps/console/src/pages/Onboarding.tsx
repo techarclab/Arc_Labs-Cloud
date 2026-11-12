@@ -383,3 +383,92 @@ export function ResetPasswordPage() {
     </div>
   );
 }
+
+export type AccountType = 'individual' | 'organization' | 'other';
+
+const ACCOUNT_TYPES: { value: AccountType; title: string; text: string }[] = [
+  { value: 'individual', title: 'Just me', text: 'Your own projects at home, for study or as a hobby. Free for up to 5 devices and 3 channels, 30 days of history.' },
+  { value: 'organization', title: 'My college, school or company', text: 'Join the organization ARC LABS has set up for you, with the invite code they gave you. Its plan sets the limits.' },
+  { value: 'other', title: 'Something else', text: 'A club, research group, startup or event. You start on the free plan; tell us a little and ARC LABS can help with more.' },
+];
+
+/**
+ * Asked once, right after the email address is confirmed: who is this account for?
+ * Organizations join with an invite code from ARC LABS; everyone else continues on the free plan.
+ */
+export function AccountTypeGate({ name, onDone, onSignOut }: { name: string; onDone: () => Promise<void>; onSignOut: () => void }) {
+  const { refreshOrgs } = useSession();
+  const nav = useNavigate();
+  const [type, setType] = useState<AccountType | ''>('');
+  const [invite, setInvite] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ organization?: { id: string } }>('POST', '/auth/account-type', {
+        accountType: type,
+        ...(type === 'organization' ? { inviteCode: invite.trim() } : {}),
+        ...(type === 'other' && note.trim() ? { note: note.trim() } : {}),
+      });
+      if (r.organization) await refreshOrgs();
+      await onDone();
+      nav(r.organization ? `/o/${r.organization.id}` : '/', { replace: true });
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-form onboarding">
+      <form className="auth-card form" onSubmit={submit}>
+        <div className="brand" style={{ color: 'var(--ink)' }}>
+          <ArcMark size={28} />
+          ARC Cloud
+        </div>
+        <div>
+          <p className="auth-kicker"><span aria-hidden="true" /> EMAIL CONFIRMED</p>
+          <h2 className="auth-title">Welcome, {name.split(' ')[0]}! Who is this account for?</h2>
+          <p className="muted">This sets up the right workspace and limits for you. You only answer once.</p>
+        </div>
+        <fieldset className="choice account-types">
+          <legend className="sr-only">Who is this account for?</legend>
+          {ACCOUNT_TYPES.map((t) => (
+            <label key={t.value} className={type === t.value ? 'selected' : undefined}>
+              <input type="radio" name="account-type" required checked={type === t.value} onChange={() => setType(t.value)} />
+              <span>
+                <b>{t.title}</b>
+                <span className="hint">{t.text}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {type === 'organization' && (
+          <label className="field">
+            Invite code
+            <span className="hint">From ARC LABS or your instructor, e.g. ARC-7KQ3-M9TX-4HPW. No code yet? Choose “Just me” and join later from the menu.</span>
+            <input required value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} autoFocus />
+          </label>
+        )}
+        {type === 'other' && (
+          <label className="field">
+            What is it? <span className="hint">Optional, e.g. “Robotics club, 20 members”.</span>
+            <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} autoFocus />
+          </label>
+        )}
+        <ErrorBox error={error} />
+        <button className="btn primary" disabled={busy || !type} type="submit">
+          {busy ? 'Please wait…' : type === 'organization' ? 'Join my organization' : 'Continue'}
+        </button>
+        <button className="btn quiet small" type="button" onClick={onSignOut}>
+          Sign out
+        </button>
+      </form>
+    </div>
+  );
+}
