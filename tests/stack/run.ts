@@ -10,6 +10,7 @@
  * Writes tests/stack/out/results.json and results.md (evidence for docs/operations/).
  */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
@@ -383,8 +384,36 @@ async function main() {
       );
     }
   };
-  await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, () => brokerRestart('jitter', true));
-  await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, () => brokerRestart('herd', false));
+  /** On failure, the worker's and EMQX's own account of the restart goes into the CI log (artifacts may be unreachable). */
+  const withLogs = (label: string, fn: () => Promise<void>) => async () => {
+    const since = new Date(Date.now() - 1000).toISOString();
+    try {
+      await fn();
+    } catch (e) {
+      for (const c of ['worker', 'emqx', 'api']) {
+        let out = '';
+        try {
+          out = execFileSync('docker', ['logs', '--since', since, `arc-cloud-${c}-1`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+        } catch (err: any) {
+          out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+        }
+        if (c === 'worker') {
+          try {
+            const m = execFileSync('docker', ['exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-3001}/metrics'], { encoding: 'utf8' });
+            console.log(`      --- worker metrics: ${m.split('\n').filter((l) => /^arc_ingest_(processed|errors|disconnects|received)/.test(l)).join(' · ')}`);
+          } catch (err: any) {
+            console.log(`      --- worker metrics unavailable: ${String(err.message).slice(0, 120)}`);
+          }
+        }
+        const lines = out.split('\n').filter((l) => !/"msg":"message rejected"/.test(l));
+        console.log(`      --- ${c} log since the ${label} restart (last 40 of ${lines.length} lines) ---`);
+        for (const l of lines.slice(-40)) console.log(`      | ${l.slice(0, 300)}`);
+      }
+      throw e;
+    }
+  };
+  await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, withLogs('jitter', () => brokerRestart('jitter', true)));
+  await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, withLogs('herd', () => brokerRestart('herd', false)));
   await check('after an EMQX restart, a device that never comes back is shown offline within interval × 3 + 30 s', async () => {
     const lost = await newDevice('Never returns', 10);
     await eventually(async () => emqxReady() && (await deepOk()), 'EMQX and API ready', 120_000, 1000);
