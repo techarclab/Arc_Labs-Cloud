@@ -51,6 +51,15 @@ export function parseTopic(topic: string): ParsedTopic | null {
   return { orgId, projectId, deviceId, channel: channel as TopicChannel };
 }
 
+/**
+ * The ingestion worker's self-test: it publishes here and must receive it back through its own telemetry
+ * subscription. Nil UUIDs, so it can never be a device's topic. If the probes stop arriving while the worker is
+ * connected, its subscription was lost inside the broker (seen after EMQX restarts, DEF-014) and it reconnects with
+ * a fresh session.
+ */
+export const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+export const INGEST_PROBE_TOPIC = `${TOPIC_ROOT}/${TOPIC_VERSION}/${NIL_UUID}/${NIL_UUID}/${NIL_UUID}/telemetry`;
+
 /** Subscriptions used by the ingestion worker (MQTT 5 shared subscriptions). */
 export const INGEST_SHARE_GROUP = 'arc-ingest';
 export const INGEST_TOPIC_FILTERS = DEVICE_PUBLISH_CHANNELS.map(

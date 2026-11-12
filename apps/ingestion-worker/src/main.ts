@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, newConnectionCheck, pgConnectionConfig, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
+import { INGEST_PROBE_TOPIC, INGEST_SHARE_GROUP, INGEST_TOPIC_FILTERS, newConnectionCheck, pgConnectionConfig, SYS_CLIENT_EVENT_FILTERS } from '@arc/shared';
 import mqtt from 'mqtt';
 import { Pool } from 'pg';
 import { loadConfig } from './config';
 import { Jobs } from './jobs';
 import { Counters, Processor, RateLimiter } from './processor';
+import { SubscriptionWatchdog } from './watchdog';
 
 const log = (level: string, msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ ts: new Date().toISOString(), level, svc: 'ingestion-worker', msg, ...extra }));
@@ -36,9 +37,15 @@ async function main() {
 
   // At-least-once: the PUBACK is only sent after the message is persisted (or deliberately rejected).
   // If the database is down we do not ack, the broker redelivers, and messageId dedupe absorbs repeats.
+  const watchdog = new SubscriptionWatchdog(cfg.PROBE_INTERVAL_SECONDS * 1000, cfg.PROBE_STALE_SECONDS * 1000);
+
   client.handleMessage = (packet, done) => {
     const started = Date.now();
     const topic = packet.topic;
+    if (topic === INGEST_PROBE_TOPIC) {
+      watchdog.onProbe(Date.now());
+      return done();
+    }
     const payload = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
     const sys = /^\$SYS\/brokers\/[^/]+\/clients\/[^/]+\/(connected|disconnected)$/.exec(topic);
     const work = sys
@@ -63,6 +70,9 @@ async function main() {
 
   client.on('connect', (connack) => {
     log('info', 'connected to broker', { sessionPresent: connack.sessionPresent });
+    watchdog.onConnect(Date.now());
+    // After a forced fresh session (stall recovery), go back to a persistent session for later reconnects.
+    client.options.clean = false;
     const filters = cfg.SHARED_SUBSCRIPTION ? INGEST_TOPIC_FILTERS.map((f) => `$share/${INGEST_SHARE_GROUP}/${f}`) : INGEST_TOPIC_FILTERS;
     const subs: Record<string, { qos: 0 | 1 }> = {};
     for (const f of filters) subs[f] = { qos: 1 };
@@ -76,7 +86,27 @@ async function main() {
   });
   client.on('reconnect', () => log('info', 'reconnecting to broker'));
   client.on('error', (err) => log('error', 'mqtt error', { error: err.message }));
-  client.on('close', () => counters.inc('arc_ingest_disconnects_total'));
+  client.on('close', () => {
+    watchdog.onDisconnect();
+    counters.inc('arc_ingest_disconnects_total');
+  });
+
+  // Subscription self-test (DEF-014). A probe goes out every interval; if none has come back through our own
+  // subscription for PROBE_STALE_SECONDS while connected, the broker is no longer serving it: reconnect with a fresh
+  // session so the subscriptions are created anew. Readiness reports the stall until then.
+  const probe = setInterval(() => {
+    const now = Date.now();
+    if (watchdog.stalled(now)) {
+      counters.inc('arc_ingest_stalls_total');
+      log('error', 'subscription stalled: no probe received; reconnecting with a fresh session', { silentForMs: watchdog.silenceMs(now) });
+      watchdog.onDisconnect();
+      client.options.clean = true;
+      client.reconnect();
+      return;
+    }
+    if (client.connected) client.publish(INGEST_PROBE_TOPIC, JSON.stringify({ probe: cfg.WORKER_ID, ts: now }), { qos: 1 });
+  }, cfg.PROBE_INTERVAL_SECONDS * 1000);
+  probe.unref();
 
   // Rules, notifications, webhooks, command expiry, rollouts and retention.
   const jobs = new Jobs(pool, cfg, counters, log);
@@ -98,13 +128,20 @@ async function main() {
     if (req.url === '/health/live') return res.writeHead(200).end('ok');
     if (req.url === '/health/ready') {
       const dbOk = await canOpenNewConnection();
-      const ok = dbOk && client.connected;
-      return res.writeHead(ok ? 200 : 503, { 'content-type': 'application/json' }).end(JSON.stringify({ db: dbOk, mqtt: client.connected }));
+      const stalled = watchdog.stalled(Date.now());
+      const ok = dbOk && client.connected && !stalled;
+      return res
+        .writeHead(ok ? 200 : 503, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ db: dbOk, mqtt: client.connected, subscription: stalled ? 'stalled' : 'ok' }));
     }
     if (req.url === '/metrics') {
       return res
         .writeHead(200, { 'content-type': 'text/plain; version=0.0.4' })
-        .end(counters.toPrometheus() + `arc_ingest_mqtt_connected ${client.connected ? 1 : 0}\n`);
+        .end(
+          counters.toPrometheus() +
+            `arc_ingest_mqtt_connected ${client.connected ? 1 : 0}\n` +
+            `arc_ingest_probe_silence_seconds ${Math.round(watchdog.silenceMs(Date.now()) / 1000)}\n`,
+        );
     }
     res.writeHead(404).end();
   });
@@ -113,6 +150,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     log('info', 'shutting down', { signal });
     clearInterval(prune);
+    clearInterval(probe);
     await jobs.stop();
     health.close();
     await new Promise<void>((r) => client.end(false, {}, () => r()));

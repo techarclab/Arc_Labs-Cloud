@@ -383,6 +383,34 @@ async function main() {
       );
     }
   };
+  /** EMQX management API, called from the api container (which holds the API key and reaches emqx:18083). */
+  const emqxApi = (method: string, path: string, body?: unknown) =>
+    JSON.parse(
+      docker('exec', 'arc-cloud-api-1', 'node', '-e', `const a='Basic '+Buffer.from(process.env.EMQX_API_KEY+':'+process.env.EMQX_API_SECRET).toString('base64');
+        fetch(process.env.EMQX_API_URL+${JSON.stringify(path)},{method:${JSON.stringify(method)},headers:{authorization:a,'content-type':'application/json'},body:${JSON.stringify(body === undefined ? null : JSON.stringify(body))}})
+          .then(async r=>console.log(JSON.stringify({status:r.status,body:await r.text()})))`),
+    ) as { status: number; body: string };
+  const workerMetric = (name: string) =>
+    Number(new RegExp(`^${name} (\\d+)`, 'm').exec(docker('exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/metrics'))?.[1] ?? NaN);
+
+  await check('a subscription the broker silently drops is detected and healed by the worker (DEF-014 watchdog)', async () => {
+    const stallsBefore = workerMetric('arc_ingest_stalls_total') || 0;
+    // The symptom seen after some EMQX restarts, made deterministic: EMQX stops serving the worker's telemetry
+    // subscription, and the worker is not told.
+    const r = emqxApi('POST', '/api/v5/clients/svc-ingest-1/unsubscribe', { topic: '$share/arc-ingest/arc/v1/+/+/+/telemetry' });
+    assert.ok(r.status >= 200 && r.status < 300, `EMQX unsubscribe: ${r.status} ${r.body}`);
+    const t0 = Date.now();
+    await sendRound(4001);
+    await sleep(5000);
+    note('stall_readings_stored_while_unsubscribed', `${storedRound(4001)}/${N}`);
+    const healed = await eventually(async () => (workerMetric('arc_ingest_stalls_total') || 0) > stallsBefore && workerSubscribedSince(new Date(t0)) && Date.now(), 'the worker to detect the stall and re-subscribe', 120_000, 2000);
+    note('stall_detected_and_resubscribed_after_ms', healed - t0);
+    await sendRound(4002);
+    await eventually(async () => storedRound(4002) === N, 'readings stored again after healing', 60_000, 2000);
+    const ready = docker('exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/health/ready');
+    assert.match(ready, /"subscription":"ok"/);
+  });
+
   await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, () => brokerRestart('jitter', true));
   await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, () => brokerRestart('herd', false));
   await check('after an EMQX restart, a device that never comes back is shown offline within interval × 3 + 30 s', async () => {
