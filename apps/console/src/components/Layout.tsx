@@ -176,7 +176,8 @@ export function Layout() {
               {/* A role is per organization: being Admin of your own organization gives no access to anyone else's. */}
               <span title={org ? `Your role in ${org.name}` : undefined}>
                 {user?.isPlatformAdmin ? 'ARC LABS admin · ' : ''}
-                {org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
+                {/* Your own free workspace is not an organization you administer for others. */}
+                {org?.kind === 'personal' && org.role === 'org_admin' ? 'Personal workspace' : org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
               </span>
             </span>
           </div>

@@ -26,6 +26,8 @@ const mapOrg = (o: any, role?: string) => ({
   slug: o.slug,
   status: o.status,
   planId: o.plan_id,
+  /** 'personal': someone's own free workspace; 'organization': set up by ARC LABS (a college, school or company). */
+  kind: o.kind,
   createdAt: o.created_at,
   ...(role ? { role } : {}),
 });
@@ -58,7 +60,9 @@ export class OrganizationsController {
             throw new ForbiddenException({ code: 'org_limit', limit, message: `You can create ${limit} organization${limit === 1 ? '' : 's'}. Contact ARC LABS if you need more.` });
           }
         }
-        const org = (await c.query('INSERT INTO organizations (name, slug, created_by) VALUES ($1, $2, $3) RETURNING *', [input.name, input.slug, user.id])).rows[0];
+        // Only ARC LABS staff set up real organizations; anyone else gets a personal workspace on the free plan.
+        const kind = user.isPlatformAdmin ? 'organization' : 'personal';
+        const org = (await c.query('INSERT INTO organizations (name, slug, created_by, kind) VALUES ($1, $2, $3, $4) RETURNING *', [input.name, input.slug, user.id, kind])).rows[0];
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'org_admin')`, [org.id, user.id]);
         await this.audit.record({ ...actor(user), organizationId: org.id, action: 'organization.create', resourceType: 'organization', resourceId: org.id }, c);
         return mapOrg(org, 'org_admin');

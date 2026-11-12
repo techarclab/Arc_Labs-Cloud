@@ -14,35 +14,6 @@ import { ArcMark, ErrorBox, Modal, useToast } from '../components/ui';
 import { useSession } from '../session';
 
 export type AgeGroup = 'adult' | 'minor';
-export type AccountType = 'individual' | 'organization';
-
-/** "Just me" (free plan, open sign-up) / "an organization" (invite code from ARC LABS). Shared by sign-up and ProfileGate. */
-export function AccountTypeChoice({ value, onChange }: { value: AccountType | ''; onChange: (v: AccountType) => void }) {
-  return (
-    <fieldset className="choice">
-      <legend>Who is this account for?</legend>
-      <label>
-        <input type="radio" name="account-type" required checked={value === 'individual'} onChange={() => onChange('individual')} />
-        <span>
-          Just me <span className="hint">Free for up to 5 devices and 3 channels, 30 days of history.</span>
-        </span>
-      </label>
-      <label>
-        <input type="radio" name="account-type" required checked={value === 'organization'} onChange={() => onChange('organization')} />
-        <span>
-          My college, school or company <span className="hint">Needs an invite code from ARC LABS. Your organization’s plan sets the limits.</span>
-        </span>
-      </label>
-    </fieldset>
-  );
-}
-
-/** Hint under the invite-code field, for the choices made so far. */
-export function inviteHint(accountType: AccountType | '', age: AgeGroup | '') {
-  if (accountType === 'organization') return 'Required: the code ARC LABS gave your college, school or company.';
-  if (age === 'minor') return 'Required under 18: from your college, school or instructor.';
-  return 'Optional: only if ARC LABS gave you one.';
-}
 
 /** "18 or older" / "under 18 with an invite code". Shared by sign-up and ProfileGate. */
 export function AgeChoice({ value, onChange }: { value: AgeGroup | ''; onChange: (v: AgeGroup) => void }) {
@@ -186,22 +157,19 @@ export function VerifyGate({ email, onReload, onSignOut }: { email: string; onRe
   );
 }
 
-/** Accounts created with Google: say who the account is for and whether you are 18 or older, before anything else. */
+/** Accounts created with Google: say whether you are 18 or older before anything else. */
 export function ProfileGate({ onDone, onSignOut }: { onDone: () => Promise<void>; onSignOut: () => void }) {
-  const [accountType, setAccountType] = useState<AccountType | ''>('');
   const [age, setAge] = useState<AgeGroup | ''>('');
   const [invite, setInvite] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-
-  const needsInvite = accountType === 'organization' || age === 'minor';
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api('POST', '/auth/complete-profile', { ageGroup: age, accountType, ...(invite.trim() && needsInvite ? { inviteCode: invite.trim() } : {}) });
+      await api('POST', '/auth/complete-profile', { ageGroup: age, ...(invite.trim() ? { inviteCode: invite.trim() } : {}) });
       await onDone();
     } catch (err) {
       setError(err);
@@ -218,17 +186,15 @@ export function ProfileGate({ onDone, onSignOut }: { onDone: () => Promise<void>
         </div>
         <h2 className="auth-title">One more step</h2>
         <p className="muted">ARC Cloud is for people 18 or older. Students under 18 join through their college or school, with an invite code.</p>
-        <AccountTypeChoice value={accountType} onChange={setAccountType} />
         <AgeChoice value={age} onChange={setAge} />
-        {needsInvite && (
+        {age === 'minor' && (
           <label className="field">
             Invite code
-            <span className="hint">{inviteHint(accountType, age)}</span>
             <input required value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="ARC-XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} />
           </label>
         )}
         <ErrorBox error={error} />
-        <button className="btn primary" disabled={busy || !age || !accountType} type="submit">
+        <button className="btn primary" disabled={busy || !age} type="submit">
           {busy ? 'Please wait…' : 'Continue'}
         </button>
         <button className="btn quiet small" type="button" onClick={onSignOut}>
@@ -412,6 +378,95 @@ export function ResetPasswordPage() {
         <ErrorBox error={error} />
         <button className="btn primary" disabled={busy} type="submit">
           {busy ? 'Please wait…' : 'Save and sign in'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export type AccountType = 'individual' | 'organization' | 'other';
+
+const ACCOUNT_TYPES: { value: AccountType; title: string; text: string }[] = [
+  { value: 'individual', title: 'Just me', text: 'Your own projects at home, for study or as a hobby. Free for up to 5 devices and 3 channels, 30 days of history.' },
+  { value: 'organization', title: 'My college, school or company', text: 'Join the organization ARC LABS has set up for you, with the invite code they gave you. Its plan sets the limits.' },
+  { value: 'other', title: 'Something else', text: 'A club, research group, startup or event. You start on the free plan; tell us a little and ARC LABS can help with more.' },
+];
+
+/**
+ * Asked once, right after the email address is confirmed: who is this account for?
+ * Organizations join with an invite code from ARC LABS; everyone else continues on the free plan.
+ */
+export function AccountTypeGate({ name, onDone, onSignOut }: { name: string; onDone: () => Promise<void>; onSignOut: () => void }) {
+  const { refreshOrgs } = useSession();
+  const nav = useNavigate();
+  const [type, setType] = useState<AccountType | ''>('');
+  const [invite, setInvite] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ organization?: { id: string } }>('POST', '/auth/account-type', {
+        accountType: type,
+        ...(type === 'organization' ? { inviteCode: invite.trim() } : {}),
+        ...(type === 'other' && note.trim() ? { note: note.trim() } : {}),
+      });
+      if (r.organization) await refreshOrgs();
+      await onDone();
+      nav(r.organization ? `/o/${r.organization.id}` : '/', { replace: true });
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-form onboarding">
+      <form className="auth-card form" onSubmit={submit}>
+        <div className="brand" style={{ color: 'var(--ink)' }}>
+          <ArcMark size={28} />
+          ARC Cloud
+        </div>
+        <div>
+          <p className="auth-kicker"><span aria-hidden="true" /> EMAIL CONFIRMED</p>
+          <h2 className="auth-title">Welcome, {name.split(' ')[0]}! Who is this account for?</h2>
+          <p className="muted">This sets up the right workspace and limits for you. You only answer once.</p>
+        </div>
+        <fieldset className="choice account-types">
+          <legend className="sr-only">Who is this account for?</legend>
+          {ACCOUNT_TYPES.map((t) => (
+            <label key={t.value} className={type === t.value ? 'selected' : undefined}>
+              <input type="radio" name="account-type" required checked={type === t.value} onChange={() => setType(t.value)} />
+              <span>
+                <b>{t.title}</b>
+                <span className="hint">{t.text}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {type === 'organization' && (
+          <label className="field">
+            Invite code
+            <span className="hint">From ARC LABS or your instructor, e.g. ARC-7KQ3-M9TX-4HPW. No code yet? Choose “Just me” and join later from the menu.</span>
+            <input required value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} autoFocus />
+          </label>
+        )}
+        {type === 'other' && (
+          <label className="field">
+            What is it? <span className="hint">Optional, e.g. “Robotics club, 20 members”.</span>
+            <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} autoFocus />
+          </label>
+        )}
+        <ErrorBox error={error} />
+        <button className="btn primary" disabled={busy || !type} type="submit">
+          {busy ? 'Please wait…' : type === 'organization' ? 'Join my organization' : 'Continue'}
+        </button>
+        <button className="btn quiet small" type="button" onClick={onSignOut}>
+          Sign out
         </button>
       </form>
     </div>

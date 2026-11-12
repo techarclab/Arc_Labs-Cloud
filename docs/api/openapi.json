@@ -84,14 +84,6 @@
                     "minLength": 12,
                     "maxLength": 256
                   },
-                  "accountType": {
-                    "default": "individual",
-                    "type": "string",
-                    "enum": [
-                      "individual",
-                      "organization"
-                    ]
-                  },
                   "inviteCode": {
                     "type": "string",
                     "maxLength": 64
@@ -377,14 +369,6 @@
                       "minor"
                     ]
                   },
-                  "accountType": {
-                    "default": "individual",
-                    "type": "string",
-                    "enum": [
-                      "individual",
-                      "organization"
-                    ]
-                  },
                   "inviteCode": {
                     "type": "string",
                     "maxLength": 64
@@ -402,7 +386,7 @@
             "description": ""
           }
         },
-        "summary": "Finish an account created through Google: age group and account type (an invite code for under-18s and organizations)",
+        "summary": "Finish an account created through Google: age group (and an invite code for under-18s)",
         "tags": [
           "Auth"
         ]
@@ -438,6 +422,52 @@
           }
         },
         "summary": "Join an organization with an invite code from ARC LABS or your institution",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/account-type": {
+      "post": {
+        "operationId": "AuthController_setAccountType",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountType": {
+                    "type": "string",
+                    "enum": [
+                      "individual",
+                      "organization",
+                      "other"
+                    ]
+                  },
+                  "inviteCode": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "accountType"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Say who the account is for (once, after confirming the email); organizations join with an ARC LABS invite code",
         "tags": [
           "Auth"
         ]

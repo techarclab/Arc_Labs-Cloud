@@ -65,8 +65,9 @@ const MESSAGES: Record<string, string> = {
   terms_version_changed: 'The privacy notice was updated while this page was open. Reload the page and read the new version.',
   person_required: 'Only a signed-in person can accept the privacy notice, not an API key.',
   invite_invalid: 'That invite code isn’t valid. Check for typos; it may also have expired, been revoked or been used up.',
-  organization_needs_invite: 'Organization accounts need an invite code from ARC LABS. Ask your instructor or ARC LABS contact, or choose “Just me” to start on the free plan.',
-  invite_not_for_organization: 'That code creates an account but doesn’t add you to an organization. Ask ARC LABS for your organization’s code, or choose “Just me”.',
+  organization_needs_invite: 'Joining an organization needs an invite code from ARC LABS. Ask your instructor or ARC LABS contact, or choose “Just me” to start on the free plan.',
+  invite_not_for_organization: 'That code doesn’t join an organization. Check for typos; it may have expired or been used up. Ask ARC LABS for your organization’s code, or choose “Just me”.',
+  account_type_set: 'You have already said who this account is for. Reload the page.',
   minor_needs_invite: 'Under 18? You can join with an invite code from your college or school. Ask your instructor for one.',
   email_unverified: 'Confirm your email address first: open the link we emailed you.',
   profile_incomplete: 'Finish setting up your account first.',
@@ -138,7 +139,8 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 // ---- Types (mirror the API responses) ----
 
 export type Role = 'org_admin' | 'engineer' | 'viewer';
-export interface Org { id: string; name: string; slug: string; role?: Role }
+/** kind 'personal': someone's own free workspace; 'organization': set up by ARC LABS. */
+export interface Org { id: string; name: string; slug: string; role?: Role; kind?: 'personal' | 'organization' }
 export interface Project { id: string; organizationId: string; name: string; description: string; timezone: string; readApiKey: string; deviceCount?: number }
 export interface Connectivity { status: 'online' | 'offline' | 'unknown'; source: string; thresholdSeconds: number }
 export interface Device {

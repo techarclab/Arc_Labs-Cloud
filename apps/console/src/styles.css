@@ -784,7 +784,6 @@ fieldset.choice { border: 0; margin: 0; padding: 0; display: flex; flex-directio
 fieldset.choice legend { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-bottom: 6px; padding: 0; }
 fieldset.choice label { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; line-height: 1.45; color: #33415a; cursor: pointer; }
 fieldset.choice input { width: 18px; height: 18px; min-height: 0; margin: 1px 0 0; padding: 0; flex: none; accent-color: var(--accent); }
-fieldset.choice label .hint { display: block; font-size: 12.5px; color: var(--muted); }
 .link-btn, .link-btn.small { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-align: left; font: inherit; align-self: flex-start; }
 .link-btn:hover { text-decoration: underline; }
 .onboarding { min-height: 100vh; }
@@ -820,3 +819,12 @@ dl.facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .side-foot .me { cursor: pointer; border-radius: 8px; }
 .side-foot .me:hover, .side-foot .me:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
 .pill.ok { background: var(--on-soft, #e3f6ee); color: #12603f; }
+
+/* "Who is this account for?" (AccountTypeGate): each choice is a card. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+fieldset.account-types { gap: 10px; }
+fieldset.account-types label { border: 1px solid #d9dfe8; border-radius: 10px; padding: 12px 14px; background: #fff; transition: border-color .15s, background .15s; }
+fieldset.account-types label:hover { border-color: var(--accent); }
+fieldset.account-types label.selected { border-color: var(--accent); background: #f3f5ff; box-shadow: 0 0 0 1px var(--accent) inset; }
+fieldset.account-types b { display: block; color: var(--ink); font-size: 14.5px; }
+fieldset.account-types .hint { display: block; margin-top: 2px; font-size: 12.5px; color: var(--muted); }
