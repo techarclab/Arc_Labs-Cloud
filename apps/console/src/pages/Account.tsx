@@ -236,7 +236,7 @@ export function AccountPage() {
             <ul className="danger-list">
               <li>Your personal workspaces are deleted with their channels, devices, keys and readings; devices stop working right away</li>
               <li>You leave the organizations you are a member of; they keep their data</li>
-              <li>If you are the only admin of an organization with other members, make someone else an admin first</li>
+              <li>If you own an organization, transfer ownership to one of its admins first</li>
             </ul>
             <button className="btn danger" type="button" onClick={() => setDeleting(true)}>
               Delete my account…

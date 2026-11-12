@@ -446,7 +446,7 @@ function InviteModal({ orgs, onClose, onCreated }: { orgs: PlatformOrg[]; onClos
             <select value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="viewer">Viewer: sees dashboards</option>
               <option value="engineer">Engineer: manages devices</option>
-              <option value="org_admin">Admin: manages people and settings</option>
+              <option value="admin">Admin: manages people and settings</option>
             </select>
           </label>
         )}

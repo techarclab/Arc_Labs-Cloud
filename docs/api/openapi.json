@@ -826,9 +826,10 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
                       "engineer",
-                      "viewer"
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },
@@ -882,9 +883,10 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
                       "engineer",
-                      "viewer"
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },
@@ -931,6 +933,50 @@
           }
         },
         "summary": "Remove member",
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/transfer-ownership": {
+      "post": {
+        "operationId": "OrganizationsController_transferOwnership",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "userId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transfer ownership",
         "tags": [
           "Organizations"
         ]
@@ -1249,9 +1295,10 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
                       "engineer",
-                      "viewer"
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },

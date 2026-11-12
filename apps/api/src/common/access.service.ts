@@ -2,8 +2,44 @@ import { ForbiddenException, HttpException, Injectable, NotFoundException } from
 import { Db, Queryable } from '../db/db.service';
 import { AuthUser } from './http';
 
+/** What a person is in an organization (organization_members.role). */
+export type MemberRole = 'owner' | 'admin' | 'teacher' | 'trainer' | 'engineer' | 'student' | 'employee' | 'viewer' | 'individual';
+/** A caller's role: a member role, or the role of an API key / service account / LMS link (viewer or engineer). */
+export type CallerRole = MemberRole;
+/**
+ * Access levels the API's checks are written against: requireOrg(user, org, 'engineer'). Named after the original
+ * three roles so the existing call sites read the same; 'org_admin' means "admin level".
+ */
 export type OrgRole = 'org_admin' | 'engineer' | 'viewer';
 const RANK: Record<OrgRole, number> = { viewer: 1, engineer: 2, org_admin: 3 };
+
+/**
+ * Each role's level. teacher/trainer/student/employee are scoped to channels from phase 4; until then they cannot
+ * be assigned, and these levels are the most they could ever reach organization-wide.
+ */
+export const LEVEL: Record<MemberRole, OrgRole> = {
+  owner: 'org_admin',
+  admin: 'org_admin',
+  individual: 'org_admin', // runs their personal workspace; team management is refused separately (no team there)
+  engineer: 'engineer',
+  teacher: 'engineer',
+  trainer: 'engineer',
+  viewer: 'viewer',
+  student: 'viewer',
+  employee: 'viewer',
+};
+
+/** Roles that can be given to someone today (invites, adding, changing a role). Never owner (transfer) or individual. */
+export const ASSIGNABLE_ROLES = ['admin', 'engineer', 'viewer'] as const;
+export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
+
+/** Who may hand out / take away a role: only the owner deals with admins; admins manage the people below them. */
+export function canAssign(callerRole: CallerRole | null, role: MemberRole): boolean {
+  if (role === 'owner' || role === 'individual') return false;
+  if (callerRole === 'owner') return true;
+  if (callerRole === 'admin') return role !== 'admin';
+  return false;
+}
 
 /**
  * Tenant isolation lives here. Every controller resolves the owning organization of the
@@ -14,10 +50,11 @@ const RANK: Record<OrgRole, number> = { viewer: 1, engineer: 2, org_admin: 3 };
 export class AccessService {
   constructor(private readonly db: Db) {}
 
-  async roleIn(user: AuthUser, orgId: string): Promise<OrgRole | null> {
+  async roleIn(user: AuthUser, orgId: string): Promise<CallerRole | null> {
     if (user.scope) return user.scope.orgId === orgId ? user.scope.role : null;
-    if (user.isPlatformAdmin) return 'org_admin';
-    const row = await this.db.one<{ role: OrgRole }>(
+    // Known defect DEF-001 (fixed in phase 5): platform admins act as an admin (not the owner) everywhere.
+    if (user.isPlatformAdmin) return 'admin';
+    const row = await this.db.one<{ role: MemberRole }>(
       'SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2',
       [orgId, user.id],
     );
@@ -28,7 +65,7 @@ export class AccessService {
    * Organization-wide access. Callers restricted to some channels/devices (API keys with a
    * channel list, LMS learners) only pass with `allowRestricted` (e.g. reading the org name).
    */
-  async requireOrg(user: AuthUser, orgId: string, min: OrgRole, opts: { allowRestricted?: boolean } = {}): Promise<OrgRole> {
+  async requireOrg(user: AuthUser, orgId: string, min: OrgRole, opts: { allowRestricted?: boolean } = {}): Promise<CallerRole> {
     if (user.scope && (user.scope.projectIds || user.scope.deviceIds) && !opts.allowRestricted) {
       throw new NotFoundException({ code: 'not_found' });
     }
@@ -40,7 +77,7 @@ export class AccessService {
       const org = await this.db.one<{ status: string }>('SELECT status FROM organizations WHERE id = $1', [orgId]);
       if (org?.status !== 'active') throw new ForbiddenException({ code: 'org_suspended', message: 'This organization is suspended. Contact ARC LABS.' });
     }
-    if (RANK[role] < RANK[min]) throw new ForbiddenException({ code: 'insufficient_role', required: min });
+    if (RANK[LEVEL[role]] < RANK[min]) throw new ForbiddenException({ code: 'insufficient_role', required: min });
     return role;
   }
 
