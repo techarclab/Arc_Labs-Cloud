@@ -20,21 +20,26 @@ export function useLibraryDownload() {
   return file;
 }
 
-/** The generator UI, used in the "device registered" dialog (with the real token) and on the device page (without). */
-export function ArduinoCodePanel({ device, token, onCopied }: { device: Device; token?: string; onCopied?: () => void }) {
+/** The channel's fields and name, which the generated code is made from. */
+export function useChannelFields(projectId: string) {
   const [fields, setFields] = useState<MetricDef[] | null>(null);
   const [channelName, setChannelName] = useState<string | undefined>();
-  const [provisioned, setProvisioned] = useState(false);
-  const library = useLibraryDownload();
-
   useEffect(() => {
-    api<{ items: MetricDef[] }>('GET', `/projects/${device.projectId}/metric-definitions`)
+    api<{ items: MetricDef[] }>('GET', `/projects/${projectId}/metric-definitions`)
       .then((r) => setFields(r.items))
       .catch(() => setFields([]));
-    api<{ name: string }>('GET', `/projects/${device.projectId}`)
+    api<{ name: string }>('GET', `/projects/${projectId}`)
       .then((p) => setChannelName(p.name))
       .catch(() => undefined);
-  }, [device.projectId]);
+  }, [projectId]);
+  return { fields, channelName };
+}
+
+/** The generator UI, used in the "device registered" dialog (with the real token) and on the device page (without). */
+export function ArduinoCodePanel({ device, token, onCopied }: { device: Device; token?: string; onCopied?: () => void }) {
+  const { fields, channelName } = useChannelFields(device.projectId);
+  const [provisioned, setProvisioned] = useState(false);
+  const library = useLibraryDownload();
 
   const conn = device.connection;
   if (!fields || !conn) return <p className="muted">Preparing the sketch…</p>;

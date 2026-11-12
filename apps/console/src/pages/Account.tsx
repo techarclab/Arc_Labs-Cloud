@@ -2,6 +2,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ROLE_LABEL } from '../api';
+import { DeleteAccountDialog } from '../components/DeleteAccount';
 import { ErrorBox, useToast } from '../components/ui';
 import { useSession } from '../session';
 
@@ -35,6 +36,7 @@ export function AccountPage() {
   const [again, setAgain] = useState('');
   const [pwError, setPwError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     try {
@@ -222,7 +224,38 @@ export function AccountPage() {
             </button>
           </div>
         </section>
+
+        <section className="panel danger-zone">
+          <div className="panel-head">
+            <div>
+              <h2>Delete your account</h2>
+              <p className="small muted">Removes your account from ARC Cloud for good. This can’t be undone.</p>
+            </div>
+          </div>
+          <div className="panel-body">
+            <ul className="danger-list">
+              <li>Your personal workspaces are deleted with their channels, devices, keys and readings; devices stop working right away</li>
+              <li>You leave the organizations you are a member of; they keep their data</li>
+              <li>If you are the only admin of an organization with other members, make someone else an admin first</li>
+            </ul>
+            <button className="btn danger" type="button" onClick={() => setDeleting(true)}>
+              Delete my account…
+            </button>
+          </div>
+        </section>
       </div>
+      <DeleteAccountDialog
+        open={deleting}
+        email={u.email}
+        hasPassword={u.signIn.password}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => {
+          setDeleting(false);
+          signOut();
+          nav('/');
+          toast('Your account has been deleted.');
+        }}
+      />
     </>
   );
 }

@@ -56,6 +56,8 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/auth/resend-verification': r('user', 'write'),
   'POST /api/v1/auth/complete-profile': r('user', 'write', { body: () => ({ ageGroup: 'adult' }) }),
   'POST /api/v1/auth/account-type': r('user', 'write', { body: () => ({ accountType: 'organization', inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
+  'GET /api/v1/auth/delete-account': r('user', 'read'),
+  'POST /api/v1/auth/delete-account': r('user', 'write', { body: () => ({ confirmEmail: 'not-this-account@example.test' }) }),
   'POST /api/v1/auth/redeem-invite': r('user', 'write', { body: () => ({ inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'POST /api/v1/auth/change-password': r('user', 'write', { body: () => ({ currentPassword: 'not-the-password-1', newPassword: 'matrix-new-password-1' }) }),
   'POST /api/v1/auth/sign-out-everywhere': r('user', 'none'),

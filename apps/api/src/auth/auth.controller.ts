@@ -8,6 +8,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
+import { BrokerAdmin } from '../common/broker-admin.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
@@ -44,6 +45,25 @@ const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64)
 
 const forgotPasswordBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
 const resetPasswordBody = z.object({ token: z.string().min(20).max(200), password: registerBody.shape.password });
+
+/**
+ * Deleting the account. `confirmEmail` must be the account's address (typed by the person, as the console's
+ * confirmation challenge asks); `currentPassword` is required when the account has one.
+ */
+const deleteAccountBody = z.object({
+  confirmEmail: z.string().trim().max(254),
+  currentPassword: z.string().max(256).optional(),
+});
+
+type DeletionPlan = {
+  /** Personal workspaces where the person is the only member: deleted with all their data. */
+  deleteWorkspaces: { id: string; name: string; devices: number }[];
+  /** Organizations the person just leaves (someone else stays admin, or they are not an admin). */
+  leave: { id: string; name: string }[];
+  /** Organizations where the person is the only admin but not the only member: they must hand over first. */
+  blockers: { id: string; name: string }[];
+  platformAdmin: boolean;
+};
 
 const updateMeBody = z.object({ displayName: z.string().trim().min(1).max(120) });
 const changePasswordBody = z.object({ currentPassword: z.string().min(1).max(256), newPassword: registerBody.shape.password });
@@ -90,6 +110,7 @@ export class AuthController {
     private readonly db: Db,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    private readonly broker: BrokerAdmin,
   ) {}
 
   @Doc('Register', { body: registerBody })
@@ -606,6 +627,102 @@ export class AuthController {
     await this.db.query(`UPDATE users SET sessions_revoked_at = date_trunc('second', now()) + interval '1 second' WHERE id = $1`, [current.id]);
     await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.sign_out_everywhere', resourceType: 'user', resourceId: current.id });
     return { signedOut: true };
+  }
+
+  @Doc('What deleting your account would delete, leave or block')
+  @SystemDb()
+  @Get('delete-account')
+  async deleteAccountPreview(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    return this.db.tx((c) => this.deletionPlan(c, current.id, current.isPlatformAdmin));
+  }
+
+  @Doc('Delete your account for good: your personal workspaces with their devices and data, and your memberships', { body: deleteAccountBody })
+  @SystemDb() // removes rows in workspaces the person owns, and an account-level audit row
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('delete-account')
+  @HttpCode(200)
+  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+    requirePerson(current);
+    const input = parse(deleteAccountBody, body);
+    const u = await this.db.one<{ email: string; password_hash: string | null }>('SELECT email, password_hash FROM users WHERE id = $1', [current.id]);
+    if (!u) throw new UnauthorizedException({ code: 'invalid_token' });
+    if (input.confirmEmail.toLowerCase() !== u.email.toLowerCase()) {
+      throw new BadRequestException({ code: 'confirm_email_mismatch', message: 'Type your account’s email address exactly to confirm.' });
+    }
+    if (u.password_hash && !(await verifySecret(input.currentPassword ?? '', u.password_hash))) {
+      throw new ForbiddenException({ code: 'wrong_password', message: 'The current password is not right.' });
+    }
+
+    const { plan, deviceIds } = await this.db.tx(async (c) => {
+      // Lock the account first, so two requests cannot both run.
+      await c.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [current.id]);
+      const plan = await this.deletionPlan(c, current.id, current.isPlatformAdmin);
+      if (plan.platformAdmin) {
+        throw new ConflictException({ code: 'platform_admin_delete', message: 'ARC LABS staff accounts must have platform admin removed (operator tool) before they can be deleted.' });
+      }
+      if (plan.blockers.length) {
+        throw new ConflictException({
+          code: 'sole_admin',
+          organizations: plan.blockers,
+          message: `You are the only admin of ${plan.blockers.map((o) => o.name).join(', ')}. Make someone else an admin there first (Team page), or ask ARC LABS to close it.`,
+        });
+      }
+      const deviceIds: string[] = [];
+      for (const w of plan.deleteWorkspaces) {
+        const ids = (await c.query<{ id: string }>('SELECT id FROM devices WHERE organization_id = $1', [w.id])).rows.map((r) => r.id);
+        deviceIds.push(...ids);
+        // These tables have no foreign key to the workspace (telemetry is a hypertable on TimescaleDB), so clear them first.
+        await c.query('DELETE FROM telemetry_measurements WHERE organization_id = $1', [w.id]);
+        await c.query('DELETE FROM ingested_messages WHERE device_id = ANY($1::uuid[])', [ids]);
+        await c.query('DELETE FROM rejected_messages WHERE organization_id = $1', [w.id]);
+        await c.query('DELETE FROM audit_logs WHERE organization_id = $1', [w.id]);
+        // Everything else (channels, devices, credentials, alerts, rules, keys, webhooks, firmware…) cascades.
+        await c.query('DELETE FROM organizations WHERE id = $1', [w.id]);
+      }
+      // Account emails still waiting to be sent to this address.
+      await c.query(`DELETE FROM deliveries WHERE organization_id IS NULL AND recipient = $1 AND status = 'pending'`, [u.email]);
+      // Memberships, sessions, verification and reset links cascade; "created by" columns elsewhere become empty.
+      await c.query('DELETE FROM users WHERE id = $1', [current.id]);
+      // A security record without personal data: the id only, no email or name.
+      await this.audit.record(
+        {
+          actorType: 'user',
+          actorId: current.id,
+          action: 'user.delete',
+          resourceType: 'user',
+          resourceId: current.id,
+          metadata: { deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length },
+        },
+        c,
+      );
+      return { plan, deviceIds };
+    });
+    // The devices' credentials are gone: end any live broker sessions now rather than at the next ACL check.
+    await Promise.all(deviceIds.map((id) => this.broker.disconnect(id)));
+    return { deleted: true, deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length };
+  }
+
+  private async deletionPlan(c: any, userId: string, platformAdmin: boolean): Promise<DeletionPlan> {
+    const rows = (
+      await c.query(
+        `SELECT o.id, o.name, o.kind, m.role,
+                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1) AS others,
+                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1 AND x.role = 'org_admin') AS other_admins,
+                (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id) AS devices
+         FROM organization_members m JOIN organizations o ON o.id = m.organization_id
+         WHERE m.user_id = $1 ORDER BY o.name`,
+        [userId],
+      )
+    ).rows as { id: string; name: string; kind: string; role: string; others: number; other_admins: number; devices: number }[];
+    const plan: DeletionPlan = { deleteWorkspaces: [], leave: [], blockers: [], platformAdmin };
+    for (const o of rows) {
+      if (o.role !== 'org_admin' || o.other_admins > 0) plan.leave.push({ id: o.id, name: o.name });
+      // Only a personal workspace with nobody else in it is deleted; an organization ARC LABS set up never is.
+      else if (o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      else plan.blockers.push({ id: o.id, name: o.name });
+    }
+    return plan;
   }
 
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
