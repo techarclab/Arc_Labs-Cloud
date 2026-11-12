@@ -292,6 +292,42 @@ async function main() {
     await assert.rejects(connect(victim.creds));
   });
 
+  // ---------- 6b. The console in a real browser (CSP, headers, non-root nginx) ----------
+  console.log('\nConsole in a browser');
+  await check('console runs as the unprivileged nginx user', async () => {
+    assert.match(docker('exec', 'arc-cloud-console-1', 'id', '-u'), /^101\s*$/, 'nginx in the console container is not uid 101');
+  });
+  await check('signed-in console pages load in Chromium with no Content-Security-Policy violation', async () => {
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch();
+    try {
+      // The stack's certificates come from Caddy's internal CA, which Chromium does not know; this is the test CA only.
+      const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+      const violations: string[] = [];
+      await ctx.exposeBinding('__csp', (_src, v: string) => void violations.push(v));
+      await ctx.addInitScript((token) => {
+        localStorage.setItem('arc.token', token);
+        document.addEventListener('securitypolicyviolation', (e) => (window as any).__csp(`${e.violatedDirective} blocked ${e.blockedURI || 'inline'} on ${location.pathname}`));
+      }, t);
+      const page = await ctx.newPage();
+      page.on('console', (m) => /Content Security Policy|Refused to/i.test(m.text()) && violations.push(m.text().slice(0, 200)));
+      const base = 'https://console.arc.test';
+      const pages = [`/o/${org.id}`, `/o/${org.id}/p/${proj.id}`, `/o/${org.id}/p/${proj.id}/devices`, `/o/${org.id}/p/${proj.id}/devices/${dev.id}`, `/o/${org.id}/p/${proj.id}/settings`, `/o/${org.id}/alerts`, `/o/${org.id}/account`];
+      for (const path of pages) {
+        const res = await page.goto(base + path, { waitUntil: 'networkidle' });
+        assert.equal(res?.status(), 200, `${path}: HTTP ${res?.status()}`);
+        await page.waitForTimeout(500);
+      }
+      const h = (await page.request.get(base + '/')).headers();
+      note('console_headers', ['content-security-policy', 'cross-origin-resource-policy', 'cross-origin-opener-policy', 'permissions-policy'].map((k) => `${k}=${h[k] ? 'set' : 'MISSING'}`).join(', '));
+      assert.match(h['content-security-policy'] ?? '', /default-src 'self'.*frame-ancestors 'none'/);
+      note('console_pages_checked', pages.length);
+      assert.deepEqual(violations, []);
+    } finally {
+      await browser.close();
+    }
+  });
+
   // ---------- 7. Restarts and many devices at once ----------
   console.log(`\nRestarts and ${N} devices`);
   const fleet: { id: string; creds: Creds }[] = [];

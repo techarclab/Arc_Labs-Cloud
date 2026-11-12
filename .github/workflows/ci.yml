@@ -233,6 +233,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Chromium for the console checks
+        run: npx playwright install --with-deps chromium
       - name: Start the production stack
         run: bash tests/stack/up.sh
       - name: Production-stack tests (real EMQX, 200 simulated devices)
