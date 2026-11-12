@@ -12,7 +12,7 @@ x-logging: &logging
 
 services:
   caddy:
-    build: { context: ../../infra/images/caddy }   # caddy:2.10 + Alpine security updates
+    build: { context: ../../infra/images/caddy }   # caddy:2.11 + Alpine security updates
     restart: unless-stopped
     logging: *logging
     ports:
@@ -31,7 +31,7 @@ services:
     mem_limit: 256m
 
   postgres:
-    build: { context: ../../infra/images/postgres }   # postgres:16 + Debian security updates
+    build: { context: ../../infra/images/postgres }   # postgres:16 + Debian updates, runs as postgres
     restart: unless-stopped
     logging: *logging
     environment:
