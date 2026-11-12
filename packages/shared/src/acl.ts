@@ -1,5 +1,6 @@
 import {
   DEVICE_PUBLISH_CHANNELS,
+  INGEST_PROBE_TOPIC,
   INGEST_SHARE_GROUP,
   INGEST_TOPIC_FILTERS,
   SYS_CLIENT_EVENT_FILTERS,
@@ -38,7 +39,7 @@ export function authorizeDevice(device: DeviceAclSubject, action: MqttAction, to
  * events, and publish control values to concrete device cmd topics only.
  */
 export function authorizeIngestService(action: MqttAction, topic: string): boolean {
-  if (action === 'publish') return parseTopic(topic)?.channel === 'cmd';
+  if (action === 'publish') return topic === INGEST_PROBE_TOPIC || parseTopic(topic)?.channel === 'cmd';
   if (action !== 'subscribe') return false;
   const allowed = new Set<string>([
     ...INGEST_TOPIC_FILTERS,

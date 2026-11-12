@@ -14,6 +14,9 @@ const schema = z.object({
   WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('ingest-1'),
   /** Use MQTT 5 shared subscriptions so several workers split the load. */
   SHARED_SUBSCRIPTION: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  /** Self-test of the broker subscription (DEF-014): probe every N seconds, heal after M seconds without one. */
+  PROBE_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(300).default(15),
+  PROBE_STALE_SECONDS: z.coerce.number().int().min(10).max(900).default(45),
   HEALTH_PORT: z.coerce.number().int().default(9100),
   /** Per-device token bucket: sustained messages/second and burst. */
   DEVICE_RATE_PER_SEC: z.coerce.number().positive().default(5),

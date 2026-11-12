@@ -10,6 +10,7 @@
  * Writes tests/stack/out/results.json and results.md (evidence for docs/operations/).
  */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
@@ -350,6 +351,7 @@ async function main() {
       return false;
     }
   };
+  let restartRound = 0;
   const brokerRestart = async (label: string, jitter: boolean) => {
     for (const s of sims) await s.stop();
     sims = fleet.map((d) => new SimDevice(d.creds, jitter ? { jitter: true } : { jitter: false, baseMs: 1000 }));
@@ -361,16 +363,22 @@ async function main() {
     // Back = every device has connected again AFTER the restart (old sockets can look open for a moment).
     const back = await eventually(async () => sims.every((s, i) => s.connects > before[i] && s.connected) && Date.now(), `${N} devices reconnected (${label})`, 300_000, 200);
     // Readings sent the moment each device is back, as firmware does: are they all stored?
-    const early = jitter ? 2003 : 2004;
+    const early = 2000 + (++restartRound) * 10 + (jitter ? 3 : 4);
     const notAcked = await sendRound(early);
     note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
     const workerBack = await eventually(async () => workerSubscribedSince(restartedAt) && Date.now(), `worker subscribed again (${label})`, 120_000, 500);
+    // DEF-014's trigger: EMQX kicking the worker right after it subscribed (denied during startup), then a resumed
+    // session that delivered nothing. With the file ACL, the first connection after a restart must stay up.
+    await sleep(3000);
+    const connects = (docker('logs', '--since', restartedAt.toISOString(), 'arc-cloud-worker-1').match(/"msg":"connected to broker"/g) ?? []).length;
+    note(`${label}_worker_connections_after_restart`, connects);
+    assert.equal(connects, 1, `the worker connected ${connects} times after the restart (it was disconnected again)`);
     note(`${label}_reconnect_all_ms`, back - t0);
     note(`${label}_refused_attempts`, sims.reduce((n, s) => n + s.refusals, 0));
     note(`${label}_worker_resubscribed_ms`, workerBack - t0);
     await eventually(deepOk, `API back on the broker (${label})`, 120_000, 2000);
     await eventually(async () => onlineCount() === N, `${N} devices recorded online (${label})`, 120_000, 2000);
-    const round = jitter ? 1003 : 1004;
+    const round = 1000 + restartRound * 10 + (jitter ? 3 : 4);
     assert.equal(await sendRound(round), 0, 'publishes not acknowledged after recovery');
     await eventually(async () => storedRound(round) === N, `readings sent after the worker is back stored (${label})`, 60_000, 2000);
     await sleep(5000);
@@ -383,8 +391,89 @@ async function main() {
       );
     }
   };
-  await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, () => brokerRestart('jitter', true));
-  await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, () => brokerRestart('herd', false));
+  /** EMQX management API, called from the api container (which holds the API key and reaches emqx:18083). */
+  const emqxApi = (method: string, path: string, body?: unknown) =>
+    JSON.parse(
+      docker('exec', 'arc-cloud-api-1', 'node', '-e', `const a='Basic '+Buffer.from(process.env.EMQX_API_KEY+':'+process.env.EMQX_API_SECRET).toString('base64');
+        fetch(process.env.EMQX_API_URL+${JSON.stringify(path)},{method:${JSON.stringify(method)},headers:{authorization:a,'content-type':'application/json'},body:${JSON.stringify(body === undefined ? null : JSON.stringify(body))}})
+          .then(async r=>console.log(JSON.stringify({status:r.status,body:await r.text()})))`),
+    ) as { status: number; body: string };
+  const workerMetric = (name: string) =>
+    Number(new RegExp(`^${name} (\\d+)`, 'm').exec(docker('exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/metrics'))?.[1] ?? NaN);
+
+  await check('a subscription the broker silently drops is detected and healed by the worker (DEF-014 watchdog)', async () => {
+    const stallsBefore = workerMetric('arc_ingest_stalls_total') || 0;
+    // The symptom seen after some EMQX restarts, made deterministic: EMQX stops serving the worker's telemetry
+    // subscription, and the worker is not told.
+    const r = emqxApi('POST', '/api/v5/clients/svc-ingest-1/unsubscribe', { topic: '$share/arc-ingest/arc/v1/+/+/+/telemetry' });
+    assert.ok(r.status >= 200 && r.status < 300, `EMQX unsubscribe: ${r.status} ${r.body}`);
+    const t0 = Date.now();
+    await sendRound(4001);
+    await sleep(5000);
+    note('stall_readings_stored_while_unsubscribed', `${storedRound(4001)}/${N}`);
+    const healed = await eventually(async () => (workerMetric('arc_ingest_stalls_total') || 0) > stallsBefore && workerSubscribedSince(new Date(t0)) && Date.now(), 'the worker to detect the stall and re-subscribe', 120_000, 2000);
+    note('stall_detected_and_resubscribed_after_ms', healed - t0);
+    await sendRound(4002);
+    await eventually(async () => storedRound(4002) === N, 'readings stored again after healing', 60_000, 2000);
+    const ready = docker('exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/health/ready');
+    assert.match(ready, /"subscription":"ok"/);
+  });
+
+  /** On failure, the worker's and EMQX's own account of the restart goes into the CI log (artifacts may be unreachable). */
+  const withLogs = (label: string, fn: () => Promise<void>) => async () => {
+    const since = new Date(Date.now() - 1000).toISOString();
+    try {
+      await fn();
+    } catch (e) {
+      for (const c of ['worker', 'emqx', 'api']) {
+        let out = '';
+        try {
+          out = execFileSync('docker', ['logs', '--since', since, `arc-cloud-${c}-1`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+        } catch (err: any) {
+          out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+        }
+        if (c === 'worker') {
+          try {
+            const m = execFileSync('docker', ['exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/metrics'], { encoding: 'utf8' });
+            console.log(`      --- worker metrics: ${m.split('\n').filter((l) => /^arc_ingest_(processed|errors|disconnects|received)/.test(l)).join(' · ')}`);
+          } catch (err: any) {
+            console.log(`      --- worker metrics unavailable: ${String(err.message).slice(0, 120)}`);
+          }
+        }
+        if (c === 'emqx') {
+          // The worker's session as EMQX sees it: is it connected, how many messages are in flight / queued for it?
+          const js = `const a='Basic '+Buffer.from(process.env.EMQX_API_KEY+':'+process.env.EMQX_API_SECRET).toString('base64');
+            const g=(p)=>fetch(process.env.EMQX_API_URL+p,{headers:{authorization:a}}).then(r=>r.text());
+            Promise.all([g('/api/v5/clients/svc-ingest-1'),g('/api/v5/subscriptions?clientid=svc-ingest-1&limit=20')]).then(([c,s])=>console.log('CLIENT '+c.slice(0,900)+'\\nSUBS '+s.slice(0,900)));`;
+          try {
+            console.log(`      --- emqx view of the worker: ${execFileSync('docker', ['exec', 'arc-cloud-api-1', 'node', '-e', js], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 1800)}`);
+          } catch (err: any) {
+            console.log(`      --- emqx view unavailable: ${String(err.message).slice(0, 160)}`);
+          }
+        }
+        const lines = out.split('\n').filter((l) => !/"msg":"message rejected"/.test(l));
+        console.log(`      --- ${c} log since the ${label} restart (last 40 of ${lines.length} lines) ---`);
+        for (const l of lines.slice(-40)) console.log(`      | ${l.slice(0, 300)}`);
+      }
+      // Which side is stuck? Restart only the worker (same client id, persistent session) and send one more round.
+      try {
+        docker('restart', 'arc-cloud-worker-1');
+        await eventually(async () => workerSubscribedSince(new Date(Date.now() - 15_000)) && true, 'worker subscribed after its restart', 60_000, 500);
+        await sendRound(3999);
+        const ok = await eventually(async () => storedRound(3999) === N && true, 'round after worker restart stored', 45_000, 2000).then(() => true, () => false);
+        console.log(`      --- after restarting ONLY the worker: readings ${ok ? 'are stored again (the worker process/connection was stuck)' : `still not stored (${storedRound(3999)}/${N}): the broker side is stuck`}`);
+      } catch (err: any) {
+        console.log(`      --- worker-restart probe failed: ${String(err.message).slice(0, 160)}`);
+      }
+      throw e;
+    }
+  };
+  await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, withLogs('jitter', () => brokerRestart('jitter', true)));
+  await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, withLogs('herd', () => brokerRestart('herd', false)));
+  // Soak: more EMQX restarts in one run (STACK_RESTART_LOOPS), to reproduce intermittent recovery failures.
+  for (let i = 1; i <= Number(process.env.STACK_RESTART_LOOPS ?? 0); i++) {
+    await check(`EMQX restart soak ${i}: devices, worker and data recover`, withLogs(`soak${i}`, () => brokerRestart(`soak${i}`, i % 2 === 1)));
+  }
   await check('after an EMQX restart, a device that never comes back is shown offline within interval × 3 + 30 s', async () => {
     const lost = await newDevice('Never returns', 10);
     await eventually(async () => emqxReady() && (await deepOk()), 'EMQX and API ready', 120_000, 1000);

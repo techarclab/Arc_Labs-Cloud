@@ -65,6 +65,13 @@ authorization {
     ttl = 30s
   }
   sources = [
+    # 1. The ingest service, from a local file: usable from the first instant after startup (infra/emqx/acl.conf).
+    {
+      type = file
+      enable = true
+      path = "/arc/acl.conf"
+    },
+    # 2. Devices (and anything the file does not match): the API decides.
     {
       type = http
       enable = true
