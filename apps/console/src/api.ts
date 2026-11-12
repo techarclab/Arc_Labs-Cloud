@@ -71,6 +71,7 @@ const MESSAGES: Record<string, string> = {
   sole_admin: 'You are the only admin of an organization with other members. Make someone else an admin there first.',
   platform_admin_delete: 'ARC LABS staff accounts must have platform admin removed before they can be deleted.',
   account_type_set: 'You have already said who this account is for. Reload the page.',
+  org_suspended: 'This organization is suspended. Contact ARC LABS.',
   minor_needs_invite: 'Under 18? You can join with an invite code from your college or school. Ask your instructor for one.',
   email_unverified: 'Confirm your email address first: open the link we emailed you.',
   profile_incomplete: 'Finish setting up your account first.',

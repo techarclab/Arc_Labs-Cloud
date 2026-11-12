@@ -34,6 +34,12 @@ export class AccessService {
     }
     const role = await this.roleIn(user, orgId);
     if (!role) throw new NotFoundException({ code: 'not_found' });
+    // A suspended organization is closed for everyone but ARC LABS staff (who can sort it out): people, API keys
+    // and LMS links alike. Devices are already refused by the broker hooks and the device HTTP API.
+    if (!user.isPlatformAdmin) {
+      const org = await this.db.one<{ status: string }>('SELECT status FROM organizations WHERE id = $1', [orgId]);
+      if (org?.status !== 'active') throw new ForbiddenException({ code: 'org_suspended', message: 'This organization is suspended. Contact ARC LABS.' });
+    }
     if (RANK[role] < RANK[min]) throw new ForbiddenException({ code: 'insufficient_role', required: min });
     return role;
   }
