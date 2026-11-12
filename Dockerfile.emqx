@@ -1,5 +1,13 @@
 # EMQX broker for ARC Cloud (local docker-compose and Railway).
 FROM emqx/emqx:5.8.9
+# Debian security updates: the 5.8.9 image ships packages with 9 critical / 212 high known vulnerabilities, 114 of
+# them fixed in Debian since (Trivy, 2026-11-11). EMQX is reachable from the internet on 8883. Back to the image's
+# own non-root user afterwards: arc-cert-sync reads its uid to set the certificate's owner.
+USER root
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade \
+ && rm -rf /var/lib/apt/lists/*
+USER emqx
 COPY infra/emqx/base.hocon.tpl /arc/base.hocon.tpl
 COPY --chmod=755 infra/emqx/entrypoint.sh /arc/entrypoint.sh
 ENTRYPOINT ["/arc/entrypoint.sh"]
