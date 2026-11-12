@@ -23,11 +23,12 @@
 | Date | Where | Result | File |
 |---|---|---|---|
 | 2026-11-11 | local, PostgreSQL 16 | 112 operations: 531 pass, 0 fail, 63 known (DEF-001), 0 inconclusive | [evidence/2026-11-11-authz-matrix-local.md](evidence/2026-11-11-authz-matrix-local.md) |
+| 2026-11-12 | local, after the DEF-001 fix | 112 operations: **606 pass, 0 fail, 0 known, 0 inconclusive** | [evidence/2026-11-12-authz-matrix-def-001-fixed.md](evidence/2026-11-12-authz-matrix-def-001-fixed.md) |
 | 2026-11-11 | local, **planted bug** | `DELETE /rules/{id}` downgraded to viewer in the built API: the matrix failed (`viewer → 204, NOT REFUSED`). Build restored afterwards | — |
 
 ## Findings from the first run
 
-- **DEF-001 (high):** platform admins hold org_admin rights in every organization.
+- **DEF-001 (high), fixed 2026-11-12 (decision: remove access):** platform admins held org_admin rights in every organization.
   - `AccessService.roleIn` returns `org_admin`, and `TenantScopeInterceptor` runs their requests without row-level security.
   - The Account page tells them "no access to their data", and the reference documentation says the same.
   - 63 cells: read telemetry, rotate and revoke devices, delete channels, manage keys and webhooks of any customer.

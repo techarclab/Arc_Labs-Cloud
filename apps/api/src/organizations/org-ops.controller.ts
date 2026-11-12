@@ -8,6 +8,7 @@ import { AuditService } from '../common/audit.service';
 import { mapAlert } from '../common/events';
 import { actor, AuthUser, CurrentUser, parse, userRef, Uuid } from '../common/http';
 import { hashInviteCode, newInviteCode } from '../common/invites';
+import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Db } from '../db/db.service';
 
 /**
@@ -157,8 +158,9 @@ export class OrgOpsController {
     return { retentionDays: input.retentionDays };
   }
 
-  /** Platform admins (ARC LABS staff) assign a plan and limits. */
+  /** Platform admins (ARC LABS staff) assign a plan and limits. System scope: they are not members of the organization. */
   @Doc('Plan', { body: planBody })
+  @SystemDb()
   @Patch(':id/plan')
   async plan(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     if (!user.isPlatformAdmin || user.scope) throw new ForbiddenException({ code: 'platform_admin_only' });
@@ -206,6 +208,9 @@ function inviteStatus(i: { revoked_at: Date | null; expires_at: Date; used_count
 
 /** ARC LABS staff (PLATFORM_ADMIN_EMAILS or users.is_platform_admin): every customer organization at a glance. */
 @ApiTags('Platform administration')
+// Every handler refuses non-staff on its first line (requireStaff), so running them without row-level security only
+// ever serves ARC LABS staff, and only these cross-organization views: counts, plans, invite codes.
+@SystemDb()
 @Controller('api/v1/platform')
 export class PlatformController {
   constructor(

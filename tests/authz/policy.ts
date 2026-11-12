@@ -177,12 +177,6 @@ export const POLICY: Record<string, Rule> = {
  * behaviour in the cells it names and reports them as known defects (not failures). Fix the code, delete the entry.
  */
 export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: string, rule: Rule, op: string) => boolean }[] = [
-  {
-    id: 'DEF-001',
-    title:
-      'Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"',
-    // Not the channel feeds: they check users.is_platform_admin only, so an admin listed in PLATFORM_ADMIN_EMAILS (as
-    // here) is refused there, while one flagged in the database would be let in. Same defect, different trigger.
-    applies: (principal, rule, op) => principal === 'platform' && !op.includes('/channels/') && (rule.need === 'viewer' || rule.need === 'engineer' || rule.need === 'org_admin'),
-  },
+  // DEF-001 (platform admins held org_admin in every organization) was fixed on 2026-11-12: the platform caller is
+  // now expected to be refused on every organization route, like the outsider.
 ];
