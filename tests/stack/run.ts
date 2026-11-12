@@ -399,7 +399,7 @@ async function main() {
         }
         if (c === 'worker') {
           try {
-            const m = execFileSync('docker', ['exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-3001}/metrics'], { encoding: 'utf8' });
+            const m = execFileSync('docker', ['exec', 'arc-cloud-worker-1', 'sh', '-c', 'wget -qO- http://127.0.0.1:${HEALTH_PORT:-9100}/metrics'], { encoding: 'utf8' });
             console.log(`      --- worker metrics: ${m.split('\n').filter((l) => /^arc_ingest_(processed|errors|disconnects|received)/.test(l)).join(' · ')}`);
           } catch (err: any) {
             console.log(`      --- worker metrics unavailable: ${String(err.message).slice(0, 120)}`);
