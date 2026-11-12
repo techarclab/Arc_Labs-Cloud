@@ -69,7 +69,7 @@ export const POLICY: Record<string, Rule> = {
   'PATCH /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'write', { body: () => ({ role: 'viewer' }) }),
   'DELETE /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'destructive'),
   'GET /api/v1/organizations/{id}/audit-logs': r('org_admin', 'read'),
-  'GET /api/v1/organizations/{id}/rejected-messages': r('engineer', 'read'),
+  'GET /api/v1/organizations/{id}/rejected-messages': r('viewer', 'read'),
   'GET /api/v1/organizations/{id}/overview': r('viewer', 'read'),
   'GET /api/v1/organizations/{id}/usage': r('viewer', 'read'),
   'PATCH /api/v1/organizations/{id}/settings': r('org_admin', 'write', { body: () => ({ retentionDays: 30 }) }),
@@ -125,9 +125,6 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/commands/{commandId}/ack': r('device', 'none', { body: () => ({ status: 'ok' }) }),
   'GET /api/v1/update': r('device', 'none'),
   'POST /api/v1/update': r('device', 'none', { body: () => ({ temperature: 20 }) }),
-  'PUT /api/v1/update': r('device', 'none', { body: () => ({ temperature: 20 }) }),
-  'PATCH /api/v1/update': r('device', 'none', { body: () => ({ temperature: 20 }) }),
-  'DELETE /api/v1/update': r('device', 'none'),
   'GET /api/v1/controls': r('device', 'none'),
 
   // ---------- rules and alerts ----------

@@ -1,6 +1,6 @@
 {
-  "when": "2026-11-11T09:47:18.988Z",
-  "operations": 112,
+  "when": "2026-11-12T04:30:49.502Z",
+  "operations": 109,
   "unlisted": [],
   "stale": [],
   "cells": [
@@ -832,9 +832,8 @@
     {
       "op": "GET /api/v1/organizations/{id}/rejected-messages",
       "principal": "viewer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
+      "expect": "allow",
+      "status": 200,
       "outcome": "pass"
     },
     {
@@ -1135,7 +1134,7 @@
       "principal": "platform",
       "expect": "allow",
       "status": 201,
-      "code": "ARC-RDRH-U4Q6-2GXB",
+      "code": "ARC-CT63-FUMK-B94M",
       "outcome": "pass"
     },
     {
@@ -2508,132 +2507,6 @@
       "outcome": "pass"
     },
     {
-      "op": "PUT /api/v1/update",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/update",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/update",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/update",
-      "principal": "engineer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/update",
-      "principal": "admin",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/update",
-      "principal": "platform",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "engineer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "admin",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "PATCH /api/v1/update",
-      "principal": "platform",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "engineer",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "admin",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
-      "op": "DELETE /api/v1/update",
-      "principal": "platform",
-      "expect": "deny",
-      "status": 404,
-      "outcome": "pass"
-    },
-    {
       "op": "GET /api/v1/controls",
       "principal": "anon",
       "expect": "deny",
@@ -3279,9 +3152,9 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "viewer",
       "expect": "deny",
-      "status": 204,
-      "outcome": "fail",
-      "why": "NOT REFUSED"
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/alerts",
@@ -4512,10 +4385,8 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "engineer",
       "expect": "allow",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "fail",
-      "why": "allowed caller refused or failed"
+      "status": 204,
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/alerts/{id}/resolve",

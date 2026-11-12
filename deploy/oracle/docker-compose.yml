@@ -96,6 +96,11 @@ services:
       timeout: 5s
       retries: 30
     mem_limit: 1g
+    # EMQX enforced 65,536 connections instead of max_connections = 100000 from base.hocon (DEF-003, measured by
+    # the production-stack tests), most likely capped by the container's open-file limit; raised here, and the stack
+    # suite now requires exactly 100000.
+    ulimits:
+      nofile: { soft: 1048576, hard: 1048576 }
 
   worker:
     build: { context: ../.., dockerfile: Dockerfile }

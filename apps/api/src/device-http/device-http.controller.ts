@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { All, BadRequestException, Body, Post, Controller, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Post, Controller, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
 import { validateTelemetry } from '@arc/shared';
@@ -134,13 +134,27 @@ export class DeviceHttpController {
     return d;
   }
 
-  @Doc('Update')
+  // GET and POST only (two routes, one implementation). Before, @All('update') also documented PUT/PATCH/DELETE,
+  // which answered 404 (DEF-011).
+  @Doc('Update (query string)')
   @Public()
   @Throttle({ default: { limit: 6000, ttl: 60_000 } })
-  @All('update')
+  @Get('update')
   @HttpCode(200)
-  async update(@Req() req: Request) {
-    if (req.method !== 'GET' && req.method !== 'POST') throw new NotFoundException();
+  updateGet(@Req() req: Request) {
+    return this.update(req);
+  }
+
+  @Doc('Update (form or JSON body)')
+  @Public()
+  @Throttle({ default: { limit: 6000, ttl: 60_000 } })
+  @Post('update')
+  @HttpCode(200)
+  updatePost(@Req() req: Request) {
+    return this.update(req);
+  }
+
+  private async update(req: Request) {
     const key = this.apiKey(req);
     const device = await this.deviceFor(key);
     if (!this.buckets.take(device.id)) {

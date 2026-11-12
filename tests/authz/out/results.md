@@ -1,16 +1,9 @@
-# Authorization matrix, 2026-11-11T09:47:18.988Z
+# Authorization matrix, 2026-11-12T04:30:49.502Z
 
-112 operations in the generated OpenAPI spec × 6 callers: 529 pass, 2 fail, 63 known defect, 0 inconclusive.
+109 operations in the generated OpenAPI spec × 6 callers: 513 pass, 0 fail, 63 known defect, 0 inconclusive.
 
 Every operation has a policy entry.
 
-
-## Failures
-
-| Operation | Caller | Expected | Got | Why |
-|---|---|---|---|---|
-| `DELETE /api/v1/rules/{id}` | viewer | deny | 204  | NOT REFUSED |
-| `DELETE /api/v1/rules/{id}` | engineer | allow | 404 not_found | allowed caller refused or failed |
 
 ## Known defects (current behaviour expected until fixed)
 
@@ -50,7 +43,7 @@ Every operation has a policy entry.
 | `PATCH /api/v1/organizations/{id}/members/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
 | `DELETE /api/v1/organizations/{id}/members/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 204 | · |
 | `GET /api/v1/organizations/{id}/audit-logs` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
-| `GET /api/v1/organizations/{id}/rejected-messages` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 200 | ! 200 |
+| `GET /api/v1/organizations/{id}/rejected-messages` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/organizations/{id}/overview` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/organizations/{id}/usage` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `PATCH /api/v1/organizations/{id}/settings` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
@@ -88,9 +81,6 @@ Every operation has a policy entry.
 | `POST /api/v1/commands/{commandId}/ack` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
 | `GET /api/v1/update` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
 | `POST /api/v1/update` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
-| `PUT /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
-| `PATCH /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
-| `DELETE /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
 | `GET /api/v1/controls` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
 | `GET /api/v1/channels/{id}/feeds.json` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 404 |
 | `GET /api/v1/channels/{id}/feeds.csv` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 404 |
@@ -105,7 +95,7 @@ Every operation has a policy entry.
 | `POST /api/v1/rules` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 201 | ✓ 201 | ! 201 |
 | `GET /api/v1/rules/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `PATCH /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 200 | ! 200 |
-| `DELETE /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✗ 204 | ✗ 404 | · | · |
+| `DELETE /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 204 | · | · |
 | `GET /api/v1/alerts` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/alerts/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `POST /api/v1/alerts/{id}/acknowledge` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 409 | ! 409 |
