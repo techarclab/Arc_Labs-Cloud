@@ -351,6 +351,7 @@ async function main() {
       return false;
     }
   };
+  let restartRound = 0;
   const brokerRestart = async (label: string, jitter: boolean) => {
     for (const s of sims) await s.stop();
     sims = fleet.map((d) => new SimDevice(d.creds, jitter ? { jitter: true } : { jitter: false, baseMs: 1000 }));
@@ -362,7 +363,7 @@ async function main() {
     // Back = every device has connected again AFTER the restart (old sockets can look open for a moment).
     const back = await eventually(async () => sims.every((s, i) => s.connects > before[i] && s.connected) && Date.now(), `${N} devices reconnected (${label})`, 300_000, 200);
     // Readings sent the moment each device is back, as firmware does: are they all stored?
-    const early = jitter ? 2003 : 2004;
+    const early = 2000 + (++restartRound) * 10 + (jitter ? 3 : 4);
     const notAcked = await sendRound(early);
     note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
     const workerBack = await eventually(async () => workerSubscribedSince(restartedAt) && Date.now(), `worker subscribed again (${label})`, 120_000, 500);
@@ -371,7 +372,7 @@ async function main() {
     note(`${label}_worker_resubscribed_ms`, workerBack - t0);
     await eventually(deepOk, `API back on the broker (${label})`, 120_000, 2000);
     await eventually(async () => onlineCount() === N, `${N} devices recorded online (${label})`, 120_000, 2000);
-    const round = jitter ? 1003 : 1004;
+    const round = 1000 + restartRound * 10 + (jitter ? 3 : 4);
     assert.equal(await sendRound(round), 0, 'publishes not acknowledged after recovery');
     await eventually(async () => storedRound(round) === N, `readings sent after the worker is back stored (${label})`, 60_000, 2000);
     await sleep(5000);
@@ -435,6 +436,10 @@ async function main() {
   };
   await check(`EMQX restart: ${N} devices reconnect with back-off and jitter (ArcCloud library behaviour), API and worker recover, data flows`, withLogs('jitter', () => brokerRestart('jitter', true)));
   await check(`EMQX restart: ${N} devices reconnect all at once, every second, no jitter (worst case)`, withLogs('herd', () => brokerRestart('herd', false)));
+  // Soak: more EMQX restarts in one run (STACK_RESTART_LOOPS), to reproduce intermittent recovery failures.
+  for (let i = 1; i <= Number(process.env.STACK_RESTART_LOOPS ?? 0); i++) {
+    await check(`EMQX restart soak ${i}: devices, worker and data recover`, withLogs(`soak${i}`, () => brokerRestart(`soak${i}`, i % 2 === 1)));
+  }
   await check('after an EMQX restart, a device that never comes back is shown offline within interval × 3 + 30 s', async () => {
     const lost = await newDevice('Never returns', 10);
     await eventually(async () => emqxReady() && (await deepOk()), 'EMQX and API ready', 120_000, 1000);
