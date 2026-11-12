@@ -1,0 +1,8 @@
+# Trivy findings accepted for the Caddy image only (CI gate: --ignorefile security/trivy/caddy.ignore).
+# Every entry: why it is not exploitable here, who accepted it, and an expiry after which the gate fails again.
+#
+# CVE-2026-78661: golang.org/x/net/html denial of service, in the caddy 2.11 binary (x/net v0.60.0; fixed in 0.62.0).
+# Our Caddyfile only reverse-proxies, serves files, compresses and sets headers; nothing parses HTML (no templates or
+# markdown). No Caddy release ships x/net 0.62.0 yet (2026-11-12). Accepted by Claude for review by Anvesh Reddy; expires
+# 2026-12-13, by when a newer caddy:2.11 image should carry the fix.
+CVE-2026-78661 exp:2026-12-13

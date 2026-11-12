@@ -380,6 +380,7 @@ jobs:
           rc=0
           for i in api console emqx caddy postgres; do
             echo "== arc-cloud-$i"
-            trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "arc-cloud-$i:scan" || rc=1
+            ignore=(); [ -f "security/trivy/$i.ignore" ] && ignore=(--ignorefile "security/trivy/$i.ignore")
+            trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "${ignore[@]}" "arc-cloud-$i:scan" || rc=1
           done
           exit $rc
