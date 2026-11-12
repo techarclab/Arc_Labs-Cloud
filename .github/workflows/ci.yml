@@ -47,6 +47,25 @@ jobs:
           psql -h 127.0.0.1 -U arc -d arc_ci -c 'CREATE DATABASE arc_verify'
           bash infra/backup/backup.sh postgres://arc:arc@127.0.0.1:5432/arc_ci
           VERIFY_URL=postgres://arc:arc@127.0.0.1:5432/arc_verify bash infra/backup/verify.sh "$(ls -t backups/*.dump | head -1)"
+      - name: OpenAPI spec in docs/ is current
+        run: |
+          node apps/api/dist/openapi.js docs/api/openapi.json
+          git diff --exit-code docs/api/openapi.json || { echo "docs/api/openapi.json is stale: run npm run openapi and commit it"; exit 1; }
+      - name: Authorization matrix (every route × every role, from the OpenAPI spec)
+        env:
+          PGPASSWORD: arc
+        run: |
+          psql -h 127.0.0.1 -U arc -d arc_ci -c 'CREATE DATABASE arc_authz'
+          DATABASE_URL=postgres://arc:arc@127.0.0.1:5432/arc_authz npx tsx tests/authz/run.ts
+      - name: Authorization matrix in the job summary
+        if: always()
+        run: cat tests/authz/out/results.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: authz-matrix
+          path: tests/authz/out/results.*
+          retention-days: 30
 
   security:
     runs-on: ubuntu-24.04

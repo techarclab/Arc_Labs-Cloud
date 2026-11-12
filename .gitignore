@@ -33,3 +33,4 @@ apps/console/public/downloads/
 # Production-stack test run (tests/stack/up.sh)
 tests/stack/out/
 security/zap/out/
+tests/authz/out/
