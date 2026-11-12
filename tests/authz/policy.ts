@@ -181,8 +181,7 @@ export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: st
     id: 'DEF-001',
     title:
       'Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"',
-    // Not the channel feeds: they check users.is_platform_admin only, so an admin listed in PLATFORM_ADMIN_EMAILS (as
-    // here) is refused there, while one flagged in the database would be let in. Same defect, different trigger.
-    applies: (principal, rule, op) => principal === 'platform' && !op.includes('/channels/') && (rule.need === 'viewer' || rule.need === 'engineer' || rule.need === 'org_admin'),
+    // Includes the channel feeds: they check users.is_platform_admin, the only source of platform admin now.
+    applies: (principal, rule) => principal === 'platform' && (rule.need === 'viewer' || rule.need === 'engineer' || rule.need === 'org_admin'),
   },
 ];

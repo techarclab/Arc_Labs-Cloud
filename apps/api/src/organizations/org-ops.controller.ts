@@ -204,7 +204,7 @@ function inviteStatus(i: { revoked_at: Date | null; expires_at: Date; used_count
   return 'active';
 }
 
-/** ARC LABS staff (PLATFORM_ADMIN_EMAILS or users.is_platform_admin): every customer organization at a glance. */
+/** ARC LABS staff (users.is_platform_admin, set only with tools/platform-admin): every customer organization at a glance. */
 @ApiTags('Platform administration')
 @Controller('api/v1/platform')
 export class PlatformController {

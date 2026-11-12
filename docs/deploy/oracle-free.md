@@ -110,12 +110,23 @@ On the VM, before the first deploy:
 ```bash
 sudo tee /etc/arc-cloud/extra.env > /dev/null <<'EOF'
 ALLOW_SIGNUP=true
-PLATFORM_ADMIN_EMAILS=<your email>
 EOF
 ```
-After deploying (step 8), register in the console with that email. New accounts must confirm their email address,
+After deploying (step 8), register in the console with your email. New accounts must confirm their email address,
 so set up email (step 10) first, or confirm this one account by hand:
 `sudo docker exec -i -u postgres arc-cloud-postgres-1 psql -d arc_cloud -c "UPDATE users SET email_verified_at = now() WHERE email = '<your email>'"`.
+
+Then make that account a platform admin (ARC LABS staff) with the operator tool. It is the only way: there is no
+HTTP endpoint, and `PLATFORM_ADMIN_EMAILS` is ignored (sign-up does not prove who owns an address). Every grant and
+revoke is written to the audit log.
+```bash
+COMPOSE="docker compose -f /opt/arc-cloud/deploy/oracle/docker-compose.yml"
+sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js grant <your email> --reason "first operator"
+sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js list
+```
+Upgrading a server that still has `PLATFORM_ADMIN_EMAILS` in `/etc/arc-cloud/extra.env`: run `list` right after the
+deploy, `grant` each person who should keep platform admin (check the account is really theirs: the tool prints how it
+signs in and when it was created), and delete the line from `extra.env`.
 
 `ALLOW_SIGNUP=true` is open self-service sign-up (anyone 18+; under-18s only with an institution's invite code). Set
 `ALLOW_SIGNUP=false` to make every sign-up need an invite code (Platform → Invite codes), then `sudo arc-deploy`.
@@ -166,8 +177,8 @@ Personal data is copied here: delete the dump files at the end.
    scp -i ~/.ssh/arc-oracle -r ~/arc-firmware ubuntu@<VM_IP>:/tmp/
    ssh -i ~/.ssh/arc-oracle ubuntu@<VM_IP> 'sudo cp -r /tmp/arc-firmware/. /opt/arc-cloud-data/firmware/ && rm -r /tmp/arc-firmware'
    ```
-8. **Pause AWS again** ("Pause and resume" in aws-pilot.md). Your platform-admin email: set
-   `PLATFORM_ADMIN_EMAILS=<your email>` and `ALLOW_SIGNUP=false` in `/etc/arc-cloud/extra.env`, then `sudo arc-deploy`.
+8. **Pause AWS again** ("Pause and resume" in aws-pilot.md). Set `ALLOW_SIGNUP=false` in `/etc/arc-cloud/extra.env`,
+   run `sudo arc-deploy`, then grant platform admin with the operator tool (step 6).
 
 ## 8. Deploy
 

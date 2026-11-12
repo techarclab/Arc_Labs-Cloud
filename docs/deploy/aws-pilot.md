@@ -184,7 +184,6 @@ Register the first admin account in the console. Then, on the server (`aws ssm s
 ```bash
 sudo tee /etc/arc-cloud/extra.env >/dev/null <<'EOF'
 ALLOW_SIGNUP=false
-PLATFORM_ADMIN_EMAILS=you@example.com
 # GOOGLE_CLIENT_ID=…apps.googleusercontent.com   (add https://arcloud.arclabs.in as an authorized JS origin)
 # SMTP_URL=smtps://user:pass@smtp.example.com:465 (alert emails; without it they are recorded as skipped)
 EOF
@@ -192,6 +191,23 @@ sudo arc-deploy main
 ```
 
 Only the keys shown above are read from `extra.env`.
+
+**Platform admins** (ARC LABS staff: every organization, plans, invite codes) come only from the database flag
+`users.is_platform_admin`, set with the operator tool on the server. The person must already have an account, and you
+must have confirmed it is really theirs: sign-up does not verify email addresses.
+
+```bash
+COMPOSE="docker compose -f /opt/arc-cloud/deploy/aws/docker-compose.yml"
+sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js grant you@example.com --reason "first operator"
+sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js list
+sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js revoke someone@example.com --reason "left ARC LABS"
+```
+
+Each grant and revoke is recorded in `audit_logs` (`platform_admin.grant` / `platform_admin.revoke`) and applies on the
+person's next request. A platform admin has admin rights in **every** organization, so keep the list short.
+
+`PLATFORM_ADMIN_EMAILS` is no longer used: it is ignored (it grants nothing), and the API logs a warning at startup if
+it is still set. When upgrading from it, grant the same people with the tool **before** deploying, or they lose access.
 
 ## 8. Move data from Railway (optional, do it before real use)
 

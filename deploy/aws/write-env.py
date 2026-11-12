@@ -18,7 +18,9 @@ import subprocess
 from urllib.parse import quote
 
 CONF = os.environ.get("ARC_CONF_DIR", "/etc/arc-cloud")
-EXTRA_KEYS = {"GOOGLE_CLIENT_ID", "PLATFORM_ADMIN_EMAILS", "ALLOW_SIGNUP", "SMTP_URL", "MAIL_FROM"}
+# PLATFORM_ADMIN_EMAILS is no longer passed on (platform admins come only from users.is_platform_admin); an old
+# extra.env that still has it is filtered out here like any other unknown key.
+EXTRA_KEYS = {"GOOGLE_CLIENT_ID", "ALLOW_SIGNUP", "SMTP_URL", "MAIL_FROM"}
 DB_SECRET_DIR = os.environ.get("ARC_DB_SECRET_DIR", "/opt/arc-cloud-data/db-secret")
 DB_PASSWORD_IN_CONTAINER = "/run/arc-db/password"  # docker-compose.yml mounts DB_SECRET_DIR at /run/arc-db
 CONTAINER_GID = 1000  # the `node` user in the API/worker image (node:22-alpine)

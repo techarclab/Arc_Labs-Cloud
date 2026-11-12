@@ -44,8 +44,6 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
-  /** Comma-separated emails of ARC LABS staff who manage plans for every organization. */
-  PLATFORM_ADMIN_EMAILS: z.string().default(''),
   /** Organizations a person may create (platform admins: unlimited). Each starts on the free plan. */
   ORGS_PER_USER: z.coerce.number().int().min(1).max(100).default(1),
   /**
@@ -72,8 +70,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return cached;
 }
 
-/** True when the email is listed in PLATFORM_ADMIN_EMAILS. */
-export function isPlatformAdminEmail(email: string): boolean {
-  const list = loadConfig().PLATFORM_ADMIN_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
-  return list.includes(email.toLowerCase());
+/**
+ * Settings that no longer do anything, with the warning to log at startup. They are ignored rather than
+ * rejected, so a server still carrying old configuration starts normally instead of crash-looping.
+ */
+export function obsoleteSettingWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = [];
+  if (env.PLATFORM_ADMIN_EMAILS?.trim()) {
+    warnings.push(
+      'PLATFORM_ADMIN_EMAILS is set but IGNORED: it grants no privileges. Platform admins come only from ' +
+        'users.is_platform_admin, managed with the operator CLI (node apps/api/dist/tools/platform-admin.js). ' +
+        'Remove PLATFORM_ADMIN_EMAILS from the environment.',
+    );
+  }
+  return warnings;
 }
