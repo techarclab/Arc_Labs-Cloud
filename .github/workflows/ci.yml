@@ -33,12 +33,25 @@ jobs:
         run: npm run build:backend
       - name: Type-check and build the web console
         run: npm run build -w @arc/console
-      - name: Unit tests
-        run: npm test
-      - name: End-to-end tests (all phases)
+      - name: "Unit tests with coverage (floors for the pure business logic: vitest.config.ts)"
+        run: npm run test:coverage
+      - name: End-to-end tests (all phases), measuring backend coverage
         run: npx tsx tests/e2e/run.ts
         env:
           DATABASE_URL: postgres://arc:arc@127.0.0.1:5432/arc_ci
+          NODE_V8_COVERAGE: coverage/e2e-raw
+      - name: "Backend coverage from the end-to-end suite (floors in package.json, coverage:e2e)"
+        run: |
+          npm run coverage:e2e
+          { echo '### Coverage'; echo; node tools/coverage-summary.mjs; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage/unit/
+            coverage/e2e/
+          retention-days: 30
       - name: Backup and verified restore
         env:
           PGPASSWORD: arc
