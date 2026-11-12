@@ -1,5 +1,5 @@
 {
-  "when": "2026-11-11T09:47:18.988Z",
+  "when": "2026-11-12T04:18:49.347Z",
   "operations": 112,
   "unlisted": [],
   "stale": [],
@@ -543,10 +543,10 @@
     {
       "op": "GET /api/v1/organizations/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/organizations/{id}",
@@ -590,10 +590,10 @@
     {
       "op": "PATCH /api/v1/organizations/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/organizations/{id}/members",
@@ -635,10 +635,10 @@
     {
       "op": "GET /api/v1/organizations/{id}/members",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/organizations/{id}/members",
@@ -682,10 +682,10 @@
     {
       "op": "POST /api/v1/organizations/{id}/members",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/organizations/{id}/members/{userId}",
@@ -729,10 +729,10 @@
     {
       "op": "PATCH /api/v1/organizations/{id}/members/{userId}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/organizations/{id}/members/{userId}",
@@ -767,6 +767,14 @@
       "outcome": "pass"
     },
     {
+      "op": "DELETE /api/v1/organizations/{id}/members/{userId}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/organizations/{id}/audit-logs",
       "principal": "anon",
       "expect": "deny",
@@ -808,10 +816,10 @@
     {
       "op": "GET /api/v1/organizations/{id}/audit-logs",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/organizations/{id}/rejected-messages",
@@ -854,10 +862,10 @@
     {
       "op": "GET /api/v1/organizations/{id}/rejected-messages",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/organizations/{id}/overview",
@@ -899,10 +907,10 @@
     {
       "op": "GET /api/v1/organizations/{id}/overview",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/organizations/{id}/usage",
@@ -944,10 +952,10 @@
     {
       "op": "GET /api/v1/organizations/{id}/usage",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/organizations/{id}/settings",
@@ -991,10 +999,10 @@
     {
       "op": "PATCH /api/v1/organizations/{id}/settings",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/organizations/{id}/plan",
@@ -1135,7 +1143,7 @@
       "principal": "platform",
       "expect": "allow",
       "status": 201,
-      "code": "ARC-RDRH-U4Q6-2GXB",
+      "code": "ARC-2H38-UZVG-NWHV",
       "outcome": "pass"
     },
     {
@@ -1265,10 +1273,10 @@
     {
       "op": "GET /api/v1/projects",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/projects",
@@ -1312,10 +1320,10 @@
     {
       "op": "POST /api/v1/projects",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/projects/{id}",
@@ -1357,10 +1365,10 @@
     {
       "op": "GET /api/v1/projects/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/projects/{id}",
@@ -1403,10 +1411,10 @@
     {
       "op": "PATCH /api/v1/projects/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/projects/{id}",
@@ -1441,6 +1449,14 @@
       "outcome": "pass"
     },
     {
+      "op": "DELETE /api/v1/projects/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/projects/{id}/fields",
       "principal": "anon",
       "expect": "deny",
@@ -1480,10 +1496,10 @@
     {
       "op": "GET /api/v1/projects/{id}/fields",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PUT /api/v1/projects/{id}/fields",
@@ -1526,10 +1542,10 @@
     {
       "op": "PUT /api/v1/projects/{id}/fields",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/projects/{id}/metric-definitions",
@@ -1571,10 +1587,10 @@
     {
       "op": "GET /api/v1/projects/{id}/metric-definitions",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PUT /api/v1/projects/{id}/metric-definitions",
@@ -1594,52 +1610,6 @@
     },
     {
       "op": "PUT /api/v1/projects/{id}/metric-definitions",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/projects/{id}/metric-definitions",
-      "principal": "engineer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/projects/{id}/metric-definitions",
-      "principal": "admin",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "PUT /api/v1/projects/{id}/metric-definitions",
-      "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
-    },
-    {
-      "op": "POST /api/v1/projects/{id}/read-key",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/projects/{id}/read-key",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/projects/{id}/read-key",
       "principal": "viewer",
       "expect": "deny",
       "status": 403,
@@ -1647,6 +1617,52 @@
       "outcome": "pass"
     },
     {
+      "op": "PUT /api/v1/projects/{id}/metric-definitions",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/metric-definitions",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/metric-definitions",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/projects/{id}/read-key",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/projects/{id}/read-key",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/projects/{id}/read-key",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
       "op": "POST /api/v1/projects/{id}/read-key",
       "principal": "engineer",
       "expect": "deny",
@@ -1664,10 +1680,10 @@
     {
       "op": "POST /api/v1/projects/{id}/read-key",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/projects/{id}/dashboard",
@@ -1709,10 +1725,10 @@
     {
       "op": "GET /api/v1/projects/{id}/dashboard",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PUT /api/v1/projects/{id}/dashboard",
@@ -1755,10 +1771,10 @@
     {
       "op": "PUT /api/v1/projects/{id}/dashboard",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices",
@@ -1800,10 +1816,10 @@
     {
       "op": "GET /api/v1/devices",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices",
@@ -1846,10 +1862,10 @@
     {
       "op": "POST /api/v1/devices",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices/{id}",
@@ -1891,10 +1907,10 @@
     {
       "op": "GET /api/v1/devices/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/devices/{id}",
@@ -1937,10 +1953,10 @@
     {
       "op": "PATCH /api/v1/devices/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices/{id}/rotate-credentials",
@@ -1983,10 +1999,10 @@
     {
       "op": "POST /api/v1/devices/{id}/rotate-credentials",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices/{id}/revoke",
@@ -2018,6 +2034,14 @@
       "expect": "deny",
       "status": 403,
       "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/devices/{id}/revoke",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
       "outcome": "pass"
     },
     {
@@ -2045,6 +2069,14 @@
       "outcome": "pass"
     },
     {
+      "op": "POST /api/v1/devices/{id}/lifecycle",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/devices/{id}/state",
       "principal": "anon",
       "expect": "deny",
@@ -2084,10 +2116,10 @@
     {
       "op": "GET /api/v1/devices/{id}/state",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices/{id}/telemetry/latest",
@@ -2129,10 +2161,10 @@
     {
       "op": "GET /api/v1/devices/{id}/telemetry/latest",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices/{id}/telemetry",
@@ -2174,10 +2206,10 @@
     {
       "op": "GET /api/v1/devices/{id}/telemetry",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices/{id}/controls",
@@ -2219,10 +2251,10 @@
     {
       "op": "GET /api/v1/devices/{id}/controls",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices/{id}/controls",
@@ -2265,10 +2297,10 @@
     {
       "op": "POST /api/v1/devices/{id}/controls",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/devices/{id}/events",
@@ -2310,10 +2342,10 @@
     {
       "op": "GET /api/v1/devices/{id}/events",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/commands/next",
@@ -2811,10 +2843,10 @@
     {
       "op": "GET /api/v1/projects/{id}/command-types",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PUT /api/v1/projects/{id}/command-types/{name}",
@@ -2858,10 +2890,10 @@
     {
       "op": "PUT /api/v1/projects/{id}/command-types/{name}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/projects/{id}/command-types/{name}",
@@ -2896,6 +2928,14 @@
       "outcome": "pass"
     },
     {
+      "op": "DELETE /api/v1/projects/{id}/command-types/{name}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/devices/{id}/commands",
       "principal": "anon",
       "expect": "deny",
@@ -2935,10 +2975,10 @@
     {
       "op": "GET /api/v1/devices/{id}/commands",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices/{id}/commands",
@@ -2981,10 +3021,10 @@
     {
       "op": "POST /api/v1/devices/{id}/commands",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/commands/{commandId}",
@@ -3026,10 +3066,10 @@
     {
       "op": "GET /api/v1/commands/{commandId}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/commands/{commandId}/retry",
@@ -3049,97 +3089,6 @@
     },
     {
       "op": "POST /api/v1/commands/{commandId}/retry",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/commands/{commandId}/retry",
-      "principal": "engineer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/commands/{commandId}/retry",
-      "principal": "admin",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/commands/{commandId}/retry",
-      "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "viewer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "engineer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "admin",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/rules",
-      "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
-    },
-    {
-      "op": "POST /api/v1/rules",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/rules",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/rules",
       "principal": "viewer",
       "expect": "deny",
       "status": 403,
@@ -3147,6 +3096,97 @@
       "outcome": "pass"
     },
     {
+      "op": "POST /api/v1/commands/{commandId}/retry",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/commands/{commandId}/retry",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/commands/{commandId}/retry",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/rules",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/rules",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/rules",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/rules",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
       "op": "POST /api/v1/rules",
       "principal": "engineer",
       "expect": "allow",
@@ -3163,10 +3203,10 @@
     {
       "op": "POST /api/v1/rules",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/rules/{id}",
@@ -3208,10 +3248,10 @@
     {
       "op": "GET /api/v1/rules/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/rules/{id}",
@@ -3254,10 +3294,10 @@
     {
       "op": "PATCH /api/v1/rules/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/rules/{id}",
@@ -3279,9 +3319,17 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "viewer",
       "expect": "deny",
-      "status": 204,
-      "outcome": "fail",
-      "why": "NOT REFUSED"
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/rules/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/alerts",
@@ -3323,10 +3371,10 @@
     {
       "op": "GET /api/v1/alerts",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/alerts/{id}",
@@ -3368,10 +3416,10 @@
     {
       "op": "GET /api/v1/alerts/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/alerts/{id}/acknowledge",
@@ -3415,11 +3463,10 @@
     {
       "op": "POST /api/v1/alerts/{id}/acknowledge",
       "principal": "platform",
-      "expect": "allow",
-      "status": 409,
-      "code": "not_triggered",
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/alerts/{id}/resolve",
@@ -3443,6 +3490,14 @@
       "expect": "deny",
       "status": 403,
       "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/alerts/{id}/resolve",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
       "outcome": "pass"
     },
     {
@@ -3487,10 +3542,10 @@
     {
       "op": "GET /api/v1/api-keys",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/api-keys",
@@ -3534,10 +3589,10 @@
     {
       "op": "POST /api/v1/api-keys",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/api-keys/{id}",
@@ -3569,6 +3624,14 @@
       "expect": "deny",
       "status": 403,
       "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/api-keys/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
       "outcome": "pass"
     },
     {
@@ -3620,10 +3683,10 @@
     {
       "op": "GET /api/v1/webhooks",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/webhooks",
@@ -3667,10 +3730,10 @@
     {
       "op": "POST /api/v1/webhooks",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/webhooks/{id}",
@@ -3714,10 +3777,10 @@
     {
       "op": "PATCH /api/v1/webhooks/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/webhooks/{id}",
@@ -3749,6 +3812,14 @@
       "expect": "deny",
       "status": 403,
       "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/webhooks/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
       "outcome": "pass"
     },
     {
@@ -3793,10 +3864,10 @@
     {
       "op": "POST /api/v1/webhooks/{id}/test",
       "principal": "platform",
-      "expect": "allow",
-      "status": 202,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/webhooks/{id}/deliveries",
@@ -3840,10 +3911,10 @@
     {
       "op": "GET /api/v1/webhooks/{id}/deliveries",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/lms/links",
@@ -3887,10 +3958,10 @@
     {
       "op": "GET /api/v1/lms/links",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/lms/links",
@@ -3934,10 +4005,10 @@
     {
       "op": "POST /api/v1/lms/links",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/lms/links/{id}",
@@ -3972,6 +4043,14 @@
       "outcome": "pass"
     },
     {
+      "op": "DELETE /api/v1/lms/links/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "POST /api/v1/lms/links/{id}/learner-tokens",
       "principal": "anon",
       "expect": "deny",
@@ -4013,10 +4092,10 @@
     {
       "op": "POST /api/v1/lms/links/{id}/learner-tokens",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/firmware/signing-keys",
@@ -4058,10 +4137,10 @@
     {
       "op": "GET /api/v1/firmware/signing-keys",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/firmware/signing-keys",
@@ -4105,10 +4184,10 @@
     {
       "op": "POST /api/v1/firmware/signing-keys",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "DELETE /api/v1/firmware/signing-keys/{id}",
@@ -4143,6 +4222,14 @@
       "outcome": "pass"
     },
     {
+      "op": "DELETE /api/v1/firmware/signing-keys/{id}",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/firmware/releases",
       "principal": "anon",
       "expect": "deny",
@@ -4182,10 +4269,10 @@
     {
       "op": "GET /api/v1/firmware/releases",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/firmware/releases",
@@ -4229,134 +4316,142 @@
     {
       "op": "POST /api/v1/firmware/releases",
       "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/firmware/rollouts",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/rollouts",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/rollouts",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/rollouts",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/rollouts",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/firmware/rollouts",
+      "principal": "admin",
       "expect": "allow",
       "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
-    },
-    {
-      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/releases/{id}/withdraw",
-      "principal": "engineer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "viewer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "engineer",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "admin",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "pass"
-    },
-    {
-      "op": "GET /api/v1/firmware/rollouts",
-      "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
-    },
-    {
-      "op": "POST /api/v1/firmware/rollouts",
-      "principal": "anon",
-      "expect": "deny",
-      "status": 401,
-      "code": "missing_token",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/rollouts",
-      "principal": "outsider",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/rollouts",
-      "principal": "viewer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/rollouts",
-      "principal": "engineer",
-      "expect": "deny",
-      "status": 403,
-      "code": "insufficient_role",
-      "outcome": "pass"
-    },
-    {
-      "op": "POST /api/v1/firmware/rollouts",
-      "principal": "admin",
-      "expect": "allow",
-      "status": 201,
       "outcome": "pass"
     },
     {
       "op": "POST /api/v1/firmware/rollouts",
       "principal": "platform",
-      "expect": "allow",
-      "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/firmware/rollouts/{id}",
@@ -4398,10 +4493,10 @@
     {
       "op": "GET /api/v1/firmware/rollouts/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/firmware/rollouts/{id}",
@@ -4445,10 +4540,10 @@
     {
       "op": "PATCH /api/v1/firmware/rollouts/{id}",
       "principal": "platform",
-      "expect": "allow",
-      "status": 200,
-      "outcome": "known",
-      "why": "DEF-001"
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/devices/{id}/lifecycle (status: retired)",
@@ -4512,10 +4607,8 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "engineer",
       "expect": "allow",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "fail",
-      "why": "allowed caller refused or failed"
+      "status": 204,
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/alerts/{id}/resolve",

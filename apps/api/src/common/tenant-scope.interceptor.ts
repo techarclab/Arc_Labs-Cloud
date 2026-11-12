@@ -15,7 +15,8 @@ export const SystemDb = () => SetMetadata(SYSTEM_DB, true);
  * Pins the database scope for the rest of the request (after JwtAuthGuard has set req.user):
  *  - person            → the organizations they are a member of
  *  - API key / service account / LMS learner → their one organization
- *  - platform admin, public routes, @SystemDb handlers → system (no row-level security)
+ *  - public routes and @SystemDb handlers (account-level writes, the ARC LABS platform routes) → system, no
+ *    row-level security. A platform admin is NOT system elsewhere: in customer data they are scoped like any person.
  */
 @Injectable()
 export class TenantScopeInterceptor implements NestInterceptor {
@@ -27,7 +28,6 @@ export class TenantScopeInterceptor implements NestInterceptor {
   private async orgIdsFor(user: AuthUser | undefined): Promise<string[] | null> {
     if (!user) return null;
     if (user.scope) return [user.scope.orgId];
-    if (user.isPlatformAdmin) return null;
     const rows = await this.db.query<{ organization_id: string }>('SELECT organization_id FROM organization_members WHERE user_id = $1', [user.id]);
     return rows.map((r) => r.organization_id);
   }

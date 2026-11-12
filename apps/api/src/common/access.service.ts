@@ -16,7 +16,9 @@ export class AccessService {
 
   async roleIn(user: AuthUser, orgId: string): Promise<OrgRole | null> {
     if (user.scope) return user.scope.orgId === orgId ? user.scope.role : null;
-    if (user.isPlatformAdmin) return 'org_admin';
+    // Platform admins (ARC LABS staff) get no role here: inside a customer organization they are like anyone else,
+    // a member with the role they were given, or nobody. Their own powers (plans, invite codes, counts) live on the
+    // platform routes only (DEF-001, decided 2026-11-12).
     const row = await this.db.one<{ role: OrgRole }>(
       'SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2',
       [orgId, user.id],
