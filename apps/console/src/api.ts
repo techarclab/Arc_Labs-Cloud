@@ -65,6 +65,8 @@ const MESSAGES: Record<string, string> = {
   terms_version_changed: 'The privacy notice was updated while this page was open. Reload the page and read the new version.',
   person_required: 'Only a signed-in person can accept the privacy notice, not an API key.',
   invite_invalid: 'That invite code isn’t valid. Check for typos; it may also have expired, been revoked or been used up.',
+  organization_needs_invite: 'Organization accounts need an invite code from ARC LABS. Ask your instructor or ARC LABS contact, or choose “Just me” to start on the free plan.',
+  invite_not_for_organization: 'That code creates an account but doesn’t add you to an organization. Ask ARC LABS for your organization’s code, or choose “Just me”.',
   minor_needs_invite: 'Under 18? You can join with an invite code from your college or school. Ask your instructor for one.',
   email_unverified: 'Confirm your email address first: open the link we emailed you.',
   profile_incomplete: 'Finish setting up your account first.',

@@ -784,6 +784,7 @@ fieldset.choice { border: 0; margin: 0; padding: 0; display: flex; flex-directio
 fieldset.choice legend { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-bottom: 6px; padding: 0; }
 fieldset.choice label { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; line-height: 1.45; color: #33415a; cursor: pointer; }
 fieldset.choice input { width: 18px; height: 18px; min-height: 0; margin: 1px 0 0; padding: 0; flex: none; accent-color: var(--accent); }
+fieldset.choice label .hint { display: block; font-size: 12.5px; color: var(--muted); }
 .link-btn, .link-btn.small { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-align: left; font: inherit; align-self: flex-start; }
 .link-btn:hover { text-decoration: underline; }
 .onboarding { min-height: 100vh; }

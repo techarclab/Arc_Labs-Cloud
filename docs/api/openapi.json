@@ -84,6 +84,14 @@
                     "minLength": 12,
                     "maxLength": 256
                   },
+                  "accountType": {
+                    "default": "individual",
+                    "type": "string",
+                    "enum": [
+                      "individual",
+                      "organization"
+                    ]
+                  },
                   "inviteCode": {
                     "type": "string",
                     "maxLength": 64
@@ -369,6 +377,14 @@
                       "minor"
                     ]
                   },
+                  "accountType": {
+                    "default": "individual",
+                    "type": "string",
+                    "enum": [
+                      "individual",
+                      "organization"
+                    ]
+                  },
                   "inviteCode": {
                     "type": "string",
                     "maxLength": 64
@@ -386,7 +402,7 @@
             "description": ""
           }
         },
-        "summary": "Finish an account created through Google: age group (and an invite code for under-18s)",
+        "summary": "Finish an account created through Google: age group and account type (an invite code for under-18s and organizations)",
         "tags": [
           "Auth"
         ]

@@ -14,11 +14,19 @@ import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } 
 import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Db } from '../db/db.service';
 
+const accountTypeSchema = z.enum(['individual', 'organization']).default('individual');
+type AccountType = z.infer<typeof accountTypeSchema>;
+
 const registerBody = z.object({
   email: z.email().max(254),
   displayName: z.string().trim().min(1).max(120),
   password: z.string().min(12, 'password must be at least 12 characters').max(256),
-  /** Required for people under 18, and for everyone when sign-up is closed (ALLOW_SIGNUP=false); always checked when given. */
+  /**
+   * Who is signing up. `individual` (the default): open sign-up on the free plan. `organization`: needs an invite
+   * code from ARC LABS that adds the person to an organization ARC LABS has set up.
+   */
+  accountType: accountTypeSchema,
+  /** Required for organizations, for people under 18, and for everyone when sign-up is closed (ALLOW_SIGNUP=false); always checked when given. */
   inviteCode: z.string().trim().max(64).optional(),
   /** What the person declared: 18 or older, or under 18 (allowed only with an institution's invite code). */
   ageGroup: z.enum(['adult', 'minor'], { message: 'say whether you are 18 or older' }),
@@ -27,7 +35,7 @@ const registerBody = z.object({
 });
 
 const verifyEmailBody = z.object({ token: z.string().min(20).max(200) });
-const completeProfileBody = z.object({ ageGroup: z.enum(['adult', 'minor']), inviteCode: z.string().trim().max(64).optional() });
+const completeProfileBody = z.object({ ageGroup: z.enum(['adult', 'minor']), accountType: accountTypeSchema, inviteCode: z.string().trim().max(64).optional() });
 const redeemInviteBody = z.object({ inviteCode: z.string().trim().min(1).max(64) });
 
 const forgotPasswordBody = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
@@ -65,6 +73,11 @@ type GoogleUserRow = {
   created_at: Date;
 };
 
+/** Organizations join only through ARC LABS: an organization account must come with an invite code. */
+function requireOrganizationInvite(accountType: AccountType, inviteCode: string | undefined) {
+  if (accountType === 'organization' && !inviteCode) throw new ForbiddenException({ code: 'organization_needs_invite' });
+}
+
 // A fixed hash so login spends the same time whether or not the email exists.
 const DUMMY_HASH = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
@@ -89,19 +102,20 @@ export class AuthController {
     const config = loadConfig();
     // Under-18s join only through an institution's invite code (the institution arranges a parent's consent).
     if (input.ageGroup === 'minor' && !input.inviteCode) throw new ForbiddenException({ code: 'minor_needs_invite' });
+    requireOrganizationInvite(input.accountType, input.inviteCode);
     if (!input.inviteCode && !config.ALLOW_SIGNUP) throw new ForbiddenException({ code: 'invite_required' });
     const verifyNow = config.EMAIL_VERIFICATION === 'off';
     const passwordHash = await hashSecret(input.password);
     try {
       const user = await this.db.tx(async (c) => {
         // Claim one use of the invite atomically; a failed insert below rolls the claim back.
-        const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
+        const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode, input.accountType) : undefined;
         const u = (
           await c.query(
-            `INSERT INTO users (email, display_name, password_hash, terms_accepted_at, terms_version, invite_id, age_group, email_verified_at)
-             VALUES ($1, $2, $3, now(), $4, $5, $6, CASE WHEN $7 THEN now() END)
-             RETURNING id, email, display_name, created_at, email_verified_at`,
-            [input.email, input.displayName, passwordHash, TERMS_VERSION, invite?.id ?? null, input.ageGroup, verifyNow],
+            `INSERT INTO users (email, display_name, password_hash, terms_accepted_at, terms_version, invite_id, age_group, account_type, email_verified_at)
+             VALUES ($1, $2, $3, now(), $4, $5, $6, $7, CASE WHEN $8 THEN now() END)
+             RETURNING id, email, display_name, created_at, email_verified_at, account_type`,
+            [input.email, input.displayName, passwordHash, TERMS_VERSION, invite?.id ?? null, input.ageGroup, input.accountType, verifyNow],
           )
         ).rows[0];
         if (invite?.organization_id) {
@@ -116,13 +130,13 @@ export class AuthController {
             action: 'user.register',
             resourceType: 'user',
             resourceId: u.id,
-            metadata: { termsVersion: TERMS_VERSION, ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) },
+            metadata: { termsVersion: TERMS_VERSION, ageGroup: input.ageGroup, accountType: input.accountType, ...(invite ? { inviteId: invite.id } : {}) },
           },
           c,
         );
         return u;
       });
-      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at }, ...(await this.issueToken(user.id)) };
+      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type }, ...(await this.issueToken(user.id)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });
       throw err;
@@ -263,7 +277,7 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group,
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type,
               password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
        FROM users WHERE id = $1`,
       [current.id],
@@ -282,6 +296,8 @@ export class AuthController {
         emailVerified: !!user.email_verified_at,
         /** Null for Google sign-ups that have not said yet; the console asks before anything else. */
         ageGroup: user.age_group ?? null,
+        /** 'individual' or 'organization'; null together with ageGroup until a Google sign-up finishes its profile. */
+        accountType: user.account_type ?? null,
         emailVerifiedAt: user.email_verified_at ?? null,
         /** How this person can sign in (for the profile page). */
         signIn: { password: !!user.has_password, google: !!user.google },
@@ -365,7 +381,7 @@ export class AuthController {
     return { sent: true, email: u.email };
   }
 
-  @Doc('Finish an account created through Google: age group (and an invite code for under-18s)', { body: completeProfileBody })
+  @Doc('Finish an account created through Google: age group and account type (an invite code for under-18s and organizations)', { body: completeProfileBody })
   @AllowIncomplete()
   @SystemDb()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -375,19 +391,20 @@ export class AuthController {
     requirePerson(current);
     const input = parse(completeProfileBody, body);
     if (input.ageGroup === 'minor' && !input.inviteCode) throw new ForbiddenException({ code: 'minor_needs_invite' });
+    requireOrganizationInvite(input.accountType, input.inviteCode);
     return this.db.tx(async (c) => {
       const u = (await c.query('SELECT id, age_group FROM users WHERE id = $1 FOR UPDATE', [current.id])).rows[0];
       if (u.age_group) throw new ConflictException({ code: 'profile_complete' });
-      const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
-      await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
+      const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode, input.accountType) : undefined;
+      await c.query('UPDATE users SET age_group = $2, account_type = $3, invite_id = COALESCE(invite_id, $4) WHERE id = $1', [u.id, input.ageGroup, input.accountType, invite?.id ?? null]);
       if (invite?.organization_id) {
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
       }
       await this.audit.record(
-        { actorType: 'user', actorId: u.id, organizationId: invite?.organization_id ?? undefined, action: 'user.complete_profile', resourceType: 'user', resourceId: u.id, metadata: { ageGroup: input.ageGroup, ...(invite ? { inviteId: invite.id } : {}) } },
+        { actorType: 'user', actorId: u.id, organizationId: invite?.organization_id ?? undefined, action: 'user.complete_profile', resourceType: 'user', resourceId: u.id, metadata: { ageGroup: input.ageGroup, accountType: input.accountType, ...(invite ? { inviteId: invite.id } : {}) } },
         c,
       );
-      return { ageGroup: input.ageGroup };
+      return { ageGroup: input.ageGroup, accountType: input.accountType };
     });
   }
 
@@ -541,8 +558,11 @@ export class AuthController {
     return { signedOut: true };
   }
 
-  /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
-  private async claimInvite(c: any, code: string): Promise<Invite> {
+  /**
+   * Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code.
+   * An organization account needs a code that adds it to an organization; throwing here rolls the claim back.
+   */
+  private async claimInvite(c: any, code: string, accountType: AccountType): Promise<Invite> {
     const invite = (
       await c.query(
         `UPDATE invite_codes SET used_count = used_count + 1
@@ -552,6 +572,7 @@ export class AuthController {
       )
     ).rows[0];
     if (!invite) throw new ForbiddenException({ code: 'invite_invalid' });
+    if (accountType === 'organization' && !invite.organization_id) throw new ForbiddenException({ code: 'invite_not_for_organization' });
     return invite;
   }
 

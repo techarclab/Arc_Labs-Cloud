@@ -54,7 +54,7 @@ export const POLICY: Record<string, Rule> = {
   'PATCH /api/v1/auth/me': r('user', 'write', { body: () => ({ displayName: 'Matrix User' }) }),
   'POST /api/v1/auth/accept-terms': r('user', 'write', { body: () => ({ version: '2000-01-01', accept: true }) }),
   'POST /api/v1/auth/resend-verification': r('user', 'write'),
-  'POST /api/v1/auth/complete-profile': r('user', 'write', { body: () => ({ ageGroup: 'adult' }) }),
+  'POST /api/v1/auth/complete-profile': r('user', 'write', { body: () => ({ ageGroup: 'adult', accountType: 'individual' }) }),
   'POST /api/v1/auth/redeem-invite': r('user', 'write', { body: () => ({ inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'POST /api/v1/auth/change-password': r('user', 'write', { body: () => ({ currentPassword: 'not-the-password-1', newPassword: 'matrix-new-password-1' }) }),
   'POST /api/v1/auth/sign-out-everywhere': r('user', 'none'),

@@ -123,6 +123,7 @@ async function main() {
       const me = (await http('GET', '/api/v1/auth/me', tA)).body;
       assert.equal(me.user.emailVerified, false);
       assert.equal(me.user.ageGroup, 'adult');
+      assert.equal(me.user.accountType, 'individual', 'no account type given: an individual');
       const r = await http('POST', '/api/v1/organizations', tA, { name: 'Too early', slug: 'too-early' });
       assert.equal(r.status, 403);
       assert.equal(r.body.code, 'email_unverified');
@@ -235,10 +236,11 @@ async function main() {
     await check('an invite can add the new user to an organization with a role', async () => {
       assert.equal((await http('POST', '/api/v1/platform/invites', tA, { label: 'bad', maxUses: 1, expiresInDays: 1, organizationId: orgA.id })).status, 400);
       const team = (await http('POST', '/api/v1/platform/invites', tA, { label: 'ARC Labs viewers', maxUses: 1, expiresInDays: 7, organizationId: orgA.id, role: 'viewer' })).body;
-      const r = await closedRegister(student(5, { inviteCode: team.code }));
+      const r = await closedRegister(student(5, { inviteCode: team.code, accountType: 'organization' }));
       assert.equal(r.status, 201, JSON.stringify(r.body));
       const me = await (await fetch(`${CLOSED}/api/v1/auth/me`, { headers: { authorization: `Bearer ${r.body.accessToken}` } })).json();
       assert.deepEqual(me.memberships.map((m: any) => [m.id, m.role]), [[orgA.id, 'viewer']]);
+      assert.equal(me.user.accountType, 'organization');
     });
     await check('under-18s can sign up only with an invite code', async () => {
       const minor = (n: number, extra: Record<string, unknown> = {}) => ({ email: `minor${n}@school.test`, displayName: `Minor ${n}`, password: 'student-password-123', ageGroup: 'minor', acceptTerms: true, ...extra });
@@ -266,13 +268,20 @@ async function main() {
       assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [team.id]))[0].used_count, 1, 'a refused redeem does not use up the code');
       assert.equal((await http('POST', `/api/v1/organizations`, tC, { name: 'Carol Co', slug: 'carol-co' })).status, 201, 'joining does not count as creating');
     });
-    await check('an account without an age group (Google sign-up) can only finish its profile', async () => {
+    await check('an account without an age group (Google sign-up) can only finish its profile; organizations need an organization code', async () => {
       const tD = (await http('POST', '/api/v1/auth/login', undefined, { email: 'carol@join.test', password: 'carol-password-123' })).body.accessToken as string;
       await sql(`UPDATE users SET age_group = NULL WHERE email = 'carol@join.test'`);
       assert.equal((await http('GET', '/api/v1/organizations', tD)).body.code, 'profile_incomplete');
       assert.equal((await http('GET', '/api/v1/auth/me', tD)).body.user.ageGroup, null);
       assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'minor' })).body.code, 'minor_needs_invite');
-      assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult' })).status, 200);
+      // Organization accounts need an invite code that adds them to an organization (same rule as register).
+      assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult', accountType: 'organization' })).body.code, 'organization_needs_invite');
+      const accountsOnly = (await http('POST', '/api/v1/platform/invites', tA, { label: 'accounts only (org check)', maxUses: 3, expiresInDays: 7 })).body;
+      const refused = await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult', accountType: 'organization', inviteCode: accountsOnly.code });
+      assert.equal(refused.body.code, 'invite_not_for_organization');
+      assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [accountsOnly.id]))[0].used_count, 0, 'the refused claim is rolled back');
+      assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult', accountType: 'individual' })).status, 200);
+      assert.equal((await sql(`SELECT account_type FROM users WHERE email = 'carol@join.test'`))[0].account_type, 'individual');
       assert.equal((await http('GET', '/api/v1/organizations', tD)).status, 200);
       assert.equal((await http('POST', '/api/v1/auth/complete-profile', tD, { ageGroup: 'adult' })).body.code, 'profile_complete');
     });

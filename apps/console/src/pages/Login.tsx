@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { useSession } from '../session';
-import { AgeChoice, AgeGroup, ForgotPasswordForm } from './Onboarding';
+import { AccountType, AccountTypeChoice, AgeChoice, AgeGroup, ForgotPasswordForm, inviteHint } from './Onboarding';
 
 type GoogleCredentialResponse = { credential?: string };
 type GoogleIdentityApi = {
@@ -164,6 +164,8 @@ export function LoginPage() {
   const [invite, setInvite] = useState(() => new URLSearchParams(window.location.search).get('invite') ?? '');
   const [accepted, setAccepted] = useState(false);
   const [age, setAge] = useState<AgeGroup | ''>('');
+  // A shared invite link is almost always an organization's.
+  const [accountType, setAccountType] = useState<AccountType | ''>(() => (new URLSearchParams(window.location.search).get('invite') ? 'organization' : ''));
   const [showInvite, setShowInvite] = useState(() => !!new URLSearchParams(window.location.search).get('invite'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -198,6 +200,10 @@ export function LoginPage() {
     }
   }, [signIn]);
 
+  // Organizations and under-18s always need a code; an individual can still enter one (e.g. when sign-up is closed).
+  const inviteRequired = accountType === 'organization' || age === 'minor';
+  const inviteShown = showInvite || inviteRequired;
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -211,7 +217,8 @@ export function LoginPage() {
               password,
               displayName: name || email.split('@')[0],
               ageGroup: age,
-              ...(invite.trim() && (showInvite || age === 'minor') ? { inviteCode: invite.trim() } : {}),
+              accountType,
+              ...(invite.trim() && inviteShown ? { inviteCode: invite.trim() } : {}),
               acceptTerms: accepted,
             });
       await signIn(r.accessToken);
@@ -254,7 +261,11 @@ export function LoginPage() {
             <p className="auth-kicker"><span aria-hidden="true" /> ARC CLOUD CONSOLE</p>
             <h2 className="auth-title">{mode === 'signin' ? 'Sign in' : 'Create your account'}</h2>
             <p className="muted">
-              {mode === 'signin' ? 'Use the email and password you signed up with.' : 'Free: up to 5 devices and 3 channels. No card needed.'}
+              {mode === 'signin'
+                ? 'Use the email and password you signed up with.'
+                : accountType === 'organization'
+                  ? 'Join the organization ARC LABS set up for your college, school or company.'
+                  : 'Free: up to 5 devices and 3 channels. No card needed.'}
             </p>
           </div>
           {(mode === 'signin' || googleClientId) && (
@@ -274,6 +285,7 @@ export function LoginPage() {
               <div className="auth-divider"><span>or use email</span></div>
             </div>
           )}
+          {mode === 'signup' && <AccountTypeChoice value={accountType} onChange={setAccountType} />}
           {mode === 'signup' && (
             <label className="field">
               Your name
@@ -311,15 +323,13 @@ export function LoginPage() {
           {mode === 'signup' && (
             <>
               <AgeChoice value={age} onChange={setAge} />
-              {showInvite || age === 'minor' ? (
+              {inviteShown ? (
                 <label className="field">
                   Invite code
-                  <span className="hint">
-                    {age === 'minor' ? 'Required under 18: from your college, school or instructor.' : 'Optional: joins your college’s or company’s organization.'} E.g. ARC-7KQ3-M9TX-4HPW.
-                  </span>
+                  <span className="hint">{inviteHint(accountType, age)} E.g. ARC-7KQ3-M9TX-4HPW.</span>
                   <input
                     value={invite}
-                    required={age === 'minor'}
+                    required={inviteRequired}
                     onChange={(e) => setInvite(e.target.value)}
                     autoComplete="off"
                     autoCapitalize="characters"
@@ -344,7 +354,7 @@ export function LoginPage() {
             </>
           )}
           <ErrorBox error={error} />
-          <button className="btn primary" disabled={busy || (mode === 'signup' && !age)} type="submit">
+          <button className="btn primary" disabled={busy || (mode === 'signup' && (!age || !accountType))} type="submit">
             {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>
           <p className="small muted">

@@ -13,6 +13,8 @@ interface User {
   emailVerified?: boolean;
   /** Null for Google sign-ups that have not said yet. */
   ageGroup?: 'adult' | 'minor' | null;
+  /** 'individual' (free plan) or 'organization' (joined with an ARC LABS invite code). */
+  accountType?: 'individual' | 'organization' | null;
 }
 
 /** An account that must finish onboarding sees only the onboarding screens (the API refuses everything else). */
