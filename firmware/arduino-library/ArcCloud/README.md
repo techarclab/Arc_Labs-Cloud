@@ -49,8 +49,16 @@ password* on the device page; the old token stops working at once.
 | `connected()`, `intervalSeconds()`, `setFirmwareVersion()`, `setCACert()`, `setVerbose()` | |
 
 Field names must match **Name in firmware** in the channel's fields; once a channel has fields, ARC Cloud
-rejects readings with any other name (*Rejected data* shows why). Readings sent while offline are dropped.
+rejects readings with any other name (*Rejected data* shows why). A name is a letter followed by letters, digits
+or `_`, at most 32 characters (`temperature`, `led1`, `humidity_pct`); `add()`, `write()` and `onControl()` refuse
+anything else with a message on Serial, the same rule ARC Cloud applies. Readings sent while offline are dropped.
 Reconnects back off 5 s → 5 min with jitter. Serial commands: `STATUS`; with `beginProvisioned()` also
 `PROVISION {json}` and `FACTORY-RESET`.
 
 Not in this version: ESP8266 (planned), signed over-the-air updates (use `firmware/esp32-arduino/arc_dht_mqtt`).
+
+## Changes
+
+- **1.0.1**: field names follow ARC Cloud's rule exactly (a letter, then letters, digits or `_`). 1.0.0 also
+  accepted `-`, `.` and a leading digit or `_`, which ARC Cloud then rejected, so the board looked offline.
+- **1.0.0**: first release.

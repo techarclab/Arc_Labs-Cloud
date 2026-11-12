@@ -38,7 +38,7 @@
 #ifndef ARC_PORT
 #define ARC_PORT 8883
 #endif
-#define ARC_CLOUD_LIBRARY_VERSION "1.0.0"
+#define ARC_CLOUD_LIBRARY_VERSION "1.0.1"
 
 class ArcCloud {
  public:
