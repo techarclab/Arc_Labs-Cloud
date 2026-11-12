@@ -405,9 +405,30 @@ async function main() {
             console.log(`      --- worker metrics unavailable: ${String(err.message).slice(0, 120)}`);
           }
         }
+        if (c === 'emqx') {
+          // The worker's session as EMQX sees it: is it connected, how many messages are in flight / queued for it?
+          const js = `const a='Basic '+Buffer.from(process.env.EMQX_API_KEY+':'+process.env.EMQX_API_SECRET).toString('base64');
+            const g=(p)=>fetch(process.env.EMQX_API_URL+p,{headers:{authorization:a}}).then(r=>r.text());
+            Promise.all([g('/api/v5/clients/svc-ingest-1'),g('/api/v5/subscriptions?clientid=svc-ingest-1&limit=20')]).then(([c,s])=>console.log('CLIENT '+c.slice(0,900)+'\\nSUBS '+s.slice(0,900)));`;
+          try {
+            console.log(`      --- emqx view of the worker: ${execFileSync('docker', ['exec', 'arc-cloud-api-1', 'node', '-e', js], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 1800)}`);
+          } catch (err: any) {
+            console.log(`      --- emqx view unavailable: ${String(err.message).slice(0, 160)}`);
+          }
+        }
         const lines = out.split('\n').filter((l) => !/"msg":"message rejected"/.test(l));
         console.log(`      --- ${c} log since the ${label} restart (last 40 of ${lines.length} lines) ---`);
         for (const l of lines.slice(-40)) console.log(`      | ${l.slice(0, 300)}`);
+      }
+      // Which side is stuck? Restart only the worker (same client id, persistent session) and send one more round.
+      try {
+        docker('restart', 'arc-cloud-worker-1');
+        await eventually(async () => workerSubscribedSince(new Date(Date.now() - 15_000)) && true, 'worker subscribed after its restart', 60_000, 500);
+        await sendRound(3999);
+        const ok = await eventually(async () => storedRound(3999) === N && true, 'round after worker restart stored', 45_000, 2000).then(() => true, () => false);
+        console.log(`      --- after restarting ONLY the worker: readings ${ok ? 'are stored again (the worker process/connection was stuck)' : `still not stored (${storedRound(3999)}/${N}): the broker side is stuck`}`);
+      } catch (err: any) {
+        console.log(`      --- worker-restart probe failed: ${String(err.message).slice(0, 160)}`);
       }
       throw e;
     }
