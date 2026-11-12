@@ -367,6 +367,12 @@ async function main() {
     const notAcked = await sendRound(early);
     note(`${label}_readings_on_reconnect_not_acknowledged`, notAcked);
     const workerBack = await eventually(async () => workerSubscribedSince(restartedAt) && Date.now(), `worker subscribed again (${label})`, 120_000, 500);
+    // DEF-014's trigger: EMQX kicking the worker right after it subscribed (denied during startup), then a resumed
+    // session that delivered nothing. With the file ACL, the first connection after a restart must stay up.
+    await sleep(3000);
+    const connects = (docker('logs', '--since', restartedAt.toISOString(), 'arc-cloud-worker-1').match(/"msg":"connected to broker"/g) ?? []).length;
+    note(`${label}_worker_connections_after_restart`, connects);
+    assert.equal(connects, 1, `the worker connected ${connects} times after the restart (it was disconnected again)`);
     note(`${label}_reconnect_all_ms`, back - t0);
     note(`${label}_refused_attempts`, sims.reduce((n, s) => n + s.refusals, 0));
     note(`${label}_worker_resubscribed_ms`, workerBack - t0);
