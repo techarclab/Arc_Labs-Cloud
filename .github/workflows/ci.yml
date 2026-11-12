@@ -339,15 +339,21 @@ jobs:
           docker build -q -f Dockerfile -t arc-cloud-api:scan .
           docker build -q -f Dockerfile.console -t arc-cloud-console:scan .
           docker build -q -f Dockerfile.emqx -t arc-cloud-emqx:scan .
-          for i in $(grep -oE 'image: [^ ]+' deploy/oracle/docker-compose.yml | awk '{print $2}' | sort -u); do docker pull -q "$i"; echo "$i" >> /tmp/infra-images; done
+          docker build -q --pull -t arc-cloud-caddy:scan infra/images/caddy
+          docker build -q --pull -t arc-cloud-postgres:scan infra/images/postgres
+          # Any service still using a pulled (not built) image is scanned too.
+          touch /tmp/infra-images
+          for i in $(grep -oE '^    image: [^ ]+' deploy/oracle/docker-compose.yml | awk '{print $2}' | sort -u); do docker pull -q "$i"; echo "$i" >> /tmp/infra-images; done
           echo "Users the containers run as:"
-          for i in arc-cloud-api:scan arc-cloud-console:scan arc-cloud-emqx:scan; do echo "  $i: $(docker run --rm --entrypoint id "$i" 2>&1 | head -1)"; done
+          for i in arc-cloud-api:scan arc-cloud-console:scan arc-cloud-emqx:scan arc-cloud-caddy:scan arc-cloud-postgres:scan; do echo "  $i: $(docker run --rm --entrypoint id "$i" 2>&1 | head -1)"; done
       - name: Scan (reports)
         run: |
           mkdir -p security/out
           trivy image --quiet --format json --output security/out/image-api.json arc-cloud-api:scan
           trivy image --quiet --format json --output security/out/image-console.json arc-cloud-console:scan
           trivy image --quiet --format json --output security/out/image-emqx.json arc-cloud-emqx:scan
+          trivy image --quiet --format json --output security/out/image-caddy.json arc-cloud-caddy:scan
+          trivy image --quiet --format json --output security/out/image-postgres.json arc-cloud-postgres:scan
           while read -r i; do trivy image --quiet --format json --output "security/out/infra-$(echo "$i" | tr '/:' '__').json" "$i"; done < /tmp/infra-images
           trivy fs --quiet --scanners vuln --include-dev-deps --format json --output security/out/npm-all-deps.json package-lock.json
           trivy config --quiet --format json --output security/out/config.json --skip-dirs node_modules --skip-dirs infra/terraform .
@@ -364,12 +370,17 @@ jobs:
         if: always()
         run: |
           node tools/trivy-summary.mjs security/out
-          for f in security/out/image-api.json security/out/image-console.json; do
+          for f in security/out/image-*.json; do
             echo "== $f: HIGH/CRITICAL with a fix, and where they are"
             jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select((.Severity=="HIGH" or .Severity=="CRITICAL") and .FixedVersion) | "\(.Severity) \(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)  [\(.PkgPath // $t)]"' "$f"
           done
           echo "== The API image must not ship npm:"; docker run --rm --entrypoint sh arc-cloud-api:scan -c 'command -v npm npx corepack || echo "none (good)"'
-      - name: Gate, application images (HIGH/CRITICAL with a fix available)
+      - name: Gate, every image the VM runs (HIGH/CRITICAL with a fix available)
         run: |
-          trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL arc-cloud-api:scan
-          trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL arc-cloud-console:scan
+          rc=0
+          for i in api console emqx caddy postgres; do
+            echo "== arc-cloud-$i"
+            ignore=(); [ -f "security/trivy/$i.ignore" ] && ignore=(--ignorefile "security/trivy/$i.ignore")
+            trivy image --quiet --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "${ignore[@]}" "arc-cloud-$i:scan" || rc=1
+          done
+          exit $rc
