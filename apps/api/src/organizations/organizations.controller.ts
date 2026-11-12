@@ -175,9 +175,10 @@ export class OrganizationsController {
 
   /** Recent ingestion rejections for this tenant — the first place to look when a device "isn't showing up". */
   @Doc('Rejected', { query: pageQuery })
+  // Viewers too: the console shows Rejected data to every member, and viewers already see the readings (DEF-010).
   @Get(':id/rejected-messages')
   async rejected(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Query() q: unknown) {
-    await this.access.requireOrg(user, id, 'engineer');
+    await this.access.requireOrg(user, id, 'viewer');
     const { limit, offset } = parse(pageQuery, q);
     const items = await this.db.query(
       `SELECT id, device_id, topic, reason, detail, payload_excerpt, received_at

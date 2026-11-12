@@ -238,10 +238,8 @@ async function main() {
     assert.equal(mem, String(1024 ** 3));
     const effective = Number(/max_conns\s*:\s*(\d+)/.exec(ssl)?.[1]);
     note('emqx_ssl_max_conns_effective', effective);
-    assert.ok(effective >= 10_000, `listener accepts only ${effective} connections`);
-    if (effective !== 100000) {
-      throw new KnownDefect('DEF-003', `base.hocon sets max_connections = 100000 but EMQX enforces ${effective} (most likely capped by the container's open-file limit; to confirm); the config overstates capacity`);
-    }
+    assert.equal(effective, 100000, `base.hocon sets max_connections = 100000 but EMQX enforces ${effective} (DEF-003)`);
+    note('emqx_nofile', docker('exec', 'arc-cloud-emqx-1', 'sh', '-c', 'ulimit -n').trim());
   });
 
   // ---------- 6. Commands, controls and the management API ----------

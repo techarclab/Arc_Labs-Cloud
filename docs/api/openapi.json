@@ -2598,105 +2598,27 @@
     },
     "/api/v1/update": {
       "get": {
-        "operationId": "DeviceHttpController_update_get",
+        "operationId": "DeviceHttpController_updateGet",
         "parameters": [],
         "responses": {
           "200": {
             "description": ""
           }
         },
-        "summary": "Update",
+        "summary": "Update (query string)",
         "tags": [
           "Device HTTP API"
         ]
       },
       "post": {
-        "operationId": "DeviceHttpController_update_post",
+        "operationId": "DeviceHttpController_updatePost",
         "parameters": [],
         "responses": {
           "200": {
             "description": ""
           }
         },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "put": {
-        "operationId": "DeviceHttpController_update_put",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "delete": {
-        "operationId": "DeviceHttpController_update_delete",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "patch": {
-        "operationId": "DeviceHttpController_update_patch",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "options": {
-        "operationId": "DeviceHttpController_update_options",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "head": {
-        "operationId": "DeviceHttpController_update_head",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
-        "tags": [
-          "Device HTTP API"
-        ]
-      },
-      "search": {
-        "operationId": "DeviceHttpController_update_search",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Update",
+        "summary": "Update (form or JSON body)",
         "tags": [
           "Device HTTP API"
         ]
