@@ -41,8 +41,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const refreshOrgs = useCallback(async () => {
     const r = await api<{ items: Org[] }>('GET', '/organizations');
-    setOrgs(r.items);
-    return r.items;
+    // Memberships from before the role rename may still say 'org_admin': that is admin.
+    const items = r.items.map((o) => ((o.role as string) === 'org_admin' ? { ...o, role: 'admin' as const } : o));
+    setOrgs(items);
+    return items;
   }, []);
 
   const refreshProjects = useCallback(async (orgId: string) => {
