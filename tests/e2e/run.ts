@@ -813,6 +813,7 @@ async function main() {
     await orgSuspension({ tA, tB, orgA, orgB });
     await rolesAndOwnership({ tA, tB, orgA, orgB });
     await invitationsAndSeats({ tA, tB, orgA, sinks });
+    await onboarding({ tA, tB, sinks });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1011,6 +1012,92 @@ async function invitationsAndSeats(ctx: { tA: string; tB: string; orgA: any; sin
     assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members WHERE organization_id = $1 AND user_id = $2`, [orgA.id, hank.id]))[0].n, 0);
     const actions = (await sql(`SELECT action FROM audit_logs WHERE organization_id = $1 AND action LIKE 'invite.%'`, [orgA.id])).map((a: any) => a.action);
     for (const a of ['invite.create', 'invite.accept', 'invite.revoke']) assert.ok(actions.includes(a), a);
+  });
+}
+
+/** The setup code from the newest setup-code email to `to`. */
+async function emailedSetupCode(sinks: Sinks, to: string): Promise<string> {
+  const mail = await eventually(async () => [...sinks.emails].reverse().find((e) => e.to === to && /setup code/i.test(e.raw)), `setup code email to ${to}`);
+  const text = mail.raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return /ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}/.exec(text)![0];
+}
+
+async function onboarding(ctx: { tA: string; tB: string; sinks: Sinks }) {
+  const { tA, tB, sinks } = ctx;
+  console.log('\nOnboarding: who are you, organization setup codes');
+  const asStaff = async <T>(fn: () => Promise<T>) => {
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+    try {
+      return await fn();
+    } finally {
+      await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+    }
+  };
+  const create = (body: Record<string, unknown>, token: string) => http('POST', '/api/v1/onboarding/organization', token, body);
+  let olgaToken = '';
+  await check('ARC LABS issues a setup code bound to an email; it is emailed; staff see only their own codes', async () => {
+    const r = await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'Olga@Onboard.test', plan: 'pro', orgType: 'college' }));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.match(r.body.code, /^ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    assert.equal(r.body.email, 'olga@onboard.test');
+    assert.equal(await emailedSetupCode(sinks, 'olga@onboard.test'), r.body.code);
+    assert.equal((await http('POST', '/api/v1/platform/org-setup-codes', tB, { email: 'x@onboard.test', plan: 'pro' })).status, 403, 'staff only');
+    const list = (await asStaff(() => http('GET', '/api/v1/platform/invites', tA))).body.items;
+    assert.ok(list.some((i: any) => i.kind === 'org_setup' && i.email === 'olga@onboard.test' && i.plan === 'pro' && i.orgType === 'college'));
+    assert.ok(!list.some((i: any) => i.kind === 'email' || i.kind === 'class'), 'organizations\' own invitations are not shown to staff');
+  });
+  await check('a setup code works only for its address, only to create an organization, and a failure does not use it up', async () => {
+    const code = await emailedSetupCode(sinks, 'olga@onboard.test');
+    const olga = await sqlUser('olga@onboard.test', { accountType: null });
+    olgaToken = olga.token;
+    assert.equal((await create({ setupCode: 'ARC-AAAA-BBBB-CCCC', name: 'X', slug: 'x-college' }, olga.token)).body.code, 'setup_code_invalid');
+    assert.equal((await create({ setupCode: code, name: 'Bob College', slug: 'bob-college' }, tB)).body.code, 'setup_code_email_mismatch');
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', olga.token, { inviteCode: code })).body.code, 'invite_invalid', 'not a join code');
+    // Not usable as a sign-up code either (complete-profile claims codes the same way sign-up does).
+    await sql(`INSERT INTO users (email, display_name, email_verified_at) VALUES ('noage@onboard.test', 'No age', now())`);
+    const noAge = await tokenFor('noage@onboard.test');
+    assert.equal((await http('POST', '/api/v1/auth/complete-profile', noAge.token, { ageGroup: 'adult', inviteCode: code })).body.code, 'invite_invalid');
+    assert.equal((await create({ setupCode: code, name: 'Taken', slug: 'arc-labs' }, olga.token)).body.code, 'slug_taken');
+    assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE email = 'olga@onboard.test'`))[0].used_count, 0, 'still unused');
+  });
+  await check('using it creates the organization with the plan and type from the code; the person becomes its owner; once only', async () => {
+    const code = await emailedSetupCode(sinks, 'olga@onboard.test');
+    const r = await create({ setupCode: code.toLowerCase(), name: 'Anurag University', slug: 'anurag-university', orgType: 'industry' }, olgaToken);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(r.body.organization, { id: r.body.organization.id, name: 'Anurag University', slug: 'anurag-university', orgType: 'college', plan: 'pro', role: 'owner' });
+    const [o] = await sql(`SELECT kind, org_type, plan, max_members, max_devices FROM organizations WHERE id = $1`, [r.body.organization.id]);
+    assert.deepEqual(o, { kind: 'organization', org_type: 'college', plan: 'pro', max_members: 500, max_devices: 1000 }, 'the code fixes the type');
+    const me = (await http('GET', '/api/v1/auth/me', olgaToken)).body;
+    assert.equal(me.user.accountType, 'organization');
+    assert.equal(me.isPlatformAdmin, false, 'owning an organization grants no platform privileges');
+    assert.equal((await http('GET', '/api/v1/platform/organizations', olgaToken)).status, 403);
+    assert.deepEqual(me.memberships.map((m: any) => m.role), ['owner']);
+    assert.equal((await create({ setupCode: code, name: 'Again', slug: 'again-org' }, olgaToken)).body.code, 'setup_code_invalid', 'single use');
+    // The new owner can invite straight away.
+    assert.equal((await http('POST', `/api/v1/organizations/${r.body.organization.id}/invitations`, olgaToken, { email: 'staff1@anurag.test', role: 'admin' })).status, 201);
+  });
+  await check('a code without a type lets its owner choose; revoked and expired codes are refused', async () => {
+    const pat = await sqlUser('pat@onboard.test', { accountType: null });
+    const c1 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'free' }))).body;
+    assert.equal((await create({ setupCode: c1.code, name: 'Pat Works', slug: 'pat-works' }, pat.token)).body.code, 'org_type_required');
+    const ok = await create({ setupCode: c1.code, name: 'Pat Works', slug: 'pat-works', orgType: 'industry' }, pat.token);
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(ok.body.organization.orgType, 'industry');
+    const c2 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'pro', orgType: 'corporate' }))).body;
+    await asStaff(() => http('POST', `/api/v1/platform/invites/${c2.id}/revoke`, tA, {}));
+    assert.equal((await create({ setupCode: c2.code, name: 'P2', slug: 'pat-two' }, pat.token)).body.code, 'setup_code_invalid', 'revoked');
+    const c3 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'pro', orgType: 'corporate' }))).body;
+    await sql(`UPDATE invite_codes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [c3.id]);
+    assert.equal((await create({ setupCode: c3.code, name: 'P3', slug: 'pat-three' }, pat.token)).body.code, 'setup_code_invalid', 'expired');
+  });
+  await check('individuals say what they do, once; no platform privileges', async () => {
+    const quinn = await sqlUser('quinn@onboard.test', { accountType: null });
+    assert.equal((await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'astronaut' })).status, 400);
+    const r = await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'hobbyist' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const me = (await http('GET', '/api/v1/auth/me', quinn.token)).body;
+    assert.deepEqual([me.user.accountType, me.user.profession, me.isPlatformAdmin], ['individual', 'hobbyist', false]);
+    assert.equal((await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'engineer' })).body.code, 'account_type_set');
   });
 }
 

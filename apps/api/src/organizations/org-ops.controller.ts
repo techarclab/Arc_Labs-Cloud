@@ -8,6 +8,8 @@ import { AuditService } from '../common/audit.service';
 import { mapAlert } from '../common/events';
 import { actor, AuthUser, CurrentUser, parse, userRef, Uuid } from '../common/http';
 import { hashInviteCode, newInviteCode } from '../common/invites';
+import { renderAccountEmail } from '../common/email';
+import { loadConfig } from '../config';
 import { Db } from '../db/db.service';
 
 /**
@@ -198,6 +200,15 @@ export class OrgOpsController {
 
 const revokeInviteBody = z.object({ removeMembers: z.boolean().optional() });
 
+const setupCodeBody = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  plan: z.enum(['free', 'pro', 'enterprise']),
+  /** Optional: when set, the organization is created as this type; otherwise its creator chooses. */
+  orgType: z.enum(['industry', 'corporate', 'school', 'college', 'university']).optional(),
+  label: z.string().trim().min(1).max(120).optional(),
+  expiresInDays: z.number().int().min(1).max(90).default(14),
+});
+
 const inviteBody = z
   .object({
     label: z.string().trim().min(1).max(120),
@@ -240,12 +251,19 @@ export class PlatformController {
       `SELECT i.*, o.name AS organization_name,
          (SELECT count(*)::int FROM organization_members m WHERE m.invite_id = i.id) AS members
        FROM invite_codes i LEFT JOIN organizations o ON o.id = i.organization_id
+       -- Only ARC LABS's own codes: organizations' invitations and class codes are their business (metadata only).
+       WHERE i.kind IN ('platform', 'org_setup')
        ORDER BY i.created_at DESC LIMIT 200`,
     );
     return {
       items: rows.map((i) => ({
         id: i.id,
+        kind: i.kind,
         label: i.label,
+        /** Setup codes: the address it is bound to, the plan and type it gives. */
+        email: i.email ?? null,
+        plan: i.plan ?? null,
+        orgType: i.org_type ?? null,
         organizationId: i.organization_id,
         organizationName: i.organization_name,
         role: i.role,
@@ -287,6 +305,53 @@ export class PlatformController {
     return { id: row.id, code, label: row.label, maxUses: row.max_uses, expiresAt: row.expires_at, organizationId: row.organization_id, role: row.role };
   }
 
+  /**
+   * An organization setup code: lets the person with this email address create one organization (industry,
+   * corporate, school, college or university) on the given plan, as its owner. Single use, expiring, revocable.
+   * Emailed to them, and returned once so staff can also pass it on directly.
+   */
+  @Doc('Create an organization setup code (bound to an email address)', { body: setupCodeBody })
+  @Post('org-setup-codes')
+  async createSetupCode(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    this.requireStaff(user);
+    const input = parse(setupCodeBody, body);
+    const code = newInviteCode();
+    const row = await this.db.tx(async (c) => {
+      const r = (
+        await c.query(
+          `INSERT INTO invite_codes (kind, code_hash, label, email, plan, org_type, max_uses, expires_at, created_by)
+           VALUES ('org_setup', $1, $2, $3, $4, $5, 1, now() + make_interval(days => $6), $7) RETURNING id, expires_at`,
+          [hashInviteCode(code), input.label ?? `Setup code for ${input.email}`, input.email, input.plan, input.orgType ?? null, input.expiresInDays, userRef(user)],
+        )
+      ).rows[0];
+      const consoleUrl = loadConfig().CONSOLE_URL.replace(/\/+$/, '');
+      const { html, text } = renderAccountEmail({
+        preheader: 'Your code to set up your organization on ARC Cloud.',
+        heading: 'Set up your organization',
+        greeting: 'Hello,',
+        intro: `ARC LABS has set up ARC Cloud for your organization. Your setup code is ${code}. It works once, for this email address.`,
+        button: { label: 'Open ARC Cloud', url: consoleUrl },
+        steps: [
+          `Sign in, or create a free account, with this email address (${input.email}), and confirm it.`,
+          'At “Who are you?”, choose your kind of organization, enter the setup code and name your organization. You become its owner.',
+          'Invite your team or students from the Team page, and create your first channel.',
+        ],
+        notes: [`The code expires in ${input.expiresInDays} day${input.expiresInDays === 1 ? '' : 's'}.`, 'If you did not ask ARC LABS for this, ignore this email.'],
+      });
+      // auth.* deliveries keep only the subject once sent, so the code does not stay in the outbox.
+      await c.query(`INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES (NULL, 'email', $1, 'auth.org_setup', $2)`, [
+        input.email,
+        { subject: 'Your ARC Cloud organization setup code', text, html },
+      ]);
+      await this.audit.record(
+        { ...actor(user), action: 'platform.setup_code_create', resourceType: 'invite_code', resourceId: r.id, metadata: { email: input.email, plan: input.plan, orgType: input.orgType ?? null, expiresInDays: input.expiresInDays } },
+        c,
+      );
+      return r;
+    });
+    return { id: row.id, code, email: input.email, plan: input.plan, orgType: input.orgType ?? null, expiresAt: row.expires_at };
+  }
+
   @Doc('Revoke invite code; optionally also remove the people who joined an organization with it', { body: revokeInviteBody })
   @Post('invites/:id/revoke')
   @HttpCode(200)
@@ -294,7 +359,9 @@ export class PlatformController {
     this.requireStaff(user);
     const { removeMembers } = parse(revokeInviteBody, body ?? {});
     return this.db.tx(async (c) => {
-      const row = (await c.query(`UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 RETURNING id, organization_id`, [id])).rows[0];
+      const row = (
+        await c.query(`UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 AND kind IN ('platform', 'org_setup') RETURNING id, organization_id`, [id])
+      ).rows[0];
       if (!row) throw new NotFoundException({ code: 'not_found' });
       // Admins stay (an organization must never lose its last admin this way); they can be removed from Team.
       const removed = removeMembers

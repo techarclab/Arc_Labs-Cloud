@@ -59,6 +59,8 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/auth/account-type': r('user', 'write', { body: () => ({ accountType: 'organization', inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'GET /api/v1/auth/delete-account': r('user', 'read'),
   'POST /api/v1/auth/delete-account': r('user', 'write', { body: () => ({ confirmEmail: 'not-this-account@example.test' }) }),
+  'POST /api/v1/onboarding/individual': r('user', 'write', { body: () => ({ profession: 'engineer' }) }), // once per account; later calls 409
+  'POST /api/v1/onboarding/organization': r('user', 'none'), // needs a real setup code for the caller's address (e2e covers it)
   'POST /api/v1/invitations/accept': r('user', 'none'), // needs a real emailed token for the caller's address (e2e covers it)
   'POST /api/v1/auth/redeem-invite': r('user', 'write', { body: () => ({ inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'POST /api/v1/auth/change-password': r('user', 'write', { body: () => ({ currentPassword: 'not-the-password-1', newPassword: 'matrix-new-password-1' }) }),
@@ -95,6 +97,7 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/platform/invites': r('platform', 'read'),
   'POST /api/v1/platform/invites': r('platform', 'write', { body: () => ({ label: 'matrix', maxUses: 1, expiresInDays: 1 }) }),
   'POST /api/v1/platform/invites/{id}/revoke': r('platform', 'destructive', { body: () => ({}) }),
+  'POST /api/v1/platform/org-setup-codes': r('platform', 'write', { body: () => ({ email: 'matrix-owner@example.test', plan: 'pro' }) }),
 
   // ---------- channels ----------
   'POST /api/v1/projects': r('org_admin', 'write', { body: (f) => ({ organizationId: f.orgA, name: 'Matrix extra channel', timezone: 'Asia/Kolkata' }) }),

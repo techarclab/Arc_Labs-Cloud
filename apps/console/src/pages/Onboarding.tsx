@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { ArcMark, ErrorBox, Modal, useToast } from '../components/ui';
 import { useSession } from '../session';
+import { slugify } from '../format';
 
 export type AgeGroup = 'adult' | 'minor';
 
@@ -384,40 +385,75 @@ export function ResetPasswordPage() {
   );
 }
 
-export type AccountType = 'individual' | 'organization' | 'other';
+export type Path = 'individual' | 'organization' | 'institution' | 'join';
+type Profession = 'engineer' | 'teacher' | 'trainer' | 'hobbyist' | 'other';
+type OrgType = 'industry' | 'corporate' | 'school' | 'college' | 'university';
 
-const ACCOUNT_TYPES: { value: AccountType; title: string; text: string }[] = [
-  { value: 'individual', title: 'Just me', text: 'Your own projects at home, for study or as a hobby. Free for up to 5 devices and 3 channels, 30 days of history.' },
-  { value: 'organization', title: 'My college, school or company', text: 'Join the organization ARC LABS has set up for you, with the invite code they gave you. Its plan sets the limits.' },
-  { value: 'other', title: 'Something else', text: 'A club, research group, startup or event. You start on the free plan; tell us a little and ARC LABS can help with more.' },
+const PATHS: { value: Path; title: string; text: string }[] = [
+  { value: 'individual', title: 'Individual', text: 'Your own projects: an engineer, teacher, trainer or hobbyist. Free for up to 5 devices and 3 channels.' },
+  { value: 'organization', title: 'Organization', text: 'An industry or corporate team. Needs a setup code from ARC LABS; you become the owner.' },
+  { value: 'institution', title: 'Institution', text: 'A school, college or university. Needs a setup code from ARC LABS; you become the owner.' },
+  { value: 'join', title: 'Join my organization', text: 'Your college, school or company is already on ARC Cloud and gave you a class code.' },
 ];
+const PROFESSIONS: { value: Profession; label: string }[] = [
+  { value: 'engineer', label: 'Engineer' },
+  { value: 'teacher', label: 'Teacher' },
+  { value: 'trainer', label: 'Trainer' },
+  { value: 'hobbyist', label: 'Hobbyist' },
+  { value: 'other', label: 'Other' },
+];
+const ORG_TYPES: Record<'organization' | 'institution', { value: OrgType; label: string }[]> = {
+  organization: [
+    { value: 'industry', label: 'Industry' },
+    { value: 'corporate', label: 'Corporate' },
+  ],
+  institution: [
+    { value: 'school', label: 'School' },
+    { value: 'college', label: 'College' },
+    { value: 'university', label: 'University' },
+  ],
+};
 
 /**
- * Asked once, right after the email address is confirmed: who is this account for?
- * Organizations join with an invite code from ARC LABS; everyone else continues on the free plan.
+ * "Who are you?", asked once, right after the email address is confirmed (and after any emailed invitation).
+ * Individuals get a personal workspace; organizations and institutions are created with an ARC LABS setup code;
+ * people joining an existing organization use its class code (emailed invitations arrive by link instead).
  */
-export function AccountTypeGate({ name, onDone, onSignOut }: { name: string; onDone: () => Promise<void>; onSignOut: () => void }) {
+export function WhoAreYouGate({ name, email, onDone, onSignOut }: { name: string; email: string; onDone: () => Promise<void>; onSignOut: () => void }) {
   const { refreshOrgs } = useSession();
   const nav = useNavigate();
-  const [type, setType] = useState<AccountType | ''>('');
-  const [invite, setInvite] = useState('');
-  const [note, setNote] = useState('');
+  const [path, setPath] = useState<Path | ''>('');
+  const [profession, setProfession] = useState<Profession | ''>('');
+  const [orgType, setOrgType] = useState<OrgType | ''>('');
+  const [code, setCode] = useState('');
+  const [orgName, setOrgName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [slugTouched, setSlugTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
+  const ready =
+    path === 'individual' ? !!profession : path === 'join' ? !!code.trim() : path ? !!orgType && !!code.trim() && !!orgName.trim() && !!slug : false;
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!ready) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ organization?: { id: string } }>('POST', '/auth/account-type', {
-        accountType: type,
-        ...(type === 'organization' ? { inviteCode: invite.trim() } : {}),
-        ...(type === 'other' && note.trim() ? { note: note.trim() } : {}),
-      });
-      if (r.organization) await refreshOrgs();
+      let orgId: string | undefined;
+      if (path === 'individual') {
+        await api('POST', '/onboarding/individual', { profession });
+      } else if (path === 'join') {
+        const r = await api<{ organization?: { id: string } }>('POST', '/auth/account-type', { accountType: 'organization', inviteCode: code.trim() });
+        orgId = r.organization?.id;
+      } else {
+        const r = await api<{ organization: { id: string } }>('POST', '/onboarding/organization', { setupCode: code.trim(), name: orgName.trim(), slug, orgType });
+        orgId = r.organization.id;
+      }
+      if (orgId) await refreshOrgs();
       await onDone();
-      nav(r.organization ? `/o/${r.organization.id}` : '/', { replace: true });
+      nav(orgId ? `/o/${orgId}` : '/', { replace: true });
     } catch (err) {
       setError(err);
       setBusy(false);
@@ -433,14 +469,24 @@ export function AccountTypeGate({ name, onDone, onSignOut }: { name: string; onD
         </div>
         <div>
           <p className="auth-kicker"><span aria-hidden="true" /> EMAIL CONFIRMED</p>
-          <h2 className="auth-title">Welcome, {name.split(' ')[0]}! Who is this account for?</h2>
-          <p className="muted">This sets up the right workspace and limits for you. You only answer once.</p>
+          <h2 className="auth-title">Welcome, {name.split(' ')[0]}! Who are you?</h2>
+          <p className="muted">This sets up the right workspace and limits for you. You answer once.</p>
         </div>
         <fieldset className="choice account-types">
-          <legend className="sr-only">Who is this account for?</legend>
-          {ACCOUNT_TYPES.map((t) => (
-            <label key={t.value} className={type === t.value ? 'selected' : undefined}>
-              <input type="radio" name="account-type" required checked={type === t.value} onChange={() => setType(t.value)} />
+          <legend className="sr-only">Who are you?</legend>
+          {PATHS.map((t) => (
+            <label key={t.value} className={path === t.value ? 'selected' : undefined}>
+              <input
+                type="radio"
+                name="path"
+                required
+                checked={path === t.value}
+                onChange={() => {
+                  setPath(t.value);
+                  setOrgType(t.value === 'organization' || t.value === 'institution' ? ORG_TYPES[t.value].length === 1 ? ORG_TYPES[t.value][0].value : '' : '');
+                  setError(null);
+                }}
+              />
               <span>
                 <b>{t.title}</b>
                 <span className="hint">{t.text}</span>
@@ -448,22 +494,75 @@ export function AccountTypeGate({ name, onDone, onSignOut }: { name: string; onD
             </label>
           ))}
         </fieldset>
-        {type === 'organization' && (
+
+        {path === 'individual' && (
+          <fieldset className="choice chips">
+            <legend>What do you do?</legend>
+            {PROFESSIONS.map((p) => (
+              <label key={p.value} className={profession === p.value ? 'selected' : undefined}>
+                <input type="radio" name="profession" required checked={profession === p.value} onChange={() => setProfession(p.value)} />
+                <span>{p.label}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        {(path === 'organization' || path === 'institution') && (
+          <>
+            <fieldset className="choice chips">
+              <legend>Which kind?</legend>
+              {ORG_TYPES[path].map((o) => (
+                <label key={o.value} className={orgType === o.value ? 'selected' : undefined}>
+                  <input type="radio" name="org-type" required checked={orgType === o.value} onChange={() => setOrgType(o.value)} />
+                  <span>{o.label}</span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="field">
+              Setup code from ARC LABS
+              <span className="hint">ARC LABS emailed it to {email}. It works once, only for this address. No code? Contact ARC LABS, or choose “Individual” for now.</span>
+              <input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="ARC-XXXX-XXXX-XXXX" autoComplete="off" autoCapitalize="characters" spellCheck={false} />
+            </label>
+            <label className="field">
+              {path === 'institution' ? 'Name of your school, college or university' : 'Name of your organization'}
+              <input
+                required
+                maxLength={120}
+                value={orgName}
+                onChange={(e) => {
+                  setOrgName(e.target.value);
+                  if (!slugTouched) setSlug(slugify(e.target.value));
+                }}
+                placeholder={path === 'institution' ? 'Anurag University' : 'ARC LABS'}
+              />
+            </label>
+            <label className="field">
+              Short name
+              <span className="hint">Lowercase letters, numbers and dashes. Used in links.</span>
+              <input
+                required
+                pattern="[a-z0-9][a-z0-9\-]{1,62}"
+                value={slug}
+                onChange={(e) => {
+                  setSlugTouched(true);
+                  setSlug(e.target.value);
+                }}
+              />
+            </label>
+          </>
+        )}
+
+        {path === 'join' && (
           <label className="field">
-            Invite code
-            <span className="hint">From ARC LABS or your instructor, e.g. ARC-7KQ3-M9TX-4HPW. No code yet? Choose “Just me” and join later from the menu.</span>
-            <input required value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} autoFocus />
+            Class code
+            <span className="hint">From your instructor or organization, e.g. ARC-7KQ3-M9TX-4HPW. Got an email invitation instead? Open its link.</span>
+            <input required value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
           </label>
         )}
-        {type === 'other' && (
-          <label className="field">
-            What is it? <span className="hint">Optional, e.g. “Robotics club, 20 members”.</span>
-            <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} autoFocus />
-          </label>
-        )}
+
         <ErrorBox error={error} />
-        <button className="btn primary" disabled={busy || !type} type="submit">
-          {busy ? 'Please wait…' : type === 'organization' ? 'Join my organization' : 'Continue'}
+        <button className="btn primary" disabled={busy || !ready} type="submit">
+          {busy ? 'Please wait…' : path === 'organization' || path === 'institution' ? 'Create my organization' : path === 'join' ? 'Join' : 'Continue'}
         </button>
         <button className="btn quiet small" type="button" onClick={onSignOut}>
           Sign out

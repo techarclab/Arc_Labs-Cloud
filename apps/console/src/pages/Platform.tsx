@@ -135,6 +135,7 @@ export function PlatformPage() {
           </table>
         </div>
       </section>
+      <SetupCodesSection />
       <InvitesSection orgs={items ?? []} />
       {editing && (
         <PlanModal
@@ -207,7 +208,11 @@ function PlanModal({ org, plans, onClose, onSaved }: { org: PlatformOrg; plans: 
 
 interface Invite {
   id: string;
+  kind: 'platform' | 'org_setup';
   label: string;
+  email: string | null;
+  plan: string | null;
+  orgType: string | null;
   organizationId: string | null;
   organizationName: string | null;
   role: string | null;
@@ -231,7 +236,7 @@ function InvitesSection({ orgs }: { orgs: PlatformOrg[] }) {
   const [created, setCreated] = useState<{ code: string; label: string } | null>(null);
   const load = useCallback(async () => {
     try {
-      setItems((await api<{ items: Invite[] }>('GET', '/platform/invites')).items);
+      setItems((await api<{ items: Invite[] }>('GET', '/platform/invites')).items.filter((i) => i.kind !== 'org_setup'));
     } catch (e) {
       setError(e);
     }
@@ -450,6 +455,185 @@ function InviteModal({ orgs, onClose, onCreated }: { orgs: PlatformOrg[]; onClos
             </select>
           </label>
         )}
+      </form>
+    </Modal>
+  );
+}
+
+const ORG_TYPE_LABEL: Record<string, string> = { industry: 'Industry', corporate: 'Corporate', school: 'School', college: 'College', university: 'University' };
+
+/**
+ * Organization setup codes: the only way a customer creates an organization (industry, corporate, school, college,
+ * university). Bound to the customer's email, single use, expiring; whoever uses it becomes the owner.
+ */
+function SetupCodesSection() {
+  const toast = useToast();
+  const [items, setItems] = useState<Invite[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<{ code: string; email: string } | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setItems((await api<{ items: Invite[] }>('GET', '/platform/invites')).items.filter((i) => i.kind === 'org_setup'));
+    } catch (e) {
+      setError(e);
+    }
+  }, []);
+  usePoll(load, 60_000, [load]);
+  async function revoke(i: Invite) {
+    if (!confirm(`Revoke the setup code for ${i.email}? It stops working straight away. An organization already created with it stays.`)) return;
+    try {
+      await api('POST', `/platform/invites/${i.id}/revoke`, {});
+      toast('Setup code revoked');
+      void load();
+    } catch (e) {
+      setError(e);
+    }
+  }
+  return (
+    <section className="panel" style={{ marginTop: 20 }}>
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Organization setup codes</h3>
+          <p className="muted small" style={{ margin: '4px 0 0' }}>
+            How a company, school, college or university gets its organization. The code is emailed to the person you name, works once and only for that address, and makes them the owner on the plan you choose.
+          </p>
+        </div>
+        <button className="btn primary" onClick={() => setCreating(true)}>
+          New setup code
+        </button>
+      </div>
+      <ErrorBox error={error} />
+      <div className="table-wrap">
+        <table className="grid">
+          <thead>
+            <tr>
+              <th>For</th>
+              <th>Plan</th>
+              <th className="hide-sm">Type</th>
+              <th>Expires</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {(items ?? []).map((i) => (
+              <tr key={i.id} style={i.status !== 'active' ? { opacity: 0.6 } : undefined}>
+                <td>
+                  <b>{i.email}</b>
+                  <div className="muted small">created {dateTime(i.createdAt)}</div>
+                </td>
+                <td>{i.plan}</td>
+                <td className="hide-sm">{i.orgType ? ORG_TYPE_LABEL[i.orgType] : <span className="muted">their choice</span>}</td>
+                <td>{dateTime(i.expiresAt).split(',')[0]}</td>
+                <td>
+                  <span className={`pill${i.status === 'active' ? ' ok' : ''}`}>{i.status === 'used_up' ? 'used' : STATUS_LABEL[i.status]}</span>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  {i.status === 'active' && (
+                    <button className="btn small quiet danger" onClick={() => void revoke(i)}>
+                      Revoke
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {items && !items.length && (
+              <tr>
+                <td colSpan={6} className="muted small">
+                  No setup codes yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {creating && (
+        <SetupCodeModal
+          onClose={() => setCreating(false)}
+          onCreated={(c) => {
+            setCreating(false);
+            setCreated(c);
+            void load();
+          }}
+        />
+      )}
+      {created && (
+        <Modal open onClose={() => setCreated(null)} title={`Setup code for ${created.email}`} footer={<button className="btn primary" onClick={() => setCreated(null)}>Done</button>}>
+          <div className="note">We emailed it to {created.email}. It is shown only now; ARC Cloud stores just a scrambled version. It works only for that address.</div>
+          <p style={{ fontSize: 26, fontWeight: 700, letterSpacing: 2, textAlign: 'center', margin: '18px 0' }} className="mono">
+            {created.code}
+          </p>
+          <div className="row" style={{ justifyContent: 'center' }}>
+            <CopyButton text={created.code} label="Copy code" />
+          </div>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+function SetupCodeModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: { code: string; email: string }) => void }) {
+  const [email, setEmail] = useState('');
+  const [plan, setPlan] = useState('pro');
+  const [orgType, setOrgType] = useState('');
+  const [days, setDays] = useState(14);
+  const [error, setError] = useState<unknown>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const r = await api<{ code: string; email: string }>('POST', '/platform/org-setup-codes', { email, plan, expiresInDays: days, ...(orgType ? { orgType } : {}) });
+      onCreated(r);
+    } catch (err) {
+      setError(err);
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="New organization setup code"
+      footer={
+        <>
+          <button className="btn quiet" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" type="submit" form="setup-code">
+            Create and email it
+          </button>
+        </>
+      }
+    >
+      <form id="setup-code" className="form" onSubmit={submit}>
+        <label className="field">
+          Email of the person who will own the organization
+          <span className="hint">Only this address can use the code. Check it belongs to them.</span>
+          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+        </label>
+        <label className="field">
+          Plan
+          <select value={plan} onChange={(e) => setPlan(e.target.value)}>
+            <option value="free">Free</option>
+            <option value="pro">Pro</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
+        </label>
+        <label className="field">
+          Kind of organization
+          <select value={orgType} onChange={(e) => setOrgType(e.target.value)}>
+            <option value="">Let them choose</option>
+            {Object.entries(ORG_TYPE_LABEL).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Expires after (days)
+          <input type="number" min={1} max={90} required value={days} onChange={(e) => setDays(Number(e.target.value))} />
+        </label>
+        <ErrorBox error={error} />
       </form>
     </Modal>
   );
