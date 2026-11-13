@@ -5,12 +5,13 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule } from '@nestjs/swagger';
 import { buildOpenApi } from './openapi';
 import { AppModule, InternalModule } from './app.module';
-import { loadConfig } from './config';
+import { loadConfig, obsoleteSettingWarnings } from './config';
 import { migrate } from './db/migrate';
 
 async function bootstrap() {
   const cfg = loadConfig();
   const log = new Logger('Bootstrap');
+  for (const w of obsoleteSettingWarnings()) log.warn(w);
 
   if (process.env.RUN_MIGRATIONS === 'true') {
     await migrate(cfg.DATABASE_URL, (m) => log.log(m), cfg.DATABASE_PASSWORD_FILE);

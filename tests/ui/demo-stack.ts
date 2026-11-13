@@ -5,16 +5,17 @@
  *
  *   DATABASE_URL=postgres://… npx tsx tests/ui/demo-stack.ts      (then: ARC_API_ORIGIN=http://127.0.0.1:3100 npm run dev -w @arc/console)
  */
+import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { API, BROKER_PORT, connectDevice, DB, http, pub, SECRETS, sleep, spawnSvc, startBroker, telemetry, waitFor } from '../e2e/harness';
+import { API, BROKER_PORT, connectDevice, DB, http, pub, ROOT, SECRETS, sleep, spawnSvc, startBroker, telemetry, waitFor } from '../e2e/harness';
 
 async function main() {
   await startBroker();
   spawnSvc('api', 'apps/api/dist/main.js', {
     ...SECRETS, DATABASE_URL: DB!, PORT: '3100', INTERNAL_PORT: '3101', RUN_MIGRATIONS: 'true',
     MQTT_PUBLIC_HOST: '127.0.0.1', MQTT_PUBLIC_PORT: String(BROKER_PORT), MQTT_URL: `mqtt://127.0.0.1:${BROKER_PORT}`,
-    HTTP_PUBLIC_URL: API, ALLOW_PRIVATE_WEBHOOKS: 'true', CONSOLE_URL: 'http://127.0.0.1:3002', CORS_ORIGINS: 'http://127.0.0.1:3002', PLATFORM_ADMIN_EMAILS: 'admin@arclabs.test',
+    HTTP_PUBLIC_URL: API, ALLOW_PRIVATE_WEBHOOKS: 'true', CONSOLE_URL: 'http://127.0.0.1:3002', CORS_ORIGINS: 'http://127.0.0.1:3002',
   });
   await waitFor(async () => (await fetch(`${API}/health/ready`)).ok, 'API', 60000);
   spawnSvc('worker', 'apps/ingestion-worker/dist/main.js', {
@@ -26,6 +27,9 @@ async function main() {
 
   const a = await http('POST', '/api/v1/auth/register', undefined, { email: 'admin@arclabs.test', displayName: 'Sai (Admin)', password: 'demo-password-123', acceptTerms: true });
   const t = a.body.accessToken as string;
+  // Demo admin is a platform admin through the operator tool, the same way as on a real server.
+  const g = spawnSync(process.execPath, ['apps/api/dist/tools/platform-admin.js', 'grant', 'admin@arclabs.test', '--reason', 'demo seed'], { cwd: ROOT, env: { ...process.env, DATABASE_URL: DB! }, encoding: 'utf8' });
+  if (g.status !== 0) throw new Error(`platform-admin grant failed: ${g.stdout}${g.stderr}`);
   const v = await http('POST', '/api/v1/auth/register', undefined, { email: 'viewer@arclabs.test', displayName: 'Vik (Viewer)', password: 'demo-password-123', acceptTerms: true });
   const org = (await http('POST', '/api/v1/organizations', t, { name: 'ARC LABS', slug: 'arc-labs' })).body;
   await http('POST', `/api/v1/organizations/${org.id}/members`, t, { email: 'viewer@arclabs.test', role: 'viewer' });

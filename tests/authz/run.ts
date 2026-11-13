@@ -157,7 +157,6 @@ async function main() {
         INTERNAL_PORT: '3101',
         RUN_MIGRATIONS: 'true',
         NODE_ENV: 'test',
-        PLATFORM_ADMIN_EMAILS: emails.platform,
         EMAIL_VERIFICATION: 'required',
         ALLOW_PRIVATE_WEBHOOKS: 'true',
         CONSOLE_URL: 'http://console.test',
@@ -175,6 +174,8 @@ async function main() {
       if ((PRINCIPALS as readonly string[]).includes(who)) tokens[who as Principal] = r.body.accessToken;
     }
     await sql(`UPDATE users SET email_verified_at = now()`); // no SMTP here
+    // Platform admin comes only from the database flag (the operator tool sets it in production).
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = $1`, [emails.platform]);
     const as = (p: Principal) => tokens[p];
     const ok = (r: { status: number; body: any }, what: string) => {
       assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${JSON.stringify(r.body)}`);

@@ -37,7 +37,7 @@ Web console / scripts / ARC LMS ──HTTPS REST :3000──▶ API
 | Firmware & OTA | Signing keys, signed releases, staged rollouts (widen, pause, cancel) with per-device progress |
 | Usage & limits | Plan limits, messages per day, busiest devices, data retention |
 | Team, Rejected data, Audit log | People and roles, why messages were dropped, every change |
-| ARC LABS → All organizations | Platform admins (`PLATFORM_ADMIN_EMAILS`): every customer organization and its plan |
+| ARC LABS → All organizations | Platform admins: every customer organization and its plan. Granted only on the server with `node apps/api/dist/tools/platform-admin.js grant <email>` (see [docs/deploy/aws-pilot.md](docs/deploy/aws-pilot.md#7-lock-down-sign-up-and-set-operators)) |
 | `/lab#…` | Read-only learner view opened from ARC LMS |
 
 ## Deploying

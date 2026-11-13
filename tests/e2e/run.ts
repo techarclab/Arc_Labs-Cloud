@@ -2,7 +2,7 @@
  * End-to-end checks for every phase (DATABASE_URL=postgres://… empty DB):  npm run test:e2e
  */
 import assert from 'node:assert/strict';
-import { ChildProcess } from 'node:child_process';
+import { ChildProcess, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,6 +78,9 @@ async function main() {
       EMQX_API_URL: 'http://127.0.0.1:18184',
       EMQX_API_KEY: EMQX_KEY,
       EMQX_API_SECRET: EMQX_SECRET,
+      // Obsolete setting, kept on purpose: these addresses must get NO privileges (see "Platform admin" checks).
+      // Mixed case, because the old email match was case-insensitive.
+      PLATFORM_ADMIN_EMAILS: 'staff@arclabs.test, Intruder@Invited.test',
     };
     procs.push(spawnSvc('api', 'apps/api/dist/main.js', env));
     await waitFor(async () => (await fetch(`${API}/health/ready`)).ok, 'API');
@@ -190,7 +193,10 @@ async function main() {
     console.log('\nInvites & consent (pilot onboarding)');
     // A second API on the same database with sign-up closed, as on the pilot server.
     const { MQTT_URL: _noBroker, ...closedEnv } = env;
-    procs.push(spawnSvc('api-closed', 'apps/api/dist/main.js', { ...closedEnv, PORT: '3200', INTERNAL_PORT: '3201', ALLOW_SIGNUP: 'false', RUN_MIGRATIONS: 'false' }));
+    const closedApi = spawnSvc('api-closed', 'apps/api/dist/main.js', { ...closedEnv, PORT: '3200', INTERNAL_PORT: '3201', ALLOW_SIGNUP: 'false', RUN_MIGRATIONS: 'false' });
+    procs.push(closedApi);
+    let closedApiLog = '';
+    closedApi.stdout!.on('data', (d: Buffer) => (closedApiLog += d.toString()));
     const CLOSED = 'http://127.0.0.1:3200';
     await waitFor(async () => (await fetch(`${CLOSED}/health/ready`)).ok, 'API with sign-up closed');
     const closedRegister = async (body: Record<string, unknown>) => {
@@ -453,6 +459,98 @@ async function main() {
       assert.equal(audit[0].metadata.termsVersion, me.currentTermsVersion);
     });
     await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+    console.log('\nPlatform admin comes only from the database flag (PLATFORM_ADMIN_EMAILS is ignored)');
+    // A separate tenant whose data an escalated account must not reach.
+    // Created in SQL, not through sign-up: registration is rate-limited per IP (10/min) and this suite is at it.
+    await sql(`INSERT INTO users (email, display_name, email_verified_at, age_group, account_type, terms_version, terms_accepted_at) VALUES ('victim@tenant.test', 'Victim', now(), 'adult', 'individual', '2000-01-01', now())`);
+    const victim = { accessToken: (await tokenFor('victim@tenant.test')).token };
+    const victimOrg = (await http('POST', '/api/v1/organizations', victim.accessToken, { name: 'Victim Co', slug: 'victim-co' })).body;
+    const victimProj = (await http('POST', '/api/v1/projects', victim.accessToken, { organizationId: victimOrg.id, name: 'Private channel' })).body;
+    const victimDev = (await http('POST', '/api/v1/devices', victim.accessToken, { projectId: victimProj.id, displayName: 'Private device' })).body.device;
+    const call = async (base: string, method: string, path: string, token: string, body?: unknown) => {
+      const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: r.status, body: await r.json().catch(() => null) };
+    };
+    /** Everything a platform admin could do, refused; and another tenant's data hidden (404, not 403). */
+    const assertNoPlatformAccess = async (base: string, token: string) => {
+      const me = await call(base, 'GET', '/api/v1/auth/me', token);
+      assert.equal(me.status, 200);
+      assert.equal(me.body.isPlatformAdmin, false, 'not reported as platform admin');
+      assert.equal((await call(base, 'GET', '/api/v1/platform/organizations', token)).status, 403, 'platform organizations');
+      assert.equal((await call(base, 'GET', '/api/v1/platform/invites', token)).status, 403, 'list invites');
+      assert.equal((await call(base, 'POST', '/api/v1/platform/invites', token, { label: 'x', maxUses: 1, expiresInDays: 1 })).status, 403, 'create invites');
+      assert.equal((await call(base, 'PATCH', `/api/v1/organizations/${victimOrg.id}/plan`, token, { plan: 'pro' })).status, 403, 'change a plan');
+      assert.equal((await call(base, 'GET', `/api/v1/organizations/${victimOrg.id}`, token)).status, 404, 'other tenant organization');
+      assert.equal((await call(base, 'GET', `/api/v1/organizations/${victimOrg.id}/overview`, token)).status, 404, 'other tenant overview');
+      assert.equal((await call(base, 'GET', `/api/v1/projects/${victimProj.id}`, token)).status, 404, 'other tenant channel');
+      assert.equal((await call(base, 'GET', `/api/v1/devices/${victimDev.id}`, token)).status, 404, 'other tenant device');
+      assert.equal((await call(base, 'GET', `/api/v1/channels/${victimProj.id}/feeds.json`, token)).status, 404, 'other tenant feed');
+      const orgs = (await call(base, 'GET', '/api/v1/organizations', token)).body;
+      assert.ok(!JSON.stringify(orgs).includes(victimOrg.id), 'other tenant not listed');
+    };
+    const adminCli = (...args: string[]) => {
+      const r = spawnSync(process.execPath, ['apps/api/dist/tools/platform-admin.js', ...args], { cwd: ROOT, env: { ...process.env, DATABASE_URL: DB! }, encoding: 'utf8' });
+      return { status: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    let tStaff = '';
+    await check('open sign-up with an email listed in PLATFORM_ADMIN_EMAILS grants no platform admin', async () => {
+      const r = await http('POST', '/api/v1/auth/register', undefined, { email: 'staff@arclabs.test', displayName: 'Not staff', password: 'claimed-password-123', ageGroup: 'adult', acceptTerms: true });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      tStaff = r.body.accessToken;
+      await sql(`UPDATE users SET email_verified_at = now() WHERE email = 'staff@arclabs.test'`); // even with the address confirmed
+      await assertNoPlatformAccess(API, tStaff);
+    });
+    await check('invite-code sign-up with an email listed in PLATFORM_ADMIN_EMAILS grants no platform admin', async () => {
+      await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+      const inv = (await http('POST', '/api/v1/platform/invites', tA, { label: 'batch', maxUses: 1, expiresInDays: 1 })).body;
+      await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+      const r = await closedRegister({ email: 'intruder@invited.test', displayName: 'Intruder', password: 'claimed-password-123', ageGroup: 'adult', acceptTerms: true, inviteCode: inv.code });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      await sql(`UPDATE users SET email_verified_at = now() WHERE email = 'intruder@invited.test'`);
+      await assertNoPlatformAccess(CLOSED, r.body.accessToken);
+      assert.equal((await sql(`SELECT is_platform_admin FROM users WHERE email = 'intruder@invited.test'`))[0].is_platform_admin, false);
+    });
+    await check('an old PLATFORM_ADMIN_EMAILS setting starts the API with a clear warning, not a crash', async () => {
+      assert.match(closedApiLog, /PLATFORM_ADMIN_EMAILS is set but IGNORED/);
+      assert.ok(!/staff@arclabs\.test|intruder@invited\.test/i.test(closedApiLog), 'addresses are not echoed into logs');
+    });
+    await check('database flag via the operator CLI: grant and revoke apply on the next request, both audited', async () => {
+      const g = adminCli('grant', 'staff@arclabs.test', '--reason', 'e2e');
+      assert.equal(g.status, 0, g.out);
+      // The token issued before the grant: privileges are read from the database on every request.
+      const me = (await http('GET', '/api/v1/auth/me', tStaff)).body;
+      assert.equal(me.isPlatformAdmin, true);
+      const all = await http('GET', '/api/v1/platform/organizations', tStaff);
+      assert.equal(all.status, 200);
+      assert.ok(all.body.items.some((o: any) => o.id === victimOrg.id), 'legitimate admin sees every organization');
+      assert.equal((await http('GET', `/api/v1/devices/${victimDev.id}`, tStaff)).status, 200, 'legitimate admin reaches any tenant');
+      assert.match(adminCli('list').out, /staff@arclabs\.test/);
+
+      const rv = adminCli('revoke', 'staff@arclabs.test');
+      assert.equal(rv.status, 0, rv.out);
+      await assertNoPlatformAccess(API, tStaff);
+      assert.doesNotMatch(adminCli('list').out, /staff@arclabs\.test/);
+
+      const audit = await sql(
+        `SELECT action, actor_type, actor_id, metadata FROM audit_logs
+         WHERE resource_type = 'user' AND resource_id = (SELECT id::text FROM users WHERE email = 'staff@arclabs.test') AND action LIKE 'platform_admin.%' ORDER BY id`,
+      );
+      assert.deepEqual(audit.map((a) => [a.action, a.actor_type, a.metadata.changed]), [['platform_admin.grant', 'system', true], ['platform_admin.revoke', 'system', true]]);
+      assert.ok(audit.every((a) => /^cli:/.test(a.actor_id)), 'operator recorded');
+      assert.equal(audit[0].metadata.reason, 'e2e');
+    });
+    await check('operator CLI refuses unknown emails and disabled accounts, and never creates users', async () => {
+      const ghost = adminCli('grant', 'ghost@nowhere.test');
+      assert.equal(ghost.status, 2, ghost.out);
+      assert.equal((await sql(`SELECT count(*)::int AS n FROM users WHERE email = 'ghost@nowhere.test'`))[0].n, 0, 'cannot pre-authorize an address');
+      await sql(`UPDATE users SET status = 'disabled' WHERE email = 'intruder@invited.test'`);
+      const disabled = adminCli('grant', 'intruder@invited.test');
+      assert.equal(disabled.status, 2, disabled.out);
+      assert.equal((await sql(`SELECT is_platform_admin FROM users WHERE email = 'intruder@invited.test'`))[0].is_platform_admin, false);
+      assert.equal(adminCli('frobnicate', 'staff@arclabs.test').status, 2, 'unknown command');
+      assert.equal((await sql(`SELECT count(*)::int AS n FROM users WHERE is_platform_admin`))[0].n, 0, 'no admins left behind');
+    });
+
     await check('metric definitions set', async () => {
       const r = await http('PUT', `/api/v1/projects/${proj.id}/metric-definitions`, tA, {
         metrics: [

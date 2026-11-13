@@ -172,7 +172,9 @@ With Gmail, turn on 2-step verification and create an **App password** (Google A
 
 ### ARC LABS admin
 
-People whose emails are in `PLATFORM_ADMIN_EMAILS` on the `api` service (comma-separated; the deploy script sets `techarclab@gmail.com`) see **ARC LABS → All organizations** in the console: every customer organization, its usage, and its plan and limits. They can't see other organizations' devices or data.
+Platform admins see **ARC LABS → All organizations** in the console: every customer organization, its usage, and its plan and limits. They also have admin rights inside every organization, so keep the list short.
+
+Platform admin comes only from the database flag `users.is_platform_admin`. Set it for an existing, confirmed account with the operator tool, run against the Railway database (for example with `railway run` on the `api` service): `node apps/api/dist/tools/platform-admin.js grant you@example.com` (also `revoke` and `list`; every change is recorded in the audit log). `PLATFORM_ADMIN_EMAILS` is ignored; remove it from the `api` service's variables.
 
 ## 4. Use it
 

@@ -81,10 +81,11 @@ async function main() {
   console.log(`Production stack: EMQX ${docker('exec', 'arc-cloud-emqx-1', 'emqx', 'ctl', 'broker').match(/version\s*:\s*(\S+)/)?.[1] ?? '?'}, ${N} simulated devices\n`);
 
   // ---------- Setup through the public API ----------
-  const adminEmail = 'platform-admin@arc.test'; // listed in PLATFORM_ADMIN_EMAILS by up.sh (needed to move the org to Pro)
+  const adminEmail = 'platform-admin@arc.test'; // made platform admin below (needed to move the org to Pro)
   const reg = await http('POST', '/api/v1/auth/register', undefined, { email: adminEmail, displayName: 'Stack Admin', password: 'stack-test-password-1', ageGroup: 'adult', acceptTerms: true });
   assert.equal(reg.status, 201, JSON.stringify(reg.body));
   sql(`UPDATE users SET email_verified_at = now() WHERE email = '${adminEmail}'`); // no SMTP in CI
+  sql(`UPDATE users SET is_platform_admin = true WHERE email = '${adminEmail}'`); // as the operator tool does
   const t = reg.body.accessToken as string;
   const org = (await http('POST', '/api/v1/organizations', t, { name: 'Stack Test', slug: 'stack-test' })).body;
   assert.ok(org.id, JSON.stringify(org));
