@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, canEdit, Field, isAdmin, Reading } from '../api';
+import { api, canEdit, canManageAccess, Field, isAdmin, Reading } from '../api';
+import { ChannelAccess } from '../components/ChannelAccess';
 import { ErrorBox, Modal, useToast } from '../components/ui';
 import { metricLabel } from '../format';
 import { useSession } from '../session';
@@ -303,6 +304,8 @@ export function SettingsPage() {
             )}
           </form>
         </section>
+
+        {org && project && canManageAccess(org.role) && org.kind !== 'personal' && <ChannelAccess org={org} projectId={projectId} projectName={project.name} />}
 
         <section className="panel danger-zone">
           <div className="panel-head">

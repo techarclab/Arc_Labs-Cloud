@@ -11,6 +11,7 @@ import { AuditService } from '../common/audit.service';
 import { BrokerAdmin } from '../common/broker-admin.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
+import { grantInviteChannels, requireSeat } from '../common/seats';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
 import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
@@ -60,7 +61,7 @@ type DeletionPlan = {
   deleteWorkspaces: { id: string; name: string; devices: number }[];
   /** Organizations the person just leaves (someone else stays admin, or they are not an admin). */
   leave: { id: string; name: string }[];
-  /** Organizations where the person is the only admin but not the only member: they must hand over first. */
+  /** Organizations the person owns: they must transfer ownership first (or ARC LABS closes the organization). */
   blockers: { id: string; name: string }[];
   platformAdmin: boolean;
 };
@@ -138,7 +139,9 @@ export class AuthController {
           )
         ).rows[0];
         if (invite?.organization_id) {
+          await requireSeat(c, invite.organization_id);
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
+          await grantInviteChannels(c, invite.id, u.id);
           // Joined an organization with the code: that answers "who is this account for?".
           await c.query(`UPDATE users SET account_type = 'organization' WHERE id = $1`, [u.id]);
           u.account_type = 'organization';
@@ -284,7 +287,7 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type,
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type, profession,
               password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
        FROM users WHERE id = $1`,
       [current.id],
@@ -305,6 +308,8 @@ export class AuthController {
         ageGroup: user.age_group ?? null,
         /** 'individual', 'organization' or 'other'; null until the person answers (after confirming the email). */
         accountType: user.account_type ?? null,
+        /** Individuals: engineer, teacher, trainer, hobbyist or other. */
+        profession: user.profession ?? null,
         emailVerifiedAt: user.email_verified_at ?? null,
         /** How this person can sign in (for the profile page). */
         signIn: { password: !!user.has_password, google: !!user.google },
@@ -404,7 +409,9 @@ export class AuthController {
       const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
       await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
       if (invite?.organization_id) {
+        await requireSeat(c, invite.organization_id);
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
+        await grantInviteChannels(c, invite.id, u.id);
         await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [u.id]);
       }
       await this.audit.record(
@@ -427,7 +434,7 @@ export class AuthController {
       const invite = (
         await c.query<Invite & { name: string }>(
           `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-           WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+           WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
           [hashInviteCode(inviteCode)],
         )
       ).rows[0];
@@ -435,8 +442,10 @@ export class AuthController {
       if (!invite) throw new ForbiddenException({ code: 'invite_invalid', message: 'This code is not valid for joining an organization. It may have expired or been used up.' });
       const already = (await c.query('SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rows[0];
       if (already) throw new ConflictException({ code: 'already_member', message: `You are already a member of ${invite.name}.` });
+      await requireSeat(c, invite.organization_id!);
       await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
       await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, current.id, invite.role, invite.id]);
+      await grantInviteChannels(c, invite.id, current.id);
       await this.audit.record(
         { actorType: 'user', actorId: current.id, organizationId: invite.organization_id!, action: 'user.join_organization', resourceType: 'organization', resourceId: invite.organization_id!, metadata: { inviteId: invite.id, role: invite.role } },
         c,
@@ -463,18 +472,23 @@ export class AuthController {
         const invite = (
           await c.query<Invite & { name: string }>(
             `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-             WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+             WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
             [hashInviteCode(input.inviteCode!)],
           )
         ).rows[0];
         // Unknown, expired, revoked, used up, or a code that only creates accounts: one answer.
         if (!invite) throw new ForbiddenException({ code: 'invite_not_for_organization' });
+        const member = (await c.query('SELECT 1 FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rowCount;
+        if (!member) await requireSeat(c, invite.organization_id!);
         const joined = await c.query(
           `INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING user_id`,
           [invite.organization_id, current.id, invite.role, invite.id],
         );
         // Already a member (e.g. joined at sign-up with this code): no second use.
-        if (joined.rowCount) await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+        if (joined.rowCount) {
+          await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+          await grantInviteChannels(c, invite.id, current.id);
+        }
         organization = { id: invite.organization_id!, name: invite.name, role: invite.role! };
       }
       const note = input.accountType === 'other' ? input.note || null : null;
@@ -650,7 +664,7 @@ export class AuthController {
         throw new ConflictException({
           code: 'sole_admin',
           organizations: plan.blockers,
-          message: `You are the only admin of ${plan.blockers.map((o) => o.name).join(', ')}. Make someone else an admin there first (Team page), or ask ARC LABS to close it.`,
+          message: `You own ${plan.blockers.map((o) => o.name).join(', ')}. Transfer ownership to an admin there first (Team page), or ask ARC LABS to close it.`,
         });
       }
       const deviceIds: string[] = [];
@@ -693,18 +707,19 @@ export class AuthController {
       await c.query(
         `SELECT o.id, o.name, o.kind, m.role,
                 (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1) AS others,
-                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1 AND x.role = 'org_admin') AS other_admins,
                 (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id) AS devices
          FROM organization_members m JOIN organizations o ON o.id = m.organization_id
          WHERE m.user_id = $1 ORDER BY o.name`,
         [userId],
       )
-    ).rows as { id: string; name: string; kind: string; role: string; others: number; other_admins: number; devices: number }[];
+    ).rows as { id: string; name: string; kind: string; role: string; others: number; devices: number }[];
     const plan: DeletionPlan = { deleteWorkspaces: [], leave: [], blockers: [], platformAdmin };
     for (const o of rows) {
-      if (o.role !== 'org_admin' || o.other_admins > 0) plan.leave.push({ id: o.id, name: o.name });
+      // Members (admins included: the owner stays) just leave.
+      if (o.role !== 'owner' && o.role !== 'individual') plan.leave.push({ id: o.id, name: o.name });
       // Only a personal workspace with nobody else in it is deleted; an organization ARC LABS set up never is.
-      else if (o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      else if (o.role === 'individual' && o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      // The owner of an organization: transfer ownership first (or ARC LABS closes it).
       else plan.blockers.push({ id: o.id, name: o.name });
     }
     return plan;
@@ -744,7 +759,7 @@ export class AuthController {
     const invite = (
       await c.query(
         `UPDATE invite_codes SET used_count = used_count + 1
-         WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+         WHERE code_hash = $1 AND kind IN ('platform', 'class') AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
          RETURNING id, organization_id, role`,
         [hashInviteCode(code)],
       )

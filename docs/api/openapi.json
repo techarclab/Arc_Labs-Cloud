@@ -826,9 +826,14 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
+                      "teacher",
+                      "trainer",
                       "engineer",
-                      "viewer"
+                      "student",
+                      "employee",
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },
@@ -845,7 +850,7 @@
             "description": ""
           }
         },
-        "summary": "Add member",
+        "summary": "Add member (ARC LABS staff only; others send an invitation)",
         "tags": [
           "Organizations"
         ]
@@ -882,9 +887,14 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
+                      "teacher",
+                      "trainer",
                       "engineer",
-                      "viewer"
+                      "student",
+                      "employee",
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },
@@ -931,6 +941,50 @@
           }
         },
         "summary": "Remove member",
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/transfer-ownership": {
+      "post": {
+        "operationId": "OrganizationsController_transferOwnership",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "userId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Transfer ownership",
         "tags": [
           "Organizations"
         ]
@@ -1182,6 +1236,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 3650
+                  },
+                  "maxMembers": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
                   }
                 },
                 "required": [
@@ -1249,9 +1308,10 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "org_admin",
+                      "admin",
                       "engineer",
-                      "viewer"
+                      "viewer",
+                      "org_admin"
                     ]
                   }
                 },
@@ -1270,6 +1330,161 @@
           }
         },
         "summary": "Create invite code",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/org-setup-codes": {
+      "post": {
+        "operationId": "PlatformController_createSetupCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "plan": {
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "pro",
+                      "enterprise"
+                    ]
+                  },
+                  "orgType": {
+                    "type": "string",
+                    "enum": [
+                      "industry",
+                      "corporate",
+                      "school",
+                      "college",
+                      "university"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "expiresInDays": {
+                    "default": 14,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90
+                  }
+                },
+                "required": [
+                  "email",
+                  "plan"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create an organization setup code (bound to an email address)",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/organizations/{id}/support-access": {
+      "post": {
+        "operationId": "PlatformController_openSupport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  },
+                  "minutes": {
+                    "default": 60,
+                    "type": "integer",
+                    "minimum": 15,
+                    "maximum": 480
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Open support access to an organization (read-only, time-limited, audited)",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/support-access": {
+      "get": {
+        "operationId": "PlatformController_supportSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Support access sessions (open and recent)",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/support-access/{id}/end": {
+      "post": {
+        "operationId": "PlatformController_endSupport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "End your support access early",
         "tags": [
           "Platform administration"
         ]
@@ -1326,6 +1541,537 @@
         "summary": "Organizations",
         "tags": [
           "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/invitations": {
+      "get": {
+        "operationId": "InvitationsController_list",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Invitations and class codes of an organization (no tokens or codes)",
+        "tags": [
+          "Invitations"
+        ]
+      },
+      "post": {
+        "operationId": "InvitationsController_inviteByEmail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "admin",
+                      "teacher",
+                      "trainer",
+                      "engineer",
+                      "student",
+                      "employee",
+                      "viewer"
+                    ]
+                  },
+                  "expiresInDays": {
+                    "default": 7,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  },
+                  "projectIds": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Invite someone by email (one person, single use, expiring)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/class-codes": {
+      "post": {
+        "operationId": "InvitationsController_createClassCode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "student",
+                      "viewer"
+                    ]
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365
+                  },
+                  "projectIds": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  }
+                },
+                "required": [
+                  "label",
+                  "role",
+                  "maxUses",
+                  "expiresInDays"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a class code (shared, student or viewer, limited uses, capped by seats)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/invitations/{inviteId}/revoke": {
+      "post": {
+        "operationId": "InvitationsController_revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "inviteId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "removeMembers": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke an invitation or class code; optionally remove the people who joined with it (never the owner or admins)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/seats": {
+      "get": {
+        "operationId": "InvitationsController_seats",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Seats: members, open invitations and the limit",
+        "tags": [
+          "Invitations"
+        ]
+      },
+      "patch": {
+        "operationId": "InvitationsController_setSeats",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "seatLimit": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "seatLimit"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set the seat limit, within the plan (null: the plan’s maximum)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/invitations/preview": {
+      "get": {
+        "operationId": "InvitationsController_preview",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "What an emailed invitation is for (organization, role, invited address)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/invitations/accept": {
+      "post": {
+        "operationId": "InvitationsController_accept",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Accept an emailed invitation (the signed-in account must have the invited, confirmed address)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/onboarding/individual": {
+      "post": {
+        "operationId": "OnboardingController_individual",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "profession": {
+                    "type": "string",
+                    "enum": [
+                      "engineer",
+                      "teacher",
+                      "trainer",
+                      "hobbyist",
+                      "other"
+                    ]
+                  }
+                },
+                "required": [
+                  "profession"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "I am an individual: say what you do (once); a personal workspace follows with the first channel",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/api/v1/onboarding/organization": {
+      "post": {
+        "operationId": "OnboardingController_organization",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "setupCode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "slug": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+                  },
+                  "orgType": {
+                    "type": "string",
+                    "enum": [
+                      "industry",
+                      "corporate",
+                      "school",
+                      "college",
+                      "university"
+                    ]
+                  }
+                },
+                "required": [
+                  "setupCode",
+                  "name",
+                  "slug"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create your organization with an ARC LABS setup code; you become its owner",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/api/v1/projects/{id}/access": {
+      "get": {
+        "operationId": "ChannelAccessController_list",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Channel access: grants and who could be added",
+        "tags": [
+          "Channels"
+        ]
+      }
+    },
+    "/api/v1/projects/{id}/access/{userId}": {
+      "put": {
+        "operationId": "ChannelAccessController_grant",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Give someone with a scoped role access to the channel",
+        "tags": [
+          "Channels"
+        ]
+      },
+      "delete": {
+        "operationId": "ChannelAccessController_revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Take away someone’s access to the channel",
+        "tags": [
+          "Channels"
         ]
       }
     },

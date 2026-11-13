@@ -57,6 +57,23 @@ const MESSAGES: Record<string, string> = {
   slug_taken: 'That short name is already used by another organization. Try a different one.',
   insufficient_role: 'Your role in this organization doesn’t allow this. Ask an admin.',
   last_admin: 'An organization needs at least one admin. Make someone else an admin first.',
+  owner_role: 'The owner can’t be changed or removed. The owner can transfer ownership to an admin.',
+  owner_only: 'Only the owner can do this.',
+  transfer_needs_admin: 'Make them an admin first, then transfer ownership.',
+  role_not_assignable: 'Only the owner can add, promote or remove admins.',
+  setup_code_invalid: 'That setup code isn’t valid: it may have been used, revoked, or expired. Ask ARC LABS for a new one.',
+  setup_code_email_mismatch: 'That setup code was issued for a different email address. Sign in with that address, or ask ARC LABS.',
+  org_type_required: 'Choose what kind of organization this is.',
+  not_scoped: 'Their role already sees every channel. Channel access is for teachers, trainers, students and employees.',
+  channels_for_scoped_roles: 'Only teachers, trainers, students and employees get channels; other roles see every channel.',
+  support_read_only: 'Support access is read-only: ARC LABS staff can look, not change anything.',
+  use_support_access: 'To look at this organization, open support access from the Platform page.',
+  seats_full: 'This organization has no free seats. An owner or admin can raise the limit or remove someone.',
+  use_invitations: 'Invite people instead: they join when they accept the invitation.',
+  invite_email_mismatch: 'This invitation is for a different email address. Sign in with the address it was sent to.',
+  invite_limit: 'Too many invitations today for this organization. Try again tomorrow.',
+  seat_limit_above_plan: 'Your plan allows fewer members than that. Ask ARC LABS for more.',
+  personal_workspace: 'A personal workspace is just you. For a team, ask ARC LABS to set up an organization.',
   user_not_found: 'No ARC Cloud account uses that email. Ask them to sign up first, then add them.',
   device_revoked: 'This device has been revoked, so its password can’t be replaced.',
   terminal_state: 'This device is revoked or retired and can’t be changed.',
@@ -68,7 +85,7 @@ const MESSAGES: Record<string, string> = {
   organization_needs_invite: 'Joining an organization needs an invite code from ARC LABS. Ask your instructor or ARC LABS contact, or choose “Just me” to start on the free plan.',
   invite_not_for_organization: 'That code doesn’t join an organization. Check for typos; it may have expired or been used up. Ask ARC LABS for your organization’s code, or choose “Just me”.',
   confirm_email_mismatch: 'Type your account’s email address exactly to confirm.',
-  sole_admin: 'You are the only admin of an organization with other members. Make someone else an admin there first.',
+  sole_admin: 'You own an organization. Transfer ownership to an admin there first, or ask ARC LABS to close it.',
   platform_admin_delete: 'ARC LABS staff accounts must have platform admin removed before they can be deleted.',
   account_type_set: 'You have already said who this account is for. Reload the page.',
   org_suspended: 'This organization is suspended. Contact ARC LABS.',
@@ -142,9 +159,11 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 
 // ---- Types (mirror the API responses) ----
 
-export type Role = 'org_admin' | 'engineer' | 'viewer';
+/** A person's role in an organization (the API's organization_members.role). */
+export type Role = 'owner' | 'admin' | 'teacher' | 'trainer' | 'engineer' | 'student' | 'employee' | 'viewer' | 'individual' | 'support';
 /** kind 'personal': someone's own free workspace; 'organization': set up by ARC LABS. */
-export interface Org { id: string; name: string; slug: string; role?: Role; kind?: 'personal' | 'organization' }
+/** support: ARC LABS staff looking in with time-limited, read-only support access (until `until`). */
+export interface Org { id: string; name: string; slug: string; role?: Role; kind?: 'personal' | 'organization'; support?: { id: string; until: string } }
 export interface Project { id: string; organizationId: string; name: string; description: string; timezone: string; readApiKey: string; deviceCount?: number }
 export interface Connectivity { status: 'online' | 'offline' | 'unknown'; source: string; thresholdSeconds: number }
 export interface Device {
@@ -200,9 +219,39 @@ export interface Widget {
   options: Record<string, string | number | boolean | null>;
 }
 
-export const ROLE_LABEL: Record<Role, string> = { org_admin: 'Admin', engineer: 'Engineer', viewer: 'Viewer' };
-export const canEdit = (r?: Role) => r === 'org_admin' || r === 'engineer';
-export const isAdmin = (r?: Role) => r === 'org_admin';
+export const ROLE_LABEL: Record<Role, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  teacher: 'Teacher',
+  trainer: 'Trainer',
+  engineer: 'Engineer',
+  student: 'Student',
+  employee: 'Employee',
+  viewer: 'Viewer',
+  individual: 'Personal workspace',
+  support: 'ARC LABS support (read-only)',
+};
+/** The API's access levels (AccessService.LEVEL): what a role may do across the organization. */
+const LEVEL: Record<Role, 1 | 2 | 3> = { owner: 3, admin: 3, individual: 3, teacher: 2, trainer: 2, engineer: 2, student: 1, employee: 1, viewer: 1, support: 1 };
+/** Can change channels, devices, rules (engineer level and up). */
+export const canEdit = (r?: Role) => !!r && LEVEL[r] >= 2;
+/** Admin-level settings: API keys, webhooks, firmware, audit log (owner, admin, and the individual in their workspace). */
+export const isAdmin = (r?: Role) => !!r && LEVEL[r] >= 3;
+/** Roles limited to the channels granted to them (no organization-wide pages). Mirrors AccessService.SCOPED_ROLES. */
+export const isScoped = (r?: Role) => r === 'teacher' || r === 'trainer' || r === 'student' || r === 'employee';
+/** Who manages a channel's access list: the owner, admins, and the channel's teachers and trainers. */
+export const canManageAccess = (r?: Role) => r === 'owner' || r === 'admin' || r === 'teacher' || r === 'trainer';
+/** People management exists only in organizations, for the owner and admins. */
+export const canManageTeam = (org?: Org) => org?.kind !== 'personal' && (org?.role === 'owner' || org?.role === 'admin');
+/** Roles this caller may give (mirrors AccessService.canAssign): only the owner deals with admins. */
+export const assignableRoles = (caller?: Role): Role[] =>
+  caller === 'owner'
+    ? ['admin', 'teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer']
+    : caller === 'admin'
+      ? ['teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer']
+      : caller === 'teacher' || caller === 'trainer'
+        ? ['student']
+        : [];
 
 /** Fetch a file with the session token and save it (used for CSV export). */
 export async function downloadAuthed(path: string, filename: string) {

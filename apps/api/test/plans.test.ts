@@ -9,9 +9,9 @@ import { PLANS } from '../src/organizations/org-ops.controller';
 describe('plans', () => {
   it('free, pro and enterprise have the documented limits', () => {
     expect(PLANS).toEqual({
-      free: { maxDevices: 5, maxProjects: 3, maxRules: 10, maxApiKeys: 3, maxWebhooks: 2, maxWidgets: 12, retentionDays: 30 },
-      pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, maxWidgets: 64, retentionDays: 365 },
-      enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, maxWidgets: 64, retentionDays: 1825 },
+      free: { maxDevices: 5, maxProjects: 3, maxRules: 10, maxApiKeys: 3, maxWebhooks: 2, maxWidgets: 12, retentionDays: 30, maxMembers: 10 },
+      pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, maxWidgets: 64, retentionDays: 365, maxMembers: 500 },
+      enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, maxWidgets: 64, retentionDays: 1825, maxMembers: 10000 },
     });
   });
   it('a higher plan never allows less', () => {

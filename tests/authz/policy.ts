@@ -45,6 +45,7 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/auth/google/config': r('public', 'read'),
   'POST /api/v1/auth/google': r('public', 'none'),
   'POST /api/v1/auth/verify-email': r('public', 'none'),
+  'GET /api/v1/invitations/preview': r('public', 'none'), // needs a real emailed token
   'POST /api/v1/auth/forgot-password': r('public', 'none'),
   'POST /api/v1/auth/reset-password': r('public', 'none'),
   'POST /api/v1/oauth/token': r('public', 'none'),
@@ -58,6 +59,9 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/auth/account-type': r('user', 'write', { body: () => ({ accountType: 'organization', inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'GET /api/v1/auth/delete-account': r('user', 'read'),
   'POST /api/v1/auth/delete-account': r('user', 'write', { body: () => ({ confirmEmail: 'not-this-account@example.test' }) }),
+  'POST /api/v1/onboarding/individual': r('user', 'write', { body: () => ({ profession: 'engineer' }) }), // once per account; later calls 409
+  'POST /api/v1/onboarding/organization': r('user', 'none'), // needs a real setup code for the caller's address (e2e covers it)
+  'POST /api/v1/invitations/accept': r('user', 'none'), // needs a real emailed token for the caller's address (e2e covers it)
   'POST /api/v1/auth/redeem-invite': r('user', 'write', { body: () => ({ inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'POST /api/v1/auth/change-password': r('user', 'write', { body: () => ({ currentPassword: 'not-the-password-1', newPassword: 'matrix-new-password-1' }) }),
   'POST /api/v1/auth/sign-out-everywhere': r('user', 'none'),
@@ -68,9 +72,24 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/organizations/{id}': r('viewer', 'read'),
   'PATCH /api/v1/organizations/{id}': r('org_admin', 'write', { body: () => ({ name: 'Matrix Org A' }) }),
   'GET /api/v1/organizations/{id}/members': r('viewer', 'read'),
-  'POST /api/v1/organizations/{id}/members': r('org_admin', 'write', { body: (f) => ({ email: f.emails.spare2, role: 'viewer' }) }),
+  // Adding someone without their consent: ARC LABS staff only (support). Everyone else invites.
+  'POST /api/v1/organizations/{id}/members': r('platform', 'write', { body: (f) => ({ email: f.emails.spare2, role: 'viewer' }) }),
+  'GET /api/v1/organizations/{id}/invitations': r('org_admin', 'read'),
+  'POST /api/v1/organizations/{id}/invitations': r('org_admin', 'write', { body: () => ({ email: 'matrix-invitee@example.test', role: 'viewer' }) }),
+  'POST /api/v1/organizations/{id}/class-codes': r('org_admin', 'write', { body: () => ({ label: 'matrix', role: 'viewer', maxUses: 1, expiresInDays: 1 }) }),
+  'POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke': r('org_admin', 'destructive', { body: () => ({}) }),
+  'GET /api/v1/organizations/{id}/seats': r('viewer', 'read'),
+  // Channel access: owner and admins (and the channel's teachers/trainers, covered by e2e). The spare member is a
+  // viewer, who sees every channel already: granting/removing answers 409 not_scoped, not a permission refusal.
+  'GET /api/v1/projects/{id}/access': r('org_admin', 'read'),
+  'PUT /api/v1/projects/{id}/access/{userId}': r('org_admin', 'write', { body: () => ({}) }),
+  'DELETE /api/v1/projects/{id}/access/{userId}': r('org_admin', 'write'),
+  'PATCH /api/v1/organizations/{id}/seats': r('org_admin', 'write', { body: () => ({ seatLimit: null }) }),
   'PATCH /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'write', { body: () => ({ role: 'viewer' }) }),
   'DELETE /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'destructive'),
+  // Owner only (the matrix's org admin created org A, so is its owner). Transferring to a viewer is refused with 409
+  // (make them an admin first): enough to show the caller was not refused for permissions.
+  'POST /api/v1/organizations/{id}/transfer-ownership': r('org_admin', 'write', { body: (f) => ({ userId: f.spareId }) }),
   'GET /api/v1/organizations/{id}/audit-logs': r('org_admin', 'read'),
   'GET /api/v1/organizations/{id}/rejected-messages': r('engineer', 'read'),
   'GET /api/v1/organizations/{id}/overview': r('viewer', 'read'),
@@ -83,6 +102,12 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/platform/invites': r('platform', 'read'),
   'POST /api/v1/platform/invites': r('platform', 'write', { body: () => ({ label: 'matrix', maxUses: 1, expiresInDays: 1 }) }),
   'POST /api/v1/platform/invites/{id}/revoke': r('platform', 'destructive', { body: () => ({}) }),
+  // Opening support access would give the matrix's platform caller read access to org A for the rest of the run,
+  // so it is not exercised for allowed callers here (e2e covers it); denial is still tested.
+  'POST /api/v1/platform/organizations/{id}/support-access': r('platform', 'none'),
+  'GET /api/v1/platform/support-access': r('platform', 'read'),
+  'POST /api/v1/platform/support-access/{id}/end': r('platform', 'none'),
+  'POST /api/v1/platform/org-setup-codes': r('platform', 'write', { body: () => ({ email: 'matrix-owner@example.test', plan: 'pro' }) }),
 
   // ---------- channels ----------
   'POST /api/v1/projects': r('org_admin', 'write', { body: (f) => ({ organizationId: f.orgA, name: 'Matrix extra channel', timezone: 'Asia/Kolkata' }) }),
@@ -176,12 +201,6 @@ export const POLICY: Record<string, Rule> = {
  * Differences between the intended policy and today's code. While an entry is here, the matrix expects the CURRENT
  * behaviour in the cells it names and reports them as known defects (not failures). Fix the code, delete the entry.
  */
-export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: string, rule: Rule, op: string) => boolean }[] = [
-  {
-    id: 'DEF-001',
-    title:
-      'Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"',
-    // Includes the channel feeds: they check users.is_platform_admin, the only source of platform admin now.
-    applies: (principal, rule) => principal === 'platform' && (rule.need === 'viewer' || rule.need === 'engineer' || rule.need === 'org_admin'),
-  },
-];
+// DEF-001 (platform admins acting as an admin in every organization, bypassing row-level security) was fixed in
+// phase 5: ARC LABS staff get an organization's data only through time-limited, read-only support access.
+export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: string, rule: Rule, op: string) => boolean }[] = [];

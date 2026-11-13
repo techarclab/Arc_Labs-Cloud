@@ -170,6 +170,10 @@ async function main() {
 
     const orgA = (await http('POST', '/api/v1/organizations', tA, { name: 'ARC Labs', slug: 'arc-labs' })).body;
     const orgB = (await http('POST', '/api/v1/organizations', tB, { name: 'Other Co', slug: 'other-co' })).body;
+    // Both start as personal workspaces (their creators are not ARC LABS staff). ARC Labs plays a team organization
+    // that ARC LABS has set up for Alice, with Alice as owner (from phase 3 this happens with a setup code).
+    await sql(`UPDATE organizations SET kind = 'organization' WHERE id = $1`, [orgA.id]);
+    await sql(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND role = 'individual'`, [orgA.id]);
     await check('new organizations start on the free plan (5 devices, 3 channels, 30 days, 12 widgets)', async () => {
       const [o] = await sql(`SELECT o.plan, o.max_devices, o.max_projects, o.retention_days, o.max_widgets, u.email FROM organizations o JOIN users u ON u.id = o.created_by WHERE o.id = $1`, [orgA.id]);
       assert.deepEqual(o, { plan: 'free', max_devices: 5, max_projects: 3, retention_days: 30, max_widgets: 12, email: 'alice@arclabs.test' });
@@ -519,7 +523,8 @@ async function main() {
       const all = await http('GET', '/api/v1/platform/organizations', tStaff);
       assert.equal(all.status, 200);
       assert.ok(all.body.items.some((o: any) => o.id === victimOrg.id), 'legitimate admin sees every organization');
-      assert.equal((await http('GET', `/api/v1/devices/${victimDev.id}`, tStaff)).status, 200, 'legitimate admin reaches any tenant');
+      // Metadata only: a platform admin sees the organization in the platform list, not its data (phase 5).
+      assert.equal((await http('GET', `/api/v1/devices/${victimDev.id}`, tStaff)).status, 404, 'no tenant data without support access');
       assert.match(adminCli('list').out, /staff@arclabs\.test/);
 
       const rv = adminCli('revoke', 'staff@arclabs.test');
@@ -731,14 +736,22 @@ async function main() {
       assert.equal((await http('POST', `/api/v1/devices/${dev.id}/revoke`, tB, {})).status, 404);
     });
     await check('viewer can read but not provision or revoke (403)', async () => {
-      assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/members`, tA, { email: 'bob@other.test', role: 'viewer' })).status, 201);
+      // Bob joins by invitation (people are never added without accepting).
+      const inv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tA, { email: 'bob@other.test', role: 'viewer' });
+      assert.equal(inv.status, 201, JSON.stringify(inv.body));
+      assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/members`, tA, { email: 'bob@other.test', role: 'viewer' })).body.code, 'use_invitations');
+      const acc = await http('POST', '/api/v1/invitations/accept', tB, { token: await emailedInviteToken(sinks, 'bob@other.test') });
+      assert.equal(acc.status, 200, JSON.stringify(acc.body));
+      assert.deepEqual(acc.body.organization, { id: orgA.id, name: 'ARC Labs', role: 'viewer' });
       assert.equal((await http('GET', `/api/v1/devices/${dev.id}`, tB)).status, 200);
       assert.equal((await http('POST', '/api/v1/devices', tB, { projectId: proj.id, displayName: 'nope' })).status, 403);
       assert.equal((await http('POST', `/api/v1/devices/${dev.id}/revoke`, tB, {})).status, 403);
     });
-    await check('cannot remove the last org admin', async () => {
+    await check('the owner cannot be removed or leave (transfer ownership first)', async () => {
       const me = (await http('GET', '/api/v1/auth/me', tA)).body.user;
-      assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${me.id}`, tA)).status, 409);
+      const r = await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${me.id}`, tA);
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'owner_role');
     });
 
     console.log('\nCredential lifecycle');
@@ -770,7 +783,7 @@ async function main() {
     await check('audit log records provisioning, rotation and revocation', async () => {
       const r = await http('GET', `/api/v1/organizations/${orgA.id}/audit-logs`, tA);
       const actions = r.body.items.map((i: any) => i.action);
-      for (const a of ['device.create', 'device.credentials.rotate', 'device.revoke', 'member.upsert']) assert.ok(actions.includes(a), a);
+      for (const a of ['device.create', 'device.credentials.rotate', 'device.revoke', 'invite.accept']) assert.ok(actions.includes(a), a);
     });
     console.log('\nChannels: fields, HTTP API, controls, feeds, dashboards');
     const httpUrl = (q: string) => `${API}/api/v1/update?${q}`;
@@ -897,6 +910,11 @@ async function main() {
     await phases4to7({ tA, tB, orgA, orgB, proj, dev2, key2, sinks });
     await accountDeletion({ tA, orgA, kicked });
     await orgSuspension({ tA, tB, orgA, orgB });
+    await rolesAndOwnership({ tA, tB, orgA, orgB });
+    await invitationsAndSeats({ tA, tB, orgA, sinks });
+    await onboarding({ tA, tB, sinks });
+    await channelAccess({ tA, tB, orgA, proj, sinks });
+    await platformBoundary({ tA, tB, orgB, sinks });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1005,6 +1023,389 @@ async function tokenFor(email: string) {
   return { id, token: `${head}.${createHmac('sha256', SECRETS.JWT_SECRET).update(head).digest('base64url')}` };
 }
 
+/** The token from the newest invitation email to `to` (quoted-printable decoded). */
+async function emailedInviteToken(sinks: Sinks, to: string): Promise<string> {
+  const mail = await eventually(async () => [...sinks.emails].reverse().find((e) => e.to === to && e.raw.includes('invite#token')), `invitation email to ${to}`);
+  const text = mail.raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return /invite#token=([A-Za-z0-9_-]+)/.exec(text)![1];
+}
+
+/** A confirmed account made in SQL (sign-up is rate-limited per IP, and this suite is at it). */
+async function sqlUser(email: string, opts: { accountType?: string | null } = {}) {
+  await sql(
+    `INSERT INTO users (email, display_name, email_verified_at, age_group, account_type, terms_version, terms_accepted_at) VALUES ($1, $2, now(), 'adult', $3, '2000-01-01', now())`,
+    [email, email, opts.accountType === undefined ? 'individual' : opts.accountType],
+  );
+  return tokenFor(email);
+}
+
+async function invitationsAndSeats(ctx: { tA: string; tB: string; orgA: any; sinks: Sinks }) {
+  const { tA, tB, orgA, sinks } = ctx;
+  console.log('\nInvitations & seats');
+  const tokenOf = (link: string) => new URL(link).hash.slice('#token='.length);
+  const invite = (email: string, role = 'viewer', token = tA) => http('POST', `/api/v1/organizations/${orgA.id}/invitations`, token, { email, role });
+  await check('an emailed invitation: preview, bound to the invited address, single use; the link is emailed and never kept', async () => {
+    const dana = await sqlUser('dana@invite.test', { accountType: null });
+    const r = await invite('dana@invite.test', 'engineer');
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const token = await emailedInviteToken(sinks, 'dana@invite.test');
+    assert.equal(token, tokenOf(r.body.link), 'the emailed link is the one shown to the inviter');
+    const pre = await fetch(`${API}/api/v1/invitations/preview?token=${token}`);
+    assert.equal(pre.status, 200);
+    assert.deepEqual(await pre.json(), { organizationName: 'ARC Labs', role: 'engineer', invitedBy: 'Alice', email: 'd***@invite.test', expiresAt: r.body.expiresAt });
+    assert.equal((await fetch(`${API}/api/v1/invitations/preview?token=${'x'.repeat(32)}`)).status, 404);
+    // Someone else's account cannot use it, and trying does not use it up.
+    assert.equal((await http('POST', '/api/v1/invitations/accept', tB, { token })).body.code, 'invite_email_mismatch');
+    // Nor can it be redeemed as a shared code.
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', dana.token, { inviteCode: token })).body.code, 'invite_invalid');
+    const ok = await http('POST', '/api/v1/invitations/accept', dana.token, { token });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.organization.role, 'engineer');
+    assert.equal((await sql(`SELECT account_type FROM users WHERE id = $1`, [dana.id]))[0].account_type, 'organization', 'joining answers "who is this account for?"');
+    assert.equal((await http('POST', '/api/v1/invitations/accept', dana.token, { token })).body.code, 'invite_invalid', 'single use');
+    const listed = (await http('GET', `/api/v1/organizations/${orgA.id}/invitations`, tA)).body.items.find((i: any) => i.email === 'dana@invite.test');
+    assert.equal(listed.status, 'used_up');
+    assert.equal(listed.acceptedBy, 'dana@invite.test');
+    assert.equal(listed.code, undefined);
+    await eventually(
+      async () => (await sql(`SELECT payload FROM deliveries WHERE event_type = 'auth.invitation' AND recipient = 'dana@invite.test'`)).every((d) => d.payload.redacted === true && !d.payload.text && !d.payload.html),
+      'invitation link not kept in the outbox',
+    );
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM invite_codes WHERE code_hash = $1 OR code_hash = $2`, [token, tokenOf(r.body.link)]))[0].n, 0, 'only a hash is stored');
+  });
+  await check('re-inviting replaces the open link; revoked and expired invitations are refused', async () => {
+    const eve = await sqlUser('eve@invite.test');
+    const first = tokenOf((await invite('eve@invite.test')).body.link);
+    const second = (await invite('eve@invite.test')).body;
+    assert.equal((await http('POST', '/api/v1/invitations/accept', eve.token, { token: first })).body.code, 'invite_invalid', 'the older link died');
+    const rv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations/${second.id}/revoke`, tA, {});
+    assert.equal(rv.status, 200, JSON.stringify(rv.body));
+    assert.equal((await http('POST', '/api/v1/invitations/accept', eve.token, { token: tokenOf(second.link) })).body.code, 'invite_invalid', 'revoked');
+    const third = (await invite('eve@invite.test')).body;
+    await sql(`UPDATE invite_codes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [third.id]);
+    assert.equal((await http('POST', '/api/v1/invitations/accept', eve.token, { token: tokenOf(third.link) })).body.code, 'invite_invalid', 'expired');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tB, { email: 'x@invite.test', role: 'viewer' })).status, 403, 'viewers cannot invite');
+  });
+  await check('seats: members and open invitations count; a full organization refuses invitations and class codes until the limit rises', async () => {
+    const before = (await http('GET', `/api/v1/organizations/${orgA.id}/seats`, tA)).body;
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/seats`, tA, { seatLimit: before.max + 1 })).body.code, 'seat_limit_above_plan');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/seats`, tA, { seatLimit: before.members + before.pending })).status, 200);
+    assert.equal((await invite('frank@invite.test')).body.code, 'seats_full');
+    const code = (await http('POST', `/api/v1/organizations/${orgA.id}/class-codes`, tA, { label: 'Batch', role: 'viewer', maxUses: 2, expiresInDays: 7 })).body;
+    assert.match(code.code, /^ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    const gina = await sqlUser('gina@invite.test');
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', gina.token, { inviteCode: code.code })).body.code, 'seats_full');
+    assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE id = $1`, [code.id]))[0].used_count, 0, 'a refused join does not use the code');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/seats`, tA, { seatLimit: null })).status, 200);
+    const joined = await http('POST', '/api/v1/auth/redeem-invite', gina.token, { inviteCode: code.code });
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+    assert.equal(joined.body.organization.role, 'viewer');
+  });
+  await check('class codes: student or viewer only; used up; revoking can remove the people who joined with it', async () => {
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/class-codes`, tA, { label: 'x', role: 'admin', maxUses: 1, expiresInDays: 1 })).status, 400);
+    const code = (await http('POST', `/api/v1/organizations/${orgA.id}/class-codes`, tA, { label: 'One seat', role: 'viewer', maxUses: 1, expiresInDays: 7 })).body;
+    const hank = await sqlUser('hank@invite.test');
+    const ivy = await sqlUser('ivy@invite.test');
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', hank.token, { inviteCode: code.code })).status, 200);
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', ivy.token, { inviteCode: code.code })).body.code, 'invite_invalid', 'used up');
+    const rv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations/${code.id}/revoke`, tA, { removeMembers: true });
+    assert.equal(rv.body.removedMembers, 1);
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members WHERE organization_id = $1 AND user_id = $2`, [orgA.id, hank.id]))[0].n, 0);
+    const actions = (await sql(`SELECT action FROM audit_logs WHERE organization_id = $1 AND action LIKE 'invite.%'`, [orgA.id])).map((a: any) => a.action);
+    for (const a of ['invite.create', 'invite.accept', 'invite.revoke']) assert.ok(actions.includes(a), a);
+  });
+}
+
+/** The setup code from the newest setup-code email to `to`. */
+async function emailedSetupCode(sinks: Sinks, to: string): Promise<string> {
+  const mail = await eventually(async () => [...sinks.emails].reverse().find((e) => e.to === to && /setup code/i.test(e.raw)), `setup code email to ${to}`);
+  const text = mail.raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return /ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}/.exec(text)![0];
+}
+
+async function onboarding(ctx: { tA: string; tB: string; sinks: Sinks }) {
+  const { tA, tB, sinks } = ctx;
+  console.log('\nOnboarding: who are you, organization setup codes');
+  const asStaff = async <T>(fn: () => Promise<T>) => {
+    await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+    try {
+      return await fn();
+    } finally {
+      await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+    }
+  };
+  const create = (body: Record<string, unknown>, token: string) => http('POST', '/api/v1/onboarding/organization', token, body);
+  let olgaToken = '';
+  await check('ARC LABS issues a setup code bound to an email; it is emailed; staff see only their own codes', async () => {
+    const r = await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'Olga@Onboard.test', plan: 'pro', orgType: 'college' }));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.match(r.body.code, /^ARC-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    assert.equal(r.body.email, 'olga@onboard.test');
+    assert.equal(await emailedSetupCode(sinks, 'olga@onboard.test'), r.body.code);
+    assert.equal((await http('POST', '/api/v1/platform/org-setup-codes', tB, { email: 'x@onboard.test', plan: 'pro' })).status, 403, 'staff only');
+    const list = (await asStaff(() => http('GET', '/api/v1/platform/invites', tA))).body.items;
+    assert.ok(list.some((i: any) => i.kind === 'org_setup' && i.email === 'olga@onboard.test' && i.plan === 'pro' && i.orgType === 'college'));
+    assert.ok(!list.some((i: any) => i.kind === 'email' || i.kind === 'class'), 'organizations\' own invitations are not shown to staff');
+  });
+  await check('a setup code works only for its address, only to create an organization, and a failure does not use it up', async () => {
+    const code = await emailedSetupCode(sinks, 'olga@onboard.test');
+    const olga = await sqlUser('olga@onboard.test', { accountType: null });
+    olgaToken = olga.token;
+    assert.equal((await create({ setupCode: 'ARC-AAAA-BBBB-CCCC', name: 'X', slug: 'x-college' }, olga.token)).body.code, 'setup_code_invalid');
+    assert.equal((await create({ setupCode: code, name: 'Bob College', slug: 'bob-college' }, tB)).body.code, 'setup_code_email_mismatch');
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', olga.token, { inviteCode: code })).body.code, 'invite_invalid', 'not a join code');
+    // Not usable as a sign-up code either (complete-profile claims codes the same way sign-up does).
+    await sql(`INSERT INTO users (email, display_name, email_verified_at) VALUES ('noage@onboard.test', 'No age', now())`);
+    const noAge = await tokenFor('noage@onboard.test');
+    assert.equal((await http('POST', '/api/v1/auth/complete-profile', noAge.token, { ageGroup: 'adult', inviteCode: code })).body.code, 'invite_invalid');
+    assert.equal((await create({ setupCode: code, name: 'Taken', slug: 'arc-labs' }, olga.token)).body.code, 'slug_taken');
+    assert.equal((await sql(`SELECT used_count FROM invite_codes WHERE email = 'olga@onboard.test'`))[0].used_count, 0, 'still unused');
+  });
+  await check('using it creates the organization with the plan and type from the code; the person becomes its owner; once only', async () => {
+    const code = await emailedSetupCode(sinks, 'olga@onboard.test');
+    const r = await create({ setupCode: code.toLowerCase(), name: 'Anurag University', slug: 'anurag-university', orgType: 'industry' }, olgaToken);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(r.body.organization, { id: r.body.organization.id, name: 'Anurag University', slug: 'anurag-university', orgType: 'college', plan: 'pro', role: 'owner' });
+    const [o] = await sql(`SELECT kind, org_type, plan, max_members, max_devices FROM organizations WHERE id = $1`, [r.body.organization.id]);
+    assert.deepEqual(o, { kind: 'organization', org_type: 'college', plan: 'pro', max_members: 500, max_devices: 1000 }, 'the code fixes the type');
+    const me = (await http('GET', '/api/v1/auth/me', olgaToken)).body;
+    assert.equal(me.user.accountType, 'organization');
+    assert.equal(me.isPlatformAdmin, false, 'owning an organization grants no platform privileges');
+    assert.equal((await http('GET', '/api/v1/platform/organizations', olgaToken)).status, 403);
+    assert.deepEqual(me.memberships.map((m: any) => m.role), ['owner']);
+    assert.equal((await create({ setupCode: code, name: 'Again', slug: 'again-org' }, olgaToken)).body.code, 'setup_code_invalid', 'single use');
+    // The new owner can invite straight away.
+    assert.equal((await http('POST', `/api/v1/organizations/${r.body.organization.id}/invitations`, olgaToken, { email: 'staff1@anurag.test', role: 'admin' })).status, 201);
+  });
+  await check('a code without a type lets its owner choose; revoked and expired codes are refused', async () => {
+    const pat = await sqlUser('pat@onboard.test', { accountType: null });
+    const c1 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'free' }))).body;
+    assert.equal((await create({ setupCode: c1.code, name: 'Pat Works', slug: 'pat-works' }, pat.token)).body.code, 'org_type_required');
+    const ok = await create({ setupCode: c1.code, name: 'Pat Works', slug: 'pat-works', orgType: 'industry' }, pat.token);
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(ok.body.organization.orgType, 'industry');
+    const c2 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'pro', orgType: 'corporate' }))).body;
+    await asStaff(() => http('POST', `/api/v1/platform/invites/${c2.id}/revoke`, tA, {}));
+    assert.equal((await create({ setupCode: c2.code, name: 'P2', slug: 'pat-two' }, pat.token)).body.code, 'setup_code_invalid', 'revoked');
+    const c3 = (await asStaff(() => http('POST', '/api/v1/platform/org-setup-codes', tA, { email: 'pat@onboard.test', plan: 'pro', orgType: 'corporate' }))).body;
+    await sql(`UPDATE invite_codes SET expires_at = now() - interval '1 minute' WHERE id = $1`, [c3.id]);
+    assert.equal((await create({ setupCode: c3.code, name: 'P3', slug: 'pat-three' }, pat.token)).body.code, 'setup_code_invalid', 'expired');
+  });
+  await check('individuals say what they do, once; no platform privileges', async () => {
+    const quinn = await sqlUser('quinn@onboard.test', { accountType: null });
+    assert.equal((await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'astronaut' })).status, 400);
+    const r = await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'hobbyist' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const me = (await http('GET', '/api/v1/auth/me', quinn.token)).body;
+    assert.deepEqual([me.user.accountType, me.user.profession, me.isPlatformAdmin], ['individual', 'hobbyist', false]);
+    assert.equal((await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'engineer' })).body.code, 'account_type_set');
+  });
+}
+
+async function channelAccess(ctx: { tA: string; tB: string; orgA: any; proj: any; sinks: Sinks }) {
+  const { tA, tB, orgA, proj, sinks } = ctx;
+  console.log('\nChannel-level access: teachers, students');
+  const tokenOf = (link: string) => new URL(link).hash.slice('#token='.length);
+  const labB = await http('POST', '/api/v1/projects', tA, { organizationId: orgA.id, name: 'Lab B' });
+  assert.equal(labB.status, 201, JSON.stringify(labB.body));
+  const projB = labB.body.id as string;
+  const tess = await sqlUser('tess@lab.test', { accountType: null });
+  const stu = await sqlUser('stu@lab.test', { accountType: null });
+  const sam = await sqlUser('sam@lab.test', { accountType: null });
+  const ids = Object.fromEntries((await sql(`SELECT email, id FROM users WHERE email IN ('bob@other.test')`)).map((r: any) => [r.email, r.id]));
+  const orgWide = [
+    `/api/v1/organizations/${orgA.id}/overview`,
+    `/api/v1/organizations/${orgA.id}/members`,
+    `/api/v1/organizations/${orgA.id}/usage`,
+    `/api/v1/organizations/${orgA.id}/audit-logs`,
+    `/api/v1/organizations/${orgA.id}/rejected-messages`,
+    `/api/v1/alerts?organizationId=${orgA.id}`,
+    `/api/v1/api-keys?organizationId=${orgA.id}`,
+    `/api/v1/firmware/releases?organizationId=${orgA.id}`,
+  ];
+  const projects = async (t: string) => (await http('GET', `/api/v1/projects?organizationId=${orgA.id}`, t)).body.items.map((p: any) => p.id).sort();
+  await check('a teacher invited with a channel sees only that channel, with engineer rights there, and nothing organization-wide', async () => {
+    const inv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tA, { email: 'tess@lab.test', role: 'teacher', projectIds: [proj.id] });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    assert.equal((await http('POST', '/api/v1/invitations/accept', tess.token, { token: tokenOf(inv.body.link) })).status, 200);
+    assert.deepEqual(await projects(tess.token), [proj.id]);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, tess.token)).status, 200);
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, tess.token)).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${projB}`, tess.token)).status, 404, 'other channels do not exist for them');
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${projB}`, tess.token)).status, 404);
+    for (const path of orgWide) assert.equal((await http('GET', path, tess.token)).status, 404, path);
+    assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}`, tess.token)).status, 200, 'the organization name is fine');
+    assert.equal((await http('POST', '/api/v1/projects', tess.token, { organizationId: orgA.id, name: 'Mine' })).status, 404, 'no new channels');
+    assert.equal((await http('PATCH', `/api/v1/projects/${proj.id}`, tess.token, { description: 'Set by the teacher' })).status, 200, 'engineer rights in their channel');
+  });
+  await check('teachers invite students only, only into their own channels; students see their channel read-only', async () => {
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'engineer' })).body.code, 'role_not_assignable');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'viewer' })).body.code, 'role_not_assignable');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'student', projectIds: [projB] })).status, 404, 'not their channel');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tA, { email: 'x@lab.test', role: 'engineer', projectIds: [proj.id] })).body.code, 'channels_for_scoped_roles');
+    const inv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'student', projectIds: [proj.id] });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    assert.equal((await http('POST', '/api/v1/invitations/accept', stu.token, { token: await emailedInviteToken(sinks, 'stu@lab.test') })).status, 200);
+    assert.deepEqual(await projects(stu.token), [proj.id]);
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, stu.token)).status, 200);
+    assert.equal((await http('POST', '/api/v1/devices', stu.token, { projectId: proj.id, displayName: 'nope' })).status, 403, 'viewer level');
+    assert.equal((await http('GET', `/api/v1/projects/${projB}`, stu.token)).status, 404);
+    for (const path of orgWide) assert.equal((await http('GET', path, stu.token)).status, 404, path);
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, stu.token, { email: 'y@lab.test', role: 'student' })).status, 403, 'students do not invite');
+    // A teacher sees only the invitations they made.
+    const mine = (await http('GET', `/api/v1/organizations/${orgA.id}/invitations`, tess.token)).body.items;
+    assert.ok(mine.length > 0 && mine.every((i: any) => i.email === 'stu@lab.test'), JSON.stringify(mine.map((i: any) => i.email)));
+    const alices = (await http('GET', `/api/v1/organizations/${orgA.id}/invitations`, tA)).body.items.find((i: any) => i.email === 'tess@lab.test');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations/${alices.id}/revoke`, tess.token, {})).status, 404, 'not theirs to revoke');
+  });
+  await check('channel access: a class code with a channel; teachers grant and remove students; roles that see everything are not granted', async () => {
+    const code = await http('POST', `/api/v1/organizations/${orgA.id}/class-codes`, tess.token, { label: 'Lab class', role: 'student', maxUses: 30, expiresInDays: 7, projectIds: [proj.id] });
+    assert.equal(code.status, 201, JSON.stringify(code.body));
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', sam.token, { inviteCode: code.body.code })).status, 200);
+    assert.deepEqual(await projects(sam.token), [proj.id]);
+    const access = (await http('GET', `/api/v1/projects/${proj.id}/access`, tess.token)).body;
+    assert.deepEqual(access.grants.map((g: any) => g.email).sort(), ['sam@lab.test', 'stu@lab.test']);
+    assert.ok(!JSON.stringify(access).includes('alice@arclabs.test'), 'a teacher does not get the member list');
+    assert.equal((await http('DELETE', `/api/v1/projects/${proj.id}/access/${sam.id}`, tess.token)).status, 204);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, sam.token)).status, 404, 'access removed');
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/access/${sam.id}`, tess.token, {})).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, sam.token)).status, 200);
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/access/${ids['bob@other.test']}`, tA, {})).body.code, 'not_scoped');
+    assert.equal((await http('PUT', `/api/v1/projects/${projB}/access/${sam.id}`, tess.token, {})).status, 404, 'not the teacher\'s channel');
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}/access`, tB)).status, 403, 'a viewer does not manage access');
+    assert.equal((await http('PUT', `/api/v1/projects/${projB}/access/${tess.id}`, tA, {})).status, 200, 'the owner grants a teacher another channel');
+    assert.deepEqual(await projects(tess.token), [proj.id, projB].sort());
+    const actions = (await sql(`SELECT action FROM audit_logs WHERE organization_id = $1 AND action LIKE 'channel.access_%'`, [orgA.id])).map((a: any) => a.action);
+    assert.ok(actions.includes('channel.access_grant') && actions.includes('channel.access_revoke'));
+  });
+  await check('leaving the organization or deleting the channel removes the grants', async () => {
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${stu.id}`, tA)).status, 204);
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM project_members WHERE user_id = $1`, [stu.id]))[0].n, 0);
+    const del = await http('DELETE', `/api/v1/projects/${projB}`, tA, { confirmName: 'Lab B' });
+    assert.ok(del.status >= 200 && del.status < 300, JSON.stringify(del.body));
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM project_members WHERE project_id = $1`, [projB]))[0].n, 0);
+    assert.deepEqual(await projects(tess.token), [proj.id]);
+  });
+}
+
+async function platformBoundary(ctx: { tA: string; tB: string; orgB: any; sinks: Sinks }) {
+  const { tA, tB, orgB, sinks } = ctx;
+  console.log('\nPlatform boundary: metadata only, support access');
+  // Alice plays an ARC LABS staff member; orgB (owned by Bob) is the customer.
+  await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+  try {
+    const projB = (await http('POST', '/api/v1/projects', tB, { organizationId: orgB.id, name: 'Customer channel' })).body.id as string;
+    const devB = (await http('POST', '/api/v1/devices', tB, { projectId: projB, displayName: 'Customer device' })).body.device.id as string;
+    const tenantRoutes = [
+      `/api/v1/organizations/${orgB.id}`,
+      `/api/v1/organizations/${orgB.id}/overview`,
+      `/api/v1/organizations/${orgB.id}/members`,
+      `/api/v1/projects/${projB}`,
+      `/api/v1/devices/${devB}`,
+      `/api/v1/devices?projectId=${projB}`,
+      `/api/v1/channels/${projB}/feeds.json`,
+    ];
+    let support = '';
+    await check('ARC LABS staff see metadata, not an organization\'s data', async () => {
+      const orgs = (await http('GET', '/api/v1/platform/organizations', tA)).body.items;
+      assert.ok(orgs.some((o: any) => o.id === orgB.id), 'listed with its plan and counts');
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 404, path);
+      assert.ok(!(await http('GET', '/api/v1/organizations', tA)).body.items.some((o: any) => o.id === orgB.id));
+      const self = await http('POST', `/api/v1/organizations/${orgB.id}/members`, tA, { email: 'alice@arclabs.test', role: 'viewer' });
+      assert.equal(self.body.code, 'use_support_access', 'staff cannot add themselves to look around');
+    });
+    await check('support access: needs a reason, is read-only, visible to the customer (audit log + email), and ends', async () => {
+      assert.equal((await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'help' })).status, 400, 'a real reason');
+      assert.equal((await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tB, { reason: 'I am not staff, let me in' })).status, 403);
+      const r = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Ticket 42: customer device not reporting', minutes: 30 });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.mode, 'read-only');
+      support = r.body.id;
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 200, path);
+      const listed = (await http('GET', '/api/v1/organizations', tA)).body.items.find((o: any) => o.id === orgB.id);
+      assert.equal(listed.role, 'support');
+      assert.equal(listed.support.id, support);
+      assert.equal((await http('PATCH', `/api/v1/projects/${projB}`, tA, { description: 'changed by staff' })).body.code, 'support_read_only');
+      assert.equal((await http('POST', '/api/v1/devices', tA, { projectId: projB, displayName: 'staff device' })).body.code, 'support_read_only');
+      assert.equal((await http('POST', `/api/v1/devices/${devB}/revoke`, tA, {})).body.code, 'support_read_only');
+      // The customer sees it: their audit log, and an email to the owner.
+      const audit = (await http('GET', `/api/v1/organizations/${orgB.id}/audit-logs`, tB)).body.items;
+      const opened = audit.find((a: any) => a.action === 'support.access_open');
+      assert.equal(opened.metadata.reason, 'Ticket 42: customer device not reporting');
+      await eventually(async () => sinks.emails.find((e) => e.to === 'bob@other.test' && /support access/i.test(e.raw)), 'email to the owner');
+      const sessions = (await http('GET', '/api/v1/platform/support-access', tA)).body.items;
+      assert.ok(sessions.some((x: any) => x.id === support && x.open && x.mine));
+      assert.equal((await http('POST', `/api/v1/platform/support-access/${support}/end`, tA)).status, 200);
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 404, `after ending: ${path}`);
+      assert.ok((await http('GET', `/api/v1/organizations/${orgB.id}/audit-logs`, tB)).body.items.some((a: any) => a.action === 'support.access_end'));
+    });
+    await check('support access expires on its own', async () => {
+      const r = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Ticket 43: follow-up check', minutes: 15 });
+      assert.equal((await http('GET', `/api/v1/projects/${projB}`, tA)).status, 200);
+      await sql(`UPDATE support_access SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE id = $1`, [r.body.id]);
+      assert.equal((await http('GET', `/api/v1/projects/${projB}`, tA)).status, 404);
+    });
+  } finally {
+    await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+  }
+}
+
+async function rolesAndOwnership(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {
+  const { tA, tB, orgA, orgB } = ctx;
+  console.log('\nRoles & ownership');
+  const ids = Object.fromEntries((await sql(`SELECT email, id FROM users WHERE email IN ('alice@arclabs.test', 'bob@other.test', 'minor1@school.test')`)).map((r: any) => [r.email, r.id]));
+  const alice = ids['alice@arclabs.test'];
+  const bob = ids['bob@other.test'];
+  const roleOf = async (org: string, user: string) => (await sql(`SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2`, [org, user]))[0]?.role;
+  await check('only the owner promotes to admin; an admin cannot touch the owner, transfer, or make admins', async () => {
+    assert.equal(await roleOf(orgA.id, alice), 'owner');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${bob}`, tA, { role: 'admin' })).status, 200);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${alice}`, tB, { role: 'viewer' })).body.code, 'owner_role');
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${alice}`, tB)).body.code, 'owner_role');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tB, { userId: bob })).body.code, 'owner_only');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tB, { email: 'minor1@school.test', role: 'admin' })).body.code, 'role_not_assignable');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${alice}`, tA, { role: 'owner' })).status, 400, 'owner is never assigned');
+    const invited = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tB, { email: 'minor1@school.test', role: 'viewer' });
+    assert.equal(invited.status, 201, JSON.stringify(invited.body));
+    const tMinor = (await tokenFor('minor1@school.test')).token;
+    assert.equal((await http('POST', '/api/v1/invitations/accept', tMinor, { token: new URL(invited.body.link).hash.slice('#token='.length) })).status, 200);
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tB, { email: 'minor1@school.test', role: 'engineer' })).body.code, 'already_member', 'inviting a member never changes their role');
+  });
+  await check('a member can leave; the owner cannot', async () => {
+    const tM = (await tokenFor('minor1@school.test')).token;
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${ids['minor1@school.test']}`, tM)).status, 204);
+    assert.equal(await roleOf(orgA.id, ids['minor1@school.test']), undefined);
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${alice}`, tA)).body.code, 'owner_role');
+  });
+  await check('ownership transfer: to an admin only, audited, exactly one owner throughout', async () => {
+    const r = await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tA, { userId: bob });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(await roleOf(orgA.id, bob), 'owner');
+    assert.equal(await roleOf(orgA.id, alice), 'admin');
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members WHERE organization_id = $1 AND role = 'owner'`, [orgA.id]))[0].n, 1);
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tA, { userId: alice })).body.code, 'owner_only', 'the old owner has no say any more');
+    const audit = await sql(`SELECT metadata FROM audit_logs WHERE action = 'organization.transfer_ownership' AND organization_id = $1`, [orgA.id]);
+    assert.deepEqual(audit[0].metadata, { from: alice, to: bob });
+    // And back, then Bob returns to viewer (as the rest of this suite expects).
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tB, { userId: alice })).status, 200);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${bob}`, tA, { role: 'viewer' })).status, 200);
+    await assert.rejects(sql(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND user_id = $2`, [orgA.id, bob]), /organization_members_one_owner/, 'the database refuses a second owner');
+  });
+  await check('a personal workspace has no team; a paid plan makes it an organization owned by its person', async () => {
+    assert.equal(await roleOf(orgB.id, bob), 'individual');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgB.id}/invitations`, tB, { email: 'alice@arclabs.test', role: 'viewer' })).body.code, 'personal_workspace');
+    assert.equal((await http('GET', '/api/v1/organizations', tB)).body.items.find((o: any) => o.id === orgB.id).role, 'individual');
+    await sql(`UPDATE users SET is_platform_admin = true WHERE id = $1`, [alice]);
+    try {
+      assert.equal((await http('PATCH', `/api/v1/organizations/${orgB.id}/plan`, tA, { plan: 'pro' })).status, 200);
+    } finally {
+      await sql(`UPDATE users SET is_platform_admin = false WHERE id = $1`, [alice]);
+    }
+    assert.equal((await sql(`SELECT kind FROM organizations WHERE id = $1`, [orgB.id]))[0].kind, 'organization');
+    assert.equal(await roleOf(orgB.id, bob), 'owner');
+  });
+}
+
 async function orgSuspension(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {
   const { tA, tB, orgA, orgB } = ctx;
   console.log('\nSuspended organizations');
@@ -1020,7 +1421,11 @@ async function orgSuspension(ctx: { tA: string; tB: string; orgA: any; orgB: any
       const listed = (await http('GET', '/api/v1/organizations', tB)).body.items.find((o: any) => o.id === orgB.id);
       assert.equal(listed?.status, 'suspended', 'members can still see that it is suspended');
       await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
-      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 200, 'ARC LABS staff can still get in');
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 404, 'staff are not members');
+      const sa = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Customer asked why the organization is suspended', minutes: 15 });
+      assert.equal(sa.status, 201, JSON.stringify(sa.body));
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 200, 'ARC LABS staff with support access can still look');
+      await http('POST', `/api/v1/platform/support-access/${sa.body.id}/end`, tA);
     } finally {
       await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
       await sql(`UPDATE organizations SET status = 'active' WHERE id = $1`, [orgB.id]);
