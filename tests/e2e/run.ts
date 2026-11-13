@@ -896,6 +896,7 @@ async function main() {
 
     await phases4to7({ tA, tB, orgA, orgB, proj, dev2, key2, sinks });
     await accountDeletion({ tA, orgA, kicked });
+    await orgSuspension({ tA, tB, orgA, orgB });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1002,6 +1003,30 @@ async function tokenFor(email: string) {
   const now = Math.floor(Date.now() / 1000);
   const head = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: id, iat: now, exp: now + 600, iss: 'arc-cloud', aud: 'arc-cloud-api' })}`;
   return { id, token: `${head}.${createHmac('sha256', SECRETS.JWT_SECRET).update(head).digest('base64url')}` };
+}
+
+async function orgSuspension(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {
+  const { tA, tB, orgA, orgB } = ctx;
+  console.log('\nSuspended organizations');
+  await check('a suspended organization is closed over the API for its members, not for ARC LABS staff; reactivating restores access', async () => {
+    await sql(`UPDATE organizations SET status = 'suspended' WHERE id = $1`, [orgB.id]);
+    try {
+      const r = await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tB);
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'org_suspended');
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}`, tB)).body.code, 'org_suspended');
+      // Bob is also a viewer in orgA (added earlier in this suite): his other, active organization still works.
+      assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}/overview`, tB)).status, 200, 'other organizations unaffected');
+      const listed = (await http('GET', '/api/v1/organizations', tB)).body.items.find((o: any) => o.id === orgB.id);
+      assert.equal(listed?.status, 'suspended', 'members can still see that it is suspended');
+      await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 200, 'ARC LABS staff can still get in');
+    } finally {
+      await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+      await sql(`UPDATE organizations SET status = 'active' WHERE id = $1`, [orgB.id]);
+    }
+    assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tB)).status, 200);
+  });
 }
 
 async function accountDeletion(ctx: { tA: string; orgA: any; kicked: string[] }) {

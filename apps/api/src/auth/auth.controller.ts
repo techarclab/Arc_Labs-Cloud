@@ -231,15 +231,7 @@ export class AuthController {
           if (account.identity_provider_id && account.identity_provider_id !== identityProviderId) {
             throw new ConflictException({ code: 'google_account_link_conflict' });
           }
-          if (!account.identity_provider_id) {
-            const linked = await client.query<GoogleUserRow>(
-              `UPDATE users SET identity_provider_id = $1, email_verified_at = COALESCE(email_verified_at, now())
-               WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
-               RETURNING id, email, display_name, identity_provider_id, status, created_at`,
-              [identityProviderId, account.id],
-            );
-            account = linked.rows[0] ?? account;
-          }
+          if (!account.identity_provider_id) account = (await this.linkGoogle(client, account.id, identityProviderId)) ?? account;
         } else {
           if (!config.ALLOW_SIGNUP) throw new ForbiddenException({ code: 'signup_disabled' });
           const created = await client.query<GoogleUserRow>(
@@ -262,14 +254,7 @@ export class AuthController {
             if (!account || (account.identity_provider_id && account.identity_provider_id !== identityProviderId)) {
               throw new ConflictException({ code: 'google_account_link_conflict' });
             }
-            if (!account.identity_provider_id) {
-              const linked = await client.query<GoogleUserRow>(
-                `UPDATE users SET identity_provider_id = $1 WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
-                 RETURNING id, email, display_name, identity_provider_id, status, created_at`,
-                [identityProviderId, account.id],
-              );
-              account = linked.rows[0] ?? account;
-            }
+            if (!account.identity_provider_id) account = (await this.linkGoogle(client, account.id, identityProviderId)) ?? account;
           }
         }
       }
@@ -723,6 +708,35 @@ export class AuthController {
       else plan.blockers.push({ id: o.id, name: o.name });
     }
     return plan;
+  }
+
+  /**
+   * Links a Google identity to an existing account with the same (Google-verified) address.
+   *
+   * If that account never confirmed its address, someone else may have registered it first with a password of
+   * their choosing, waiting for the real owner to sign in with Google and start using it (account pre-hijacking).
+   * So the password is removed and every earlier session is signed out: from now on only the address's owner gets
+   * in (with Google, or with a password they set through "Forgot password?", which emails that address).
+   */
+  private async linkGoogle(c: any, userId: string, identityProviderId: string): Promise<GoogleUserRow | undefined> {
+    // The caller holds the row lock (SELECT … FOR UPDATE), so this answer cannot change before the UPDATE.
+    const unconfirmed = (await c.query('SELECT email_verified_at IS NULL AS u FROM users WHERE id = $1', [userId])).rows[0]?.u === true;
+    const row = (
+      await c.query(
+        `UPDATE users SET identity_provider_id = $1, email_verified_at = COALESCE(email_verified_at, now())
+           ${unconfirmed ? ", password_hash = NULL, sessions_revoked_at = date_trunc('second', now())" : ''}
+         WHERE id = $2 AND (identity_provider_id IS NULL OR identity_provider_id = $1)
+         RETURNING id, email, display_name, identity_provider_id, status, created_at`,
+        [identityProviderId, userId],
+      )
+    ).rows[0];
+    if (row && unconfirmed) {
+      await this.audit.record(
+        { actorType: 'user', actorId: row.id, action: 'user.google_link_unconfirmed', resourceType: 'user', resourceId: row.id, metadata: { passwordRemoved: true, sessionsRevoked: true } },
+        c,
+      );
+    }
+    return row;
   }
 
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
