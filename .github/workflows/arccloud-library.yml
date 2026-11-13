@@ -1,14 +1,14 @@
 # Publishes the ArcCloud Arduino library to its own repository, which the Arduino Library Manager reads.
 #
 # The library is developed here, in firmware/arduino-library/ArcCloud. When a change to it reaches main with a new
-# `version=` in library.properties, this job copies the folder to the root of the library repository (ARCCLOUD_REPO)
+# `version=` in library.properties, this job copies the folder to the root of the library repository (ARCCLOUD_IOT_REPO)
 # and tags the release with that version. The Library Manager picks up new tags by itself (within about a day).
 #
 # One-time setup (see docs/arduino-library-release.md):
-#   - a public repository, e.g. techarclab/ArcCloud, with one commit (GitHub's "Add a README" is enough);
+#   - a public repository, e.g. techarclab/arciotcloud, with one commit (GitHub's "Add a README" is enough);
 #   - a fine-grained token with "Contents: read and write" on that repository only, saved here as the
-#     Actions secret ARCCLOUD_LIBRARY_TOKEN;
-#   - the repository variable ARCCLOUD_REPO (owner/name), e.g. techarclab/ArcCloud.
+#     Actions secret ARCCLOUD_IOT_LIBRARY_TOKEN;
+#   - the repository variable ARCCLOUD_IOT_REPO (owner/name), e.g. techarclab/arciotcloud.
 # Without the secret or the variable, the job lints the library and stops.
 name: ArcCloud library release
 
@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LIB: firmware/arduino-library/ArcCloud
-      ARCCLOUD_REPO: ${{ vars.ARCCLOUD_REPO }}
-      TOKEN: ${{ secrets.ARCCLOUD_LIBRARY_TOKEN }}
+      ARCCLOUD_IOT_REPO: ${{ vars.ARCCLOUD_IOT_REPO }}
+      TOKEN: ${{ secrets.ARCCLOUD_IOT_LIBRARY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,14 +51,14 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Copy to the library repository and tag ${{ steps.v.outputs.version }}
-        if: env.TOKEN != '' && env.ARCCLOUD_REPO != ''
+        if: env.TOKEN != '' && env.ARCCLOUD_IOT_REPO != ''
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
-          url="https://x-access-token:${TOKEN}@github.com/${ARCCLOUD_REPO}.git"
+          url="https://x-access-token:${TOKEN}@github.com/${ARCCLOUD_IOT_REPO}.git"
           if git ls-remote --tags "$url" "refs/tags/$VERSION" | grep -q .; then
-            echo "Tag $VERSION already exists in $ARCCLOUD_REPO: nothing to release (bump version= to publish)."
+            echo "Tag $VERSION already exists in $ARCCLOUD_IOT_REPO: nothing to release (bump version= to publish)."
             exit 0
           fi
           git clone --quiet "$url" /tmp/lib
@@ -72,8 +72,8 @@ jobs:
           git commit --quiet -m "ArcCloud $VERSION" -m "From ${GITHUB_REPOSITORY}@${GITHUB_SHA}" || echo "No file changes; tagging the current commit."
           git tag -a "$VERSION" -m "ArcCloud $VERSION"
           git push --quiet origin HEAD "refs/tags/$VERSION"
-          echo "Released ArcCloud $VERSION to https://github.com/$ARCCLOUD_REPO"
+          echo "Released ArcCloud $VERSION to https://github.com/$ARCCLOUD_IOT_REPO"
 
       - name: Not published (setup missing)
-        if: env.TOKEN == '' || env.ARCCLOUD_REPO == ''
-        run: echo "::notice::ArcCloud library linted only. Set the ARCCLOUD_LIBRARY_TOKEN secret and the ARCCLOUD_REPO variable to publish (docs/arduino-library-release.md)."
+        if: env.TOKEN == '' || env.ARCCLOUD_IOT_REPO == ''
+        run: echo "::notice::ArcCloud library linted only. Set the ARCCLOUD_IOT_LIBRARY_TOKEN secret and the ARCCLOUD_IOT_REPO variable to publish (docs/arduino-library-release.md)."

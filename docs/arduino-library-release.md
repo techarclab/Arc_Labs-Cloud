@@ -6,19 +6,19 @@ only install a library that sits at the root of its own public Git repository wi
 
 ## One-time setup
 
-1. **Library repository.** Create a public repository (e.g. `techarclab/ArcCloud`) and tick *Add a README*,
+1. **Library repository.** Create a public repository (e.g. `techarclab/arciotcloud`) and tick *Add a README*,
    so it has one commit. The workflow replaces the README with the library's on the first release.
 2. **Token.** GitHub → Settings → Developer settings → Fine-grained tokens → *Generate new token*:
    - Repository access: *Only select repositories* → the library repository.
    - Permissions: *Contents: Read and write*. Nothing else.
    - Pick an expiry (e.g. 1 year) and note the date: releases stop when it expires.
 3. **Secret and variable** in this repository (Settings → Secrets and variables → Actions):
-   - secret `ARCCLOUD_LIBRARY_TOKEN` = the token;
-   - variable `ARCCLOUD_REPO` = `techarclab/ArcCloud`.
+   - secret `ARCCLOUD_IOT_LIBRARY_TOKEN` = the token;
+   - variable `ARCCLOUD_IOT_REPO` = `techarclab/arciotcloud`.
 4. **First release.** Actions → *ArcCloud library release* → *Run workflow* (on `main`). It lints the library,
    copies it and tags the version from `library.properties` (e.g. `1.1.0`).
 5. **Register with Arduino (once).** Fork https://github.com/arduino/library-registry, add the line
-   `https://github.com/techarclab/ArcCloud` to the end of `repositories.txt`, open a pull request. A bot checks the
+   `https://github.com/techarclab/arciotcloud` to the end of `repositories.txt`, open a pull request. A bot checks the
    library and merges it if it passes; it can take a day to appear in the IDE's Library Manager.
 
 ## Every release after that
