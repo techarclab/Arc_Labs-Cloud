@@ -29,14 +29,14 @@ describe('Raspberry Pi script generator', () => {
   it('credentials, topic and interval as constants; TLS verified', () => {
     const s = gen();
     expect(s).toContain(`DEVICE_ID = "${device.id}"`);
-    expect(s).toContain('DEVICE_TOKEN = "tok-123"');
+    expect(s).toContain('DEVICE_KEY = "tok-123"');
     expect(s).toContain('TOPIC = "arc/v1/o/p/d"');
     expect(s).toContain('INTERVAL_SECONDS = 15');
     expect(s).toContain('ssl.create_default_context()');
     expect(s).not.toContain('CERT_NONE');
   });
   it('without a token it asks for one instead of inventing it', () => {
-    expect(gen({ token: undefined })).toContain('"paste-the-device-token-here"  # TODO');
+    expect(gen({ token: undefined })).toContain('"arc_dk_paste-your-device-key-here"  # TODO');
   });
   it('sensor fields in field order, controls get handlers', () => {
     const s = gen();

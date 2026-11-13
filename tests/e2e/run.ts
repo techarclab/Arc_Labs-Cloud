@@ -813,6 +813,28 @@ async function main() {
       assert.equal(d.body.lifecycleStatus, 'active');
       assert.equal(d.body.connectivity.status, 'online');
     });
+    await check('device key: one string for HTTP, MQTT and the library settings; old secrets still work', async () => {
+      const c = dev2.credentials;
+      assert.equal(c.deviceKey, `arc_dk_${dev2.device.id.replace(/-/g, '')}_${c.password}`);
+      assert.equal(key2, c.deviceKey);
+      const cfg = await fetch(`${API}/api/v1/device/config`, { headers: { authorization: `Bearer ${c.deviceKey}` } });
+      const body = await cfg.json();
+      assert.equal(cfg.status, 200, JSON.stringify(body));
+      assert.equal(body.deviceId, dev2.device.id);
+      assert.equal(body.topicBase, c.topics.telemetry.replace(/\/telemetry$/, ''));
+      assert.equal(body.intervalSeconds, 15);
+      assert.ok(body.mqttHost && body.mqttPort);
+      // The secret alone, as before.
+      assert.equal((await fetch(`${API}/api/v1/device/config`, { headers: { authorization: `Bearer ${c.password}` } })).status, 200);
+      // A key whose ID is another device's: refused, even with a real secret.
+      const forged = `arc_dk_${randomUUID().replace(/-/g, '')}_${c.password}`;
+      assert.equal((await fetch(`${API}/api/v1/device/config`, { headers: { authorization: `Bearer ${forged}` } })).status, 401);
+      assert.equal((await fetch(`${API}/api/v1/device/config`)).status, 401);
+      // MQTT: the whole key as the password works; a key for another device does not.
+      const m = await connectDevice({ clientId: c.clientId, username: c.username, password: c.deviceKey });
+      m.end(true);
+      await assert.rejects(connectDevice({ clientId: c.clientId, username: c.username, password: forged }));
+    });
     await check('HTTP update: POST JSON, rejects bad key, non-numbers, unknown fields, out of range', async () => {
       await sleep(1100);
       const post = await fetch(`${API}/api/v1/update`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key2 }, body: JSON.stringify({ humidityPct: 57 }) });

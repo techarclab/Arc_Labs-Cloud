@@ -1,7 +1,7 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
 import { BadRequestException, Body, ConflictException, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
-import { buildTopic, computeConnectivity } from '@arc/shared';
+import { buildTopic, computeConnectivity, formatDeviceKey } from '@arc/shared';
 import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { loadConfig } from '../config';
@@ -353,13 +353,15 @@ export class DevicesController {
       clientId: d.id,
       username: d.id,
       password,
+      /** Everything a device needs in one string (the ArcCloud libraries and the HTTP API take it as is). */
+      deviceKey: formatDeviceKey(d.id, password),
       topics: { telemetry: buildTopic(ids, 'telemetry'), state: buildTopic(ids, 'state'), commands: buildTopic(ids, 'cmd'), commandAcks: buildTopic(ids, 'cmd-ack') },
       http: {
-        apiKey: password,
+        apiKey: formatDeviceKey(d.id, password),
         updateUrl: `${cfg.HTTP_PUBLIC_URL}/api/v1/update`,
         controlsUrl: `${cfg.HTTP_PUBLIC_URL}/api/v1/controls`,
       },
-      notice: 'Store this password now. It is not stored in plaintext and cannot be shown again; rotate to get a new one. The same value is the HTTP API key.',
+      notice: 'Store the device key now. It is not stored in plaintext and cannot be shown again; replace it to get a new one. It is the MQTT password (the part after the second _, or the whole key) and the HTTP API key.',
     };
   }
 

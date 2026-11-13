@@ -1,6 +1,6 @@
 {
-  "when": "2026-11-11T09:47:18.988Z",
-  "operations": 112,
+  "when": "2026-11-13T11:37:12.712Z",
+  "operations": 131,
   "unlisted": [],
   "stale": [],
   "cells": [
@@ -345,6 +345,54 @@
       "outcome": "pass"
     },
     {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "outsider",
+      "expect": "allow",
+      "status": 403,
+      "code": "invite_not_for_organization",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 403,
+      "code": "invite_not_for_organization",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 403,
+      "code": "invite_not_for_organization",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 403,
+      "code": "invite_not_for_organization",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/account-type",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 403,
+      "code": "invite_not_for_organization",
+      "outcome": "pass"
+    },
+    {
       "op": "POST /api/v1/auth/forgot-password",
       "principal": "anon",
       "expect": "allow",
@@ -416,6 +464,96 @@
       "outcome": "pass"
     },
     {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "outsider",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/auth/delete-account",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "outsider",
+      "expect": "allow",
+      "status": 400,
+      "code": "confirm_email_mismatch",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 400,
+      "code": "confirm_email_mismatch",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 400,
+      "code": "confirm_email_mismatch",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 400,
+      "code": "confirm_email_mismatch",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/auth/delete-account",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 429,
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/organizations",
       "principal": "anon",
       "expect": "deny",
@@ -675,8 +813,9 @@
     {
       "op": "POST /api/v1/organizations/{id}/members",
       "principal": "admin",
-      "expect": "allow",
-      "status": 201,
+      "expect": "deny",
+      "status": 403,
+      "code": "use_invitations",
       "outcome": "pass"
     },
     {
@@ -684,8 +823,7 @@
       "principal": "platform",
       "expect": "allow",
       "status": 201,
-      "outcome": "known",
-      "why": "DEF-001"
+      "outcome": "pass"
     },
     {
       "op": "PATCH /api/v1/organizations/{id}/members/{userId}",
@@ -765,6 +903,55 @@
       "status": 403,
       "code": "insufficient_role",
       "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 409,
+      "code": "transfer_needs_admin",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/transfer-ownership",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 403,
+      "code": "owner_only",
+      "outcome": "known",
+      "why": "DEF-001"
     },
     {
       "op": "GET /api/v1/organizations/{id}/audit-logs",
@@ -1135,7 +1322,55 @@
       "principal": "platform",
       "expect": "allow",
       "status": 201,
-      "code": "ARC-RDRH-U4Q6-2GXB",
+      "code": "ARC-M3UX-N94E-TUYR",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 403,
+      "code": "platform_admin_only",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "platform_admin_only",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "platform_admin_only",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "admin",
+      "expect": "deny",
+      "status": 403,
+      "code": "platform_admin_only",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/platform/org-setup-codes",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 201,
+      "code": "ARC-JGMZ-CCJ8-5JEP",
       "outcome": "pass"
     },
     {
@@ -1224,6 +1459,485 @@
       "expect": "allow",
       "status": 200,
       "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/invitations",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 201,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 201,
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 201,
+      "code": "ARC-9WDK-YVPB-V6AB",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/class-codes",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 201,
+      "code": "ARC-3UFE-PMBR-GUT7",
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/organizations/{id}/seats",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "PATCH /api/v1/organizations/{id}/seats",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "GET /api/v1/invitations/preview",
+      "principal": "anon",
+      "expect": "allow",
+      "status": 400,
+      "code": "validation_failed",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/invitations/accept",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "outsider",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "viewer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "engineer",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/individual",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "POST /api/v1/onboarding/organization",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/projects/{id}/access",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 409,
+      "code": "not_scoped",
+      "outcome": "pass"
+    },
+    {
+      "op": "PUT /api/v1/projects/{id}/access/{userId}",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 409,
+      "code": "not_scoped",
+      "outcome": "known",
+      "why": "DEF-001"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_token",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 404,
+      "code": "not_found",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 409,
+      "code": "not_scoped",
+      "outcome": "pass"
+    },
+    {
+      "op": "DELETE /api/v1/projects/{id}/access/{userId}",
+      "principal": "platform",
+      "expect": "allow",
+      "status": 409,
+      "code": "not_scoped",
+      "outcome": "known",
+      "why": "DEF-001"
     },
     {
       "op": "GET /api/v1/projects",
@@ -2634,6 +3348,54 @@
       "outcome": "pass"
     },
     {
+      "op": "GET /api/v1/device/config",
+      "principal": "anon",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/device/config",
+      "principal": "outsider",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/device/config",
+      "principal": "viewer",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/device/config",
+      "principal": "engineer",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/device/config",
+      "principal": "admin",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
+      "op": "GET /api/v1/device/config",
+      "principal": "platform",
+      "expect": "deny",
+      "status": 401,
+      "code": "missing_api_key",
+      "outcome": "pass"
+    },
+    {
       "op": "GET /api/v1/controls",
       "principal": "anon",
       "expect": "deny",
@@ -2721,10 +3483,10 @@
     {
       "op": "GET /api/v1/channels/{id}/feeds.json",
       "principal": "platform",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
     },
     {
       "op": "GET /api/v1/channels/{id}/feeds.csv",
@@ -2766,10 +3528,10 @@
     {
       "op": "GET /api/v1/channels/{id}/feeds.csv",
       "principal": "platform",
-      "expect": "deny",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "pass"
+      "expect": "allow",
+      "status": 200,
+      "outcome": "known",
+      "why": "DEF-001"
     },
     {
       "op": "GET /api/v1/projects/{id}/command-types",
@@ -3279,9 +4041,9 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "viewer",
       "expect": "deny",
-      "status": 204,
-      "outcome": "fail",
-      "why": "NOT REFUSED"
+      "status": 403,
+      "code": "insufficient_role",
+      "outcome": "pass"
     },
     {
       "op": "GET /api/v1/alerts",
@@ -4481,6 +5243,13 @@
       "outcome": "pass"
     },
     {
+      "op": "POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke",
+      "principal": "admin",
+      "expect": "allow",
+      "status": 200,
+      "outcome": "pass"
+    },
+    {
       "op": "DELETE /api/v1/projects/{id}",
       "principal": "admin",
       "expect": "allow",
@@ -4512,10 +5281,8 @@
       "op": "DELETE /api/v1/rules/{id}",
       "principal": "engineer",
       "expect": "allow",
-      "status": 404,
-      "code": "not_found",
-      "outcome": "fail",
-      "why": "allowed caller refused or failed"
+      "status": 204,
+      "outcome": "pass"
     },
     {
       "op": "POST /api/v1/alerts/{id}/resolve",

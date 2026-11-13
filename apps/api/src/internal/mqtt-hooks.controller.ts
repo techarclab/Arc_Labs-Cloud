@@ -1,5 +1,5 @@
 import { Body, CanActivate, Controller, ExecutionContext, HttpCode, Injectable, Logger, Post, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { authorizeDevice, authorizeIngestService } from '@arc/shared';
+import { authorizeDevice, authorizeIngestService, parseDeviceKey } from '@arc/shared';
 import { loadConfig } from '../config';
 import { safeEqual, UUID_RE, verifySecret } from '../common/crypto';
 import { Db } from '../db/db.service';
@@ -38,7 +38,8 @@ export class MqttHooksController {
   @HttpCode(200)
   async authenticate(@Body() body: AuthnBody) {
     const cfg = loadConfig();
-    const { username = '', password = '', clientid = '' } = body ?? {};
+    const { username = '', clientid = '' } = body ?? {};
+    let password = body?.password ?? '';
 
     if (username === cfg.MQTT_SERVICE_USERNAME) {
       return safeEqual(password, cfg.MQTT_SERVICE_PASSWORD) ? ALLOW : DENY;
@@ -46,6 +47,12 @@ export class MqttHooksController {
 
     // Device: clientid must equal username so one device cannot take over another's session.
     if (!UUID_RE.test(username) || clientid !== username || !password) return this.deny('malformed', username);
+    // The whole device key works as the password too; it must be this device's key.
+    const dk = parseDeviceKey(password);
+    if (dk) {
+      if (dk.deviceId !== username.toLowerCase()) return this.deny('key_for_other_device', username);
+      password = dk.secret;
+    }
 
     const row = await this.db.one(
       `SELECT d.lifecycle_status, o.status AS org_status, c.secret_hash

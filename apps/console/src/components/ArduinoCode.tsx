@@ -60,9 +60,9 @@ export function ArduinoCodePanel({ device, token, onCopied }: { device: Device; 
         )}{' '}
         and install it with <i>Sketch → Include Library → Add .ZIP Library…</i>
       </p>
-      <div className="seg" role="group" aria-label="Where the device token lives">
+      <div className="seg" role="group" aria-label="Where the device key lives">
         <button type="button" aria-pressed={!provisioned} onClick={() => setProvisioned(false)}>
-          Token in the sketch (quick start)
+          Key in the sketch (quick start)
         </button>
         <button type="button" aria-pressed={provisioned} onClick={() => setProvisioned(true)}>
           No secrets in the sketch
@@ -72,8 +72,8 @@ export function ArduinoCodePanel({ device, token, onCopied }: { device: Device; 
         {provisioned
           ? 'Recommended for anything shared or updated over the air: the token is pasted once over USB and kept in the board’s flash.'
           : token
-            ? 'This sketch contains the device token. Keep it private: don’t share it, commit it to GitHub, or host the compiled file.'
-            : 'Paste the token you saved when the device was added. Lost it? “Replace password” gives a new one (the old one stops working).'}
+            ? 'This sketch contains the device key. Keep it private: don’t share it, commit it to GitHub, or host the compiled file.'
+            : 'Paste the device key (arc_dk_…) you saved when the device was added. Lost it? “New device key” gives a new one (the old one stops working).'}
       </p>
       <CppBlock code={code} />
       <div className="row">

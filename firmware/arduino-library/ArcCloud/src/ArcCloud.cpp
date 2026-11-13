@@ -1,6 +1,7 @@
 #include "ArcCloud.h"
 #include "ArcCloudFieldName.h"
 
+#include <HTTPClient.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -25,6 +26,28 @@ static bool isUuid(const char *s) {
 
 static bool validField(const char *f) { return arcValidFieldName(f); }
 
+// Settings fetched with a device key, kept apart from PROVISION settings ("arc").
+static const char *ARC_CFG_NVS = "arc_cfg";
+
+// arc_dk_<32 hex digits>_<secret>  ->  device ID with dashes, and the secret. False when it is not a device key.
+static bool splitDeviceKey(const String &raw, String &id, String &secret) {
+  String key = raw;
+  key.trim();
+  if (!key.startsWith("arc_dk_") || key.length() < 7 + 32 + 1 + 16 || key.length() > 140 || key[39] != '_') return false;
+  String hex = key.substring(7, 39);
+  for (size_t i = 0; i < hex.length(); i++) {
+    char c = hex[i];
+    if (!isxdigit((unsigned char)c) || (c >= 'A' && c <= 'F')) return false;
+  }
+  secret = key.substring(40);
+  for (size_t i = 0; i < secret.length(); i++) {
+    char c = secret[i];
+    if (!isalnum((unsigned char)c) && c != '_' && c != '-') return false;
+  }
+  id = hex.substring(0, 8) + "-" + hex.substring(8, 12) + "-" + hex.substring(12, 16) + "-" + hex.substring(16, 20) + "-" + hex.substring(20);
+  return true;
+}
+
 // ---------------------------------------------------------------- setup
 
 void ArcCloud::begin(const char *wifiSsid, const char *wifiPassword, const char *deviceId, const char *deviceToken, const char *topic,
@@ -38,6 +61,85 @@ void ArcCloud::begin(const char *wifiSsid, const char *wifiPassword, const char 
   port_ = port;
   provisionedMode_ = false;
   start();
+}
+
+void ArcCloud::begin(const char *wifiSsid, const char *wifiPassword, const char *deviceKey, const char *apiHost) {
+  wifiSsid_ = wifiSsid;
+  wifiPassword_ = wifiPassword;
+  deviceKey_ = deviceKey;
+  deviceKey_.trim();
+  apiHost_ = apiHost;
+  host_ = ARC_HOST;
+  port_ = ARC_PORT;
+  provisionedMode_ = false;
+  if (splitDeviceKey(deviceKey_, deviceId_, token_)) {
+    configFetched_ = false;  // asked from ARC Cloud once Wi-Fi is up
+    loadCachedConfig();      // until then (or if that fails): what this board was told last time
+  }
+  start();
+}
+
+void ArcCloud::loadCachedConfig() {
+  Preferences p;
+  if (!p.begin(ARC_CFG_NVS, true)) return;
+  if (p.getString("dev_id", "") == deviceId_) {
+    topicBase_ = p.getString("topic_base", "");
+    host_ = p.getString("mqtt_host", host_);
+    port_ = (uint16_t)p.getUInt("mqtt_port", port_);
+    intervalS_ = p.getUInt("interval_s", intervalS_);
+  }
+  p.end();
+}
+
+// GET https://<apiHost>/api/v1/device/config with the device key: topic, broker and interval. The certificate is checked
+// against the same pinned roots as the broker's.
+bool ArcCloud::fetchConfig() {
+  ARC_LOG("[arc] settings from %s... ", apiHost_.c_str());
+  HTTPClient http;
+  http.setTimeout(10000);
+  if (!http.begin(net_, apiHost_.c_str(), 443, "/api/v1/device/config", true)) {
+    ARC_LOG("failed to start\n");
+    return false;
+  }
+  http.addHeader("Authorization", "Bearer " + deviceKey_);
+  int code = http.GET();
+  if (code != 200) {
+    if (code == 401) Serial.println("refused: this device key is not valid (replaced, or mistyped). Copy it again from ARC Cloud.");
+    else if (code == 403) Serial.println("refused: the device is suspended or revoked in ARC Cloud.");
+    else Serial.printf("failed (%d)\n", code);
+    http.end();
+    if (code < 0) diagnose();
+    return false;
+  }
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, http.getStream());
+  http.end();
+  net_.stop();
+  const char *base = doc["topicBase"] | "";
+  if (err || strcmp(doc["deviceId"] | "", deviceId_.c_str()) != 0 || strncmp(base, "arc/v1/", 7) != 0) {
+    ARC_LOG("unexpected answer\n");
+    return false;
+  }
+  topicBase_ = base;
+  if (doc["mqttHost"].is<const char *>()) host_ = (const char *)doc["mqttHost"];
+  if (doc["mqttPort"].is<uint16_t>()) port_ = doc["mqttPort"].as<uint16_t>();
+  if (doc["intervalSeconds"].is<uint32_t>()) intervalS_ = doc["intervalSeconds"].as<uint32_t>();
+  mqtt_.setServer(host_.c_str(), port_);
+  ARC_LOG("ok (\"%s\")\n", doc["name"] | "");
+  Preferences p;
+  if (p.begin(ARC_CFG_NVS, false)) {
+    // Written only when something changed: flash wears out.
+    if (p.getString("dev_id", "") != deviceId_ || p.getString("topic_base", "") != topicBase_ || p.getString("mqtt_host", "") != host_ ||
+        p.getUInt("mqtt_port", 0) != port_ || p.getUInt("interval_s", 0) != intervalS_) {
+      p.putString("dev_id", deviceId_);
+      p.putString("topic_base", topicBase_);
+      p.putString("mqtt_host", host_);
+      p.putUInt("mqtt_port", port_);
+      p.putUInt("interval_s", intervalS_);
+    }
+    p.end();
+  }
+  return true;
 }
 
 void ArcCloud::beginProvisioned(const char *host, uint16_t port) {
@@ -69,12 +171,13 @@ void ArcCloud::start() {
 bool ArcCloud::validate() {
   const char *problem = nullptr;
   if (wifiSsid_.length() == 0 || wifiSsid_.length() > 32) problem = "Wi-Fi name (SSID) missing";
+  else if (deviceKey_.length() && deviceId_.length() == 0) problem = "the device key must be the arc_dk_... key from ARC Cloud, copied whole";
   else if (!isUuid(deviceId_.c_str())) problem = "device ID must be the device's ID from ARC Cloud (36 characters)";
   else if (token_.length() == 0) problem = "device token missing";
-  else if (!topicBase_.startsWith("arc/v1/") || !topicBase_.endsWith("/" + deviceId_)) problem = "topic must be arc/v1/<org>/<channel>/<device id>";
+  else if (configFetched_ && (!topicBase_.startsWith("arc/v1/") || !topicBase_.endsWith("/" + deviceId_))) problem = "topic must be arc/v1/<org>/<channel>/<device id>";
   if (!problem) return true;
   if (provisionedMode_ && deviceId_.length() == 0) {
-    Serial.println("[arc] Not provisioned yet. In ARC Cloud: Devices -> your device -> Replace password (or Add device) ->");
+    Serial.println("[arc] Not provisioned yet. In ARC Cloud: Devices -> your device -> New device key (or Add device) ->");
     Serial.println("[arc] tab \"ESP32 over USB\" -> copy the PROVISION line, put in your Wi-Fi, paste it here and press Enter.");
     Serial.println("[arc] (Serial Monitor: 115200 baud, line ending \"New Line\".)");
   } else {
@@ -106,6 +209,7 @@ String ArcCloud::applyProvision(const char *json) {
   if (doc["wifiPassword"].is<const char *>()) pass = (const char *)doc["wifiPassword"];
   if (doc["deviceId"].is<const char *>()) id = (const char *)doc["deviceId"];
   if (doc["devicePassword"].is<const char *>()) tok = (const char *)doc["devicePassword"];
+  if (doc["deviceKey"].is<const char *>() && !splitDeviceKey(String((const char *)doc["deviceKey"]), id, tok)) return "deviceKey must be the arc_dk_... key from ARC Cloud";
   if (doc["topicBase"].is<const char *>()) base = (const char *)doc["topicBase"];
   if (doc["intervalSeconds"].is<uint32_t>()) interval = doc["intervalSeconds"].as<uint32_t>();
   if (ssid.length() == 0 || ssid.length() > 32) return "wifiSsid must be 1-32 characters";
@@ -229,6 +333,22 @@ unsigned long ArcCloud::backoffMs() {
 
 void ArcCloud::ensureMqtt() {
   if (mqtt_.connected() || (long)(millis() - nextMqttAttempt_) < 0) return;
+  if (!configFetched_) {
+    // Device key: ask ARC Cloud where to connect, once per start. Without an answer, use the copy in flash if there is one.
+    if (fetchConfig()) {
+      configFetched_ = true;
+    } else if (topicBase_.length()) {
+      ARC_LOG("[arc] using the settings saved on this board\n");
+      configFetched_ = true;
+      mqtt_.setServer(host_.c_str(), port_);
+    } else {
+      unsigned long wait = backoffMs();
+      failures_++;
+      nextMqttAttempt_ = millis() + wait;
+      ARC_LOG("[arc] next try in %lu s\n", wait / 1000);
+      return;
+    }
+  }
   ARC_LOG("[arc] cloud %s:%u connecting... ", host_.c_str(), port_);
   // Client ID and username are both the device ID; the token is the password.
   if (mqtt_.connect(deviceId_.c_str(), deviceId_.c_str(), token_.c_str())) {
@@ -240,7 +360,7 @@ void ArcCloud::ensureMqtt() {
   }
   int rc = mqtt_.state();
   if (rc == 4 || rc == 5) {
-    Serial.printf("refused (rc=%d): wrong device ID or token, or the device is suspended/revoked in ARC Cloud\n", rc);
+    Serial.printf("refused (rc=%d): wrong device key (or ID/token), or the device is suspended/revoked in ARC Cloud\n", rc);
   } else {
     Serial.printf("failed (rc=%d)\n", rc);
     diagnose();

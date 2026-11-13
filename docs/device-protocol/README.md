@@ -2,6 +2,20 @@
 
 Status: implemented in `packages/shared` and enforced by the broker ACL and the ingestion worker. Freeze before shipping firmware; breaking changes go to `arc/v2`.
 
+## Device key
+
+Each device has one **device key**, shown once when the device is added or when you make a new one:
+
+```
+arc_dk_<device ID as 32 hex digits, no dashes>_<secret>
+```
+
+It is everything a device needs. The ArcCloud libraries take only the key (`arc.begin(ssid, pass, key)`): they call
+`GET /api/v1/device/config` with it (below) to learn the broker and their topic. Everywhere a password or API key is
+asked for, the whole key works; the secret alone (the part after the second `_`, which is what older devices were
+given) works too. The key's device ID must match: a real secret with another device's ID is refused.
+Format and parsing: `packages/shared/src/device-key.ts`.
+
 ## Connection
 
 | Item | Value |
@@ -9,7 +23,7 @@ Status: implemented in `packages/shared` and enforced by the broker ACL and the 
 | Transport | MQTT 3.1.1 or 5 over TLS 1.2+ on port 8883 |
 | Client ID | device UUID |
 | Username | device UUID (must equal client ID) |
-| Password | per-device secret from provisioning/rotation |
+| Password | the device key, or its secret part (older devices: the password they were given) |
 | Keep-alive | 30–60 s recommended |
 | Server cert | verify against the ARC CA (dev: `infra/certs/out/ca.crt`) |
 
@@ -80,11 +94,12 @@ Signing: `node tools/firmware-sign.mjs keygen` (P-256 by default), add the publi
 
 ## HTTP API (ThingSpeak-style)
 
-For devices that don't use MQTT. The key is the device password (shown once when the device is added). Send it as a header, `Authorization: Bearer KEY` (or `X-API-Key: KEY`), never in the URL: URLs are recorded in proxy, load balancer and server logs. HTTPS only, with the server certificate verified (the reference sketches pin public root CAs in `arc_roots.h`).
+For devices that don't use MQTT. The key is the device key (`arc_dk_…`, shown once when the device is added; the secret alone works too). Send it as a header, `Authorization: Bearer KEY` (or `X-API-Key: KEY`), never in the URL: URLs are recorded in proxy, load balancer and server logs. HTTPS only, with the server certificate verified (the reference sketches pin public root CAs in `arc_roots.h`).
 
 | Request | What it does |
 |---|---|
 | `GET/POST /api/v1/update?field1=23.5&field2=60` | Send readings. `fieldN` maps to field number N in Channel settings; names (`&temperature=23.5`) work too. Optional `created_at` (ISO time). At most 1 request/second per device. |
+| `GET /api/v1/device/config` | The device's settings for libraries: `{deviceId, name, mqttHost, mqttPort, topicBase, intervalSeconds}`. |
 | `GET /api/v1/controls` | All control values as JSON, e.g. `{"relay":1,"fanSpeed":40}`. Also marks the device as seen. |
 | `GET /api/v1/controls?field=relay` | One control value as plain text (`1`). `field=field3` works too. |
 | `GET /api/v1/channels/{channelId}/feeds.json?results=100` | Read the channel's data (also `feeds.csv`) with the channel **read** key in `X-API-Key` (or `?api_key=`: it is read-only and rotatable). Optional `device`, `start`, `end`. |
