@@ -835,3 +835,7 @@ fieldset.account-types .hint { display: block; margin-top: 2px; font-size: 12.5p
 .delete-plan ul { margin: 0 0 10px; padding-left: 20px; }
 .challenge-row { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
 .challenge { width: 200px; height: 56px; user-select: none; -webkit-user-select: none; pointer-events: none; }
+
+/* Team: seats used / limit */
+.seats-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; background: #f3f5fa; border: 1px solid #e3e7ee; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

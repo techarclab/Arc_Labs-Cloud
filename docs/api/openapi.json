@@ -846,7 +846,7 @@
             "description": ""
           }
         },
-        "summary": "Add member",
+        "summary": "Add member (ARC LABS staff only; others send an invitation)",
         "tags": [
           "Organizations"
         ]
@@ -1228,6 +1228,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 3650
+                  },
+                  "maxMembers": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
                   }
                 },
                 "required": [
@@ -1373,6 +1378,332 @@
         "summary": "Organizations",
         "tags": [
           "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/invitations": {
+      "get": {
+        "operationId": "InvitationsController_list",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Invitations and class codes of an organization (no tokens or codes)",
+        "tags": [
+          "Invitations"
+        ]
+      },
+      "post": {
+        "operationId": "InvitationsController_inviteByEmail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "admin",
+                      "engineer",
+                      "viewer"
+                    ]
+                  },
+                  "expiresInDays": {
+                    "default": 7,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Invite someone by email (one person, single use, expiring)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/class-codes": {
+      "post": {
+        "operationId": "InvitationsController_createClassCode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer"
+                    ]
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365
+                  }
+                },
+                "required": [
+                  "label",
+                  "role",
+                  "maxUses",
+                  "expiresInDays"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a class code (shared, student or viewer, limited uses, capped by seats)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/invitations/{inviteId}/revoke": {
+      "post": {
+        "operationId": "InvitationsController_revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "inviteId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "removeMembers": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke an invitation or class code; optionally remove the people who joined with it (never the owner or admins)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/organizations/{id}/seats": {
+      "get": {
+        "operationId": "InvitationsController_seats",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Seats: members, open invitations and the limit",
+        "tags": [
+          "Invitations"
+        ]
+      },
+      "patch": {
+        "operationId": "InvitationsController_setSeats",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "seatLimit": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "seatLimit"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set the seat limit, within the plan (null: the plan’s maximum)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/invitations/preview": {
+      "get": {
+        "operationId": "InvitationsController_preview",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "What an emailed invitation is for (organization, role, invited address)",
+        "tags": [
+          "Invitations"
+        ]
+      }
+    },
+    "/api/v1/invitations/accept": {
+      "post": {
+        "operationId": "InvitationsController_accept",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Accept an emailed invitation (the signed-in account must have the invited, confirmed address)",
+        "tags": [
+          "Invitations"
         ]
       }
     },

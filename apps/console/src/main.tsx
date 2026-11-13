@@ -22,6 +22,7 @@ import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
 import { AccountPage } from './pages/Account';
 import { AccountTypeGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { InvitePage, PendingInviteGate, pendingInviteToken } from './pages/Invite';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
@@ -75,6 +76,9 @@ function Gate() {
     return <TermsGate accepted={user.termsVersion ?? null} onAccepted={reload} onSignOut={signOut} />;
   }
   if (user.emailVerified === false) return <VerifyGate email={user.email} onReload={reload} onSignOut={signOut} />;
+  // An emailed invitation that brought them here: accept it first (it also answers "who is this account for?").
+  const invite = pendingInviteToken();
+  if (invite) return <PendingInviteGate token={invite} onDone={reload} />;
   // Then, once: who is this account for? (individual, organization with an ARC LABS code, or something else)
   if (user.accountType === null) return <AccountTypeGate name={user.displayName} onDone={reload} onSignOut={signOut} />;
   return (
@@ -118,6 +122,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/invite" element={<InvitePage />} />
             <Route path="*" element={<Gate />} />
           </Routes>
         </SessionProvider>
