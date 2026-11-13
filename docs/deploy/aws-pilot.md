@@ -204,7 +204,8 @@ sudo $COMPOSE run --rm --no-deps api node apps/api/dist/tools/platform-admin.js 
 ```
 
 Each grant and revoke is recorded in `audit_logs` (`platform_admin.grant` / `platform_admin.revoke`) and applies on the
-person's next request. A platform admin has admin rights in **every** organization, so keep the list short.
+person's next request. A platform admin manages plans and codes for every organization, but sees an organization's
+data only through time-limited, read-only, audited support access (Platform page). Keep the list short anyway.
 
 `PLATFORM_ADMIN_EMAILS` is no longer used: it is ignored (it grants nothing), and the API logs a warning at startup if
 it is still set. When upgrading from it, grant the same people with the tool **before** deploying, or they lose access.

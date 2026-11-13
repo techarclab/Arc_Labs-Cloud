@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, HttpException, Patch, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Patch, Post, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
@@ -9,10 +9,12 @@ import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
 import { BrokerAdmin } from '../common/broker-admin.service';
+import { readRefreshCookie, SessionsService } from '../common/sessions.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
+import { grantInviteChannels, requireSeat } from '../common/seats';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
-import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
+import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson, Uuid } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Db } from '../db/db.service';
 
@@ -60,7 +62,7 @@ type DeletionPlan = {
   deleteWorkspaces: { id: string; name: string; devices: number }[];
   /** Organizations the person just leaves (someone else stays admin, or they are not an admin). */
   leave: { id: string; name: string }[];
-  /** Organizations where the person is the only admin but not the only member: they must hand over first. */
+  /** Organizations the person owns: they must transfer ownership first (or ARC LABS closes the organization). */
   blockers: { id: string; name: string }[];
   platformAdmin: boolean;
 };
@@ -111,13 +113,14 @@ export class AuthController {
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
     private readonly broker: BrokerAdmin,
+    private readonly sessions: SessionsService,
   ) {}
 
   @Doc('Register', { body: registerBody })
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
-  async register(@Body() body: unknown) {
+  async register(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(registerBody, body);
     const config = loadConfig();
     // Under-18s join only through an institution's invite code (the institution arranges a parent's consent).
@@ -138,7 +141,9 @@ export class AuthController {
           )
         ).rows[0];
         if (invite?.organization_id) {
+          await requireSeat(c, invite.organization_id);
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
+          await grantInviteChannels(c, invite.id, u.id);
           // Joined an organization with the code: that answers "who is this account for?".
           await c.query(`UPDATE users SET account_type = 'organization' WHERE id = $1`, [u.id]);
           u.account_type = 'organization';
@@ -158,7 +163,7 @@ export class AuthController {
         );
         return u;
       });
-      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type ?? null }, ...(await this.issueToken(user.id)) };
+      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type ?? null }, ...(await this.sessions.signIn(user.id, req, res)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });
       throw err;
@@ -170,7 +175,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(200)
-  async login(@Body() body: unknown) {
+  async login(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(loginBody, body);
     const user = await this.db.one(
       `SELECT id, email, display_name, password_hash, status, created_at FROM users WHERE email = $1`,
@@ -178,7 +183,7 @@ export class AuthController {
     );
     const ok = await verifySecret(input.password, user?.password_hash ?? DUMMY_HASH);
     if (!user || !ok || user.status !== 'active') throw new UnauthorizedException({ code: 'invalid_credentials' });
-    return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+    return { user: this.publicUser(user), ...(await this.sessions.signIn(user.id, req, res)) };
   }
 
   @Doc('Google sign-in configuration')
@@ -193,7 +198,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('google')
   @HttpCode(200)
-  async loginWithGoogle(@Body() body: unknown) {
+  async loginWithGoogle(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const config = loadConfig();
     if (!config.GOOGLE_CLIENT_ID) throw new ServiceUnavailableException({ code: 'google_signin_unconfigured' });
     const input = parse(googleLoginBody, body);
@@ -267,7 +272,7 @@ export class AuthController {
     });
 
     await this.audit.record({ actorType: 'user', actorId: user.id, action: 'user.google_login', resourceType: 'user', resourceId: user.id });
-    return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+    return { user: this.publicUser(user), ...(await this.sessions.signIn(user.id, req, res)) };
   }
 
   @Doc('Me')
@@ -284,7 +289,7 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type,
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type, profession,
               password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
        FROM users WHERE id = $1`,
       [current.id],
@@ -305,6 +310,8 @@ export class AuthController {
         ageGroup: user.age_group ?? null,
         /** 'individual', 'organization' or 'other'; null until the person answers (after confirming the email). */
         accountType: user.account_type ?? null,
+        /** Individuals: engineer, teacher, trainer, hobbyist or other. */
+        profession: user.profession ?? null,
         emailVerifiedAt: user.email_verified_at ?? null,
         /** How this person can sign in (for the profile page). */
         signIn: { password: !!user.has_password, google: !!user.google },
@@ -404,7 +411,9 @@ export class AuthController {
       const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
       await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
       if (invite?.organization_id) {
+        await requireSeat(c, invite.organization_id);
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
+        await grantInviteChannels(c, invite.id, u.id);
         await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [u.id]);
       }
       await this.audit.record(
@@ -427,7 +436,7 @@ export class AuthController {
       const invite = (
         await c.query<Invite & { name: string }>(
           `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-           WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+           WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
           [hashInviteCode(inviteCode)],
         )
       ).rows[0];
@@ -435,8 +444,10 @@ export class AuthController {
       if (!invite) throw new ForbiddenException({ code: 'invite_invalid', message: 'This code is not valid for joining an organization. It may have expired or been used up.' });
       const already = (await c.query('SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rows[0];
       if (already) throw new ConflictException({ code: 'already_member', message: `You are already a member of ${invite.name}.` });
+      await requireSeat(c, invite.organization_id!);
       await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
       await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, current.id, invite.role, invite.id]);
+      await grantInviteChannels(c, invite.id, current.id);
       await this.audit.record(
         { actorType: 'user', actorId: current.id, organizationId: invite.organization_id!, action: 'user.join_organization', resourceType: 'organization', resourceId: invite.organization_id!, metadata: { inviteId: invite.id, role: invite.role } },
         c,
@@ -463,18 +474,23 @@ export class AuthController {
         const invite = (
           await c.query<Invite & { name: string }>(
             `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-             WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+             WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
             [hashInviteCode(input.inviteCode!)],
           )
         ).rows[0];
         // Unknown, expired, revoked, used up, or a code that only creates accounts: one answer.
         if (!invite) throw new ForbiddenException({ code: 'invite_not_for_organization' });
+        const member = (await c.query('SELECT 1 FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rowCount;
+        if (!member) await requireSeat(c, invite.organization_id!);
         const joined = await c.query(
           `INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING user_id`,
           [invite.organization_id, current.id, invite.role, invite.id],
         );
         // Already a member (e.g. joined at sign-up with this code): no second use.
-        if (joined.rowCount) await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+        if (joined.rowCount) {
+          await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+          await grantInviteChannels(c, invite.id, current.id);
+        }
         organization = { id: invite.organization_id!, name: invite.name, role: invite.role! };
       }
       const note = input.accountType === 'other' ? input.note || null : null;
@@ -545,7 +561,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('reset-password')
   @HttpCode(200)
-  async resetPassword(@Body() body: unknown) {
+  async resetPassword(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(resetPasswordBody, body);
     const passwordHash = await hashSecret(input.password);
     const userId = await this.db.tx(async (c) => {
@@ -570,7 +586,9 @@ export class AuthController {
       await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.password_reset', resourceType: 'user', resourceId: u.id }, c);
       return u.id;
     });
-    return { reset: true, ...(await this.issueToken(userId)) };
+    // A new password ends every session (the old one may be known to someone else); this browser gets a new one.
+    await this.sessions.revokeAll(userId, 'password_reset');
+    return { reset: true, ...(await this.sessions.signIn(userId, req, res)) };
   }
 
   @Doc('Change your display name', { body: updateMeBody })
@@ -589,7 +607,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('change-password')
   @HttpCode(200)
-  async changePassword(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+  async changePassword(@CurrentUser() current: AuthUser, @Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
     const input = parse(changePasswordBody, body);
     const u = await this.db.one<{ password_hash: string | null }>('SELECT password_hash FROM users WHERE id = $1', [current.id]);
@@ -598,7 +616,9 @@ export class AuthController {
     if (!(await verifySecret(input.currentPassword, u.password_hash))) throw new ForbiddenException({ code: 'wrong_password', message: 'The current password is not right.' });
     await this.db.query(`UPDATE users SET password_hash = $2, sessions_revoked_at = date_trunc('second', now()) WHERE id = $1`, [current.id, await hashSecret(input.newPassword)]);
     await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.change_password', resourceType: 'user', resourceId: current.id });
-    return { changed: true, ...(await this.issueToken(current.id)) };
+    await this.sessions.revokeAll(current.id, 'password_change', current.sessionId);
+    // This browser stays signed in: its session goes on, with a token newer than the cut-off above.
+    return { changed: true, ...(current.sessionId ? await this.sessions.accessToken(current.id, current.sessionId) : await this.sessions.signIn(current.id, req, res)) };
   }
 
   @Doc('Sign out on every device, including this one')
@@ -606,8 +626,10 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('sign-out-everywhere')
   @HttpCode(200)
-  async signOutEverywhere(@CurrentUser() current: AuthUser) {
+  async signOutEverywhere(@CurrentUser() current: AuthUser, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
+    await this.sessions.revokeAll(current.id, 'sign_out_everywhere');
+    this.sessions.clearCookie(res);
     // Round up to the next second, so a token issued earlier in this same second is refused too.
     await this.db.query(`UPDATE users SET sessions_revoked_at = date_trunc('second', now()) + interval '1 second' WHERE id = $1`, [current.id]);
     await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.sign_out_everywhere', resourceType: 'user', resourceId: current.id });
@@ -627,7 +649,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('delete-account')
   @HttpCode(200)
-  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
     const input = parse(deleteAccountBody, body);
     const u = await this.db.one<{ email: string; password_hash: string | null }>('SELECT email, password_hash FROM users WHERE id = $1', [current.id]);
@@ -650,7 +672,7 @@ export class AuthController {
         throw new ConflictException({
           code: 'sole_admin',
           organizations: plan.blockers,
-          message: `You are the only admin of ${plan.blockers.map((o) => o.name).join(', ')}. Make someone else an admin there first (Team page), or ask ARC LABS to close it.`,
+          message: `You own ${plan.blockers.map((o) => o.name).join(', ')}. Transfer ownership to an admin there first (Team page), or ask ARC LABS to close it.`,
         });
       }
       const deviceIds: string[] = [];
@@ -685,6 +707,7 @@ export class AuthController {
     });
     // The devices' credentials are gone: end any live broker sessions now rather than at the next ACL check.
     await Promise.all(deviceIds.map((id) => this.broker.disconnect(id)));
+    this.sessions.clearCookie(res);
     return { deleted: true, deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length };
   }
 
@@ -693,18 +716,19 @@ export class AuthController {
       await c.query(
         `SELECT o.id, o.name, o.kind, m.role,
                 (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1) AS others,
-                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1 AND x.role = 'org_admin') AS other_admins,
                 (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id) AS devices
          FROM organization_members m JOIN organizations o ON o.id = m.organization_id
          WHERE m.user_id = $1 ORDER BY o.name`,
         [userId],
       )
-    ).rows as { id: string; name: string; kind: string; role: string; others: number; other_admins: number; devices: number }[];
+    ).rows as { id: string; name: string; kind: string; role: string; others: number; devices: number }[];
     const plan: DeletionPlan = { deleteWorkspaces: [], leave: [], blockers: [], platformAdmin };
     for (const o of rows) {
-      if (o.role !== 'org_admin' || o.other_admins > 0) plan.leave.push({ id: o.id, name: o.name });
+      // Members (admins included: the owner stays) just leave.
+      if (o.role !== 'owner' && o.role !== 'individual') plan.leave.push({ id: o.id, name: o.name });
       // Only a personal workspace with nobody else in it is deleted; an organization ARC LABS set up never is.
-      else if (o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      else if (o.role === 'individual' && o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      // The owner of an organization: transfer ownership first (or ARC LABS closes it).
       else plan.blockers.push({ id: o.id, name: o.name });
     }
     return plan;
@@ -739,12 +763,57 @@ export class AuthController {
     return row;
   }
 
+  @Doc('Renew the access token with the session cookie (rotates the refresh token)')
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('refresh')
+  @HttpCode(200)
+  async refresh(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    return this.sessions.refresh(req, res);
+  }
+
+  @Doc('Log out: end this session (the cookie’s, and the token’s if given) and clear the cookie')
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('logout')
+  @HttpCode(204)
+  async logout(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    const c = readRefreshCookie(req);
+    if (c) {
+      // Only with the cookie's own secret: knowing a session id is not enough to end someone's session.
+      const s = await this.db.one<{ id: string; user_id: string }>(
+        `SELECT id, user_id FROM sessions WHERE id = $1 AND (refresh_hash = $2 OR prev_refresh_hash = $2)`,
+        [c.sid, sha256(c.secret)],
+      );
+      if (s) await this.sessions.revoke(s.id, s.user_id, 'logout');
+    }
+    this.sessions.clearCookie(res);
+  }
+
+  @Doc('Your signed-in devices (sessions)')
+  @SystemDb()
+  @Get('sessions')
+  async listSessions(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    return { items: await this.sessions.list(current.id, current.sessionId) };
+  }
+
+  @Doc('Sign out one device (end one of your sessions)')
+  @SystemDb()
+  @Delete('sessions/:id')
+  @HttpCode(204)
+  async endSession(@CurrentUser() current: AuthUser, @Param('id', Uuid()) id: string) {
+    requirePerson(current);
+    if (!(await this.sessions.revoke(id, current.id, 'signed_out_from_account'))) throw new NotFoundException({ code: 'not_found' });
+    await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.session_end', resourceType: 'user', resourceId: current.id, metadata: { sessionId: id } });
+  }
+
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
   private async claimInvite(c: any, code: string): Promise<Invite> {
     const invite = (
       await c.query(
         `UPDATE invite_codes SET used_count = used_count + 1
-         WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+         WHERE code_hash = $1 AND kind IN ('platform', 'class') AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
          RETURNING id, organization_id, role`,
         [hashInviteCode(code)],
       )
@@ -786,11 +855,6 @@ export class AuthController {
     );
   }
 
-  private async issueToken(userId: string) {
-    const ttl = loadConfig().JWT_TTL_SECONDS;
-    const accessToken = await this.jwt.signAsync({ sub: userId }, { expiresIn: ttl });
-    return { accessToken, tokenType: 'Bearer', expiresIn: ttl };
-  }
 
   private publicUser(u: any) {
     return { id: u.id, email: u.email, displayName: u.display_name, createdAt: u.created_at };

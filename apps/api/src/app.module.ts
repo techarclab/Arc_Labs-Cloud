@@ -3,6 +3,7 @@ import { Controller, Get, Module, Optional, ServiceUnavailableException } from '
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantScopeInterceptor } from './common/tenant-scope.interceptor';
 import { BrokerAdmin } from './common/broker-admin.service';
+import { SessionsService } from './common/sessions.service';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -18,6 +19,9 @@ import { IngestService } from './common/ingest.service';
 import { MqttPublisher } from './common/mqtt-publisher.service';
 import { MqttHooksController } from './internal/mqtt-hooks.controller';
 import { OrganizationsController } from './organizations/organizations.controller';
+import { InvitationsController } from './organizations/invitations.controller';
+import { OnboardingController } from './onboarding/onboarding.controller';
+import { ChannelAccessController } from './projects/channel-access.controller';
 import { ProjectsController } from './projects/projects.controller';
 import { AlertsController } from './alerts/alerts.controller';
 import { CommandsController } from './commands/commands.controller';
@@ -108,6 +112,9 @@ class RootController {
     OrganizationsController,
     OrgOpsController,
     PlatformController,
+    InvitationsController,
+    OnboardingController,
+    ChannelAccessController,
     ProjectsController,
     DevicesController,
     DeviceHttpController,
@@ -125,6 +132,7 @@ class RootController {
     IngestService,
     MqttPublisher,
     BrokerAdmin,
+    SessionsService,
     CommandsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

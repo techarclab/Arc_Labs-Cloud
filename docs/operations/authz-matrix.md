@@ -27,7 +27,11 @@
 
 ## Findings from the first run
 
-- **DEF-001 (high):** platform admins hold org_admin rights in every organization.
+- **DEF-001 (high), fixed 2026-11-13 (phase 5 of the auth redesign):** platform admins are now refused on every
+  tenant route (the matrix expects it: 0 known-defect cells). They see metadata on platform routes, and an
+  organization's data only through time-limited, read-only support access with a reason, recorded in that
+  organization's audit log and emailed to its owner (`POST /api/v1/platform/organizations/{id}/support-access`).
+  Original finding:
   - `AccessService.roleIn` returns `org_admin`, and `TenantScopeInterceptor` runs their requests without row-level security.
   - The Account page tells them "no access to their data", and the reference documentation says the same.
   - 63 cells: read telemetry, rotate and revoke devices, delete channels, manage keys and webhooks of any customer.

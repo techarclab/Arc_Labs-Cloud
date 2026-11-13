@@ -21,12 +21,14 @@ import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
 import { AccountPage } from './pages/Account';
-import { AccountTypeGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { WhoAreYouGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { InvitePage, PendingInviteGate, pendingInviteToken } from './pages/Invite';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
 import { PlatformPage } from './pages/Platform';
 import { SessionProvider, useSession } from './session';
+import { isScoped } from './api';
 import '@fontsource-variable/bricolage-grotesque/opsz.css';
 import '@fontsource/instrument-sans/400.css';
 import '@fontsource/instrument-sans/500.css';
@@ -38,7 +40,7 @@ import './styles.css';
 
 /** Sends a signed-in user to their first project, or to setup if they have none. */
 function Home() {
-  const { orgs, refreshProjects } = useSession();
+  const { orgs, refreshProjects, user } = useSession();
   const nav = useNavigate();
   const [needsSetup, setNeedsSetup] = useState(false);
   useEffect(() => {
@@ -56,6 +58,10 @@ function Home() {
         const target = remembered ?? ps[0];
         if (target && alive) return nav(`/o/${org.id}/p/${target.id}`, { replace: true });
       }
+      // A student/employee/teacher/trainer without channels yet: their organization's page says so (no setup).
+      const scopedOrg = orgs.find((o) => isScoped(o.role));
+      if (user?.isPlatformAdmin && !orgs.some((o) => o.role !== 'support') && alive) return nav('/platform', { replace: true });
+      if (scopedOrg && alive) return nav(`/o/${scopedOrg.id}`, { replace: true });
       if (alive) setNeedsSetup(true);
     })().catch(() => alive && setNeedsSetup(true));
     return () => {
@@ -75,12 +81,17 @@ function Gate() {
     return <TermsGate accepted={user.termsVersion ?? null} onAccepted={reload} onSignOut={signOut} />;
   }
   if (user.emailVerified === false) return <VerifyGate email={user.email} onReload={reload} onSignOut={signOut} />;
-  // Then, once: who is this account for? (individual, organization with an ARC LABS code, or something else)
-  if (user.accountType === null) return <AccountTypeGate name={user.displayName} onDone={reload} onSignOut={signOut} />;
+  // An emailed invitation that brought them here: accept it first (it also answers "who is this account for?").
+  const invite = pendingInviteToken();
+  if (invite) return <PendingInviteGate token={invite} onDone={reload} />;
+  // Then, once: who are you? (individual, organization or institution with an ARC LABS setup code, or joining one)
+  if (user.accountType === null) return <WhoAreYouGate name={user.displayName} email={user.email} onDone={reload} onSignOut={signOut} />;
   return (
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/setup" element={<SetupPage />} />
+      {/* ARC LABS staff who are not in any organization themselves still reach the platform page. */}
+      <Route path="/platform" element={<div className="main standalone"><PlatformPage /></div>} />
       <Route path="/o/:orgId" element={<Layout />}>
         <Route index element={<OverviewPage />} />
         <Route path="p/:projectId" element={<ChannelLayout />}>
@@ -118,6 +129,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/invite" element={<InvitePage />} />
             <Route path="*" element={<Gate />} />
           </Routes>
         </SessionProvider>

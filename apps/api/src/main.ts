@@ -21,7 +21,8 @@ async function bootstrap() {
   api.useBodyParser('json', { limit: '256kb' });
   api.enableShutdownHooks();
   const origins = cfg.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
-  if (origins.length) api.enableCors({ origin: origins, credentials: false });
+  // Credentials: the console (on CORS_ORIGINS) sends the httpOnly refresh cookie to /api/v1/auth (sessions).
+  if (origins.length) api.enableCors({ origin: origins, credentials: true });
   api.getHttpAdapter().getInstance().disable('x-powered-by');
   // Behind a reverse proxy (Caddy on AWS, Railway's edge) the socket address is the proxy's. Trust exactly
   // TRUST_PROXY hops of X-Forwarded-For so rate limits apply per client, not to everyone at once. Never set
