@@ -256,7 +256,7 @@ async function main() {
     const defaults = (path: string): Record<string, string> => {
       const pick: [RegExp, Record<string, string>][] = [
         [/^\/api\/v1\/organizations\/\{id\}/, { id: orgA, userId: f.spareId, inviteId: f.classX }],
-        [/^\/api\/v1\/(projects|channels)\/\{id\}/, { id: projA, name: 'blink' }],
+        [/^\/api\/v1\/(projects|channels)\/\{id\}/, { id: projA, name: 'blink', userId: f.spareId }],
         [/^\/api\/v1\/devices\/\{id\}/, { id: devA }],
         [/^\/api\/v1\/commands\/\{commandId\}/, { commandId: cmdA }],
         [/^\/api\/v1\/rules\/\{id\}/, { id: ruleA }],

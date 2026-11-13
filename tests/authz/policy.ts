@@ -79,6 +79,11 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/organizations/{id}/class-codes': r('org_admin', 'write', { body: () => ({ label: 'matrix', role: 'viewer', maxUses: 1, expiresInDays: 1 }) }),
   'POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke': r('org_admin', 'destructive', { body: () => ({}) }),
   'GET /api/v1/organizations/{id}/seats': r('viewer', 'read'),
+  // Channel access: owner and admins (and the channel's teachers/trainers, covered by e2e). The spare member is a
+  // viewer, who sees every channel already: granting/removing answers 409 not_scoped, not a permission refusal.
+  'GET /api/v1/projects/{id}/access': r('org_admin', 'read'),
+  'PUT /api/v1/projects/{id}/access/{userId}': r('org_admin', 'write', { body: () => ({}) }),
+  'DELETE /api/v1/projects/{id}/access/{userId}': r('org_admin', 'write'),
   'PATCH /api/v1/organizations/{id}/seats': r('org_admin', 'write', { body: () => ({ seatLimit: null }) }),
   'PATCH /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'write', { body: () => ({ role: 'viewer' }) }),
   'DELETE /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'destructive'),

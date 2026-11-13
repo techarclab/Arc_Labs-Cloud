@@ -3,7 +3,9 @@
  *  - email invitations: one person, bound to their email address, single use, expiring, revocable. The token is
  *    only in the emailed link (and shown once to the inviter, to share another way); only its hash is stored.
  *  - class codes: a shared code for a class or batch, student or viewer role only, limited uses, capped by seats.
- * Owners invite any role below owner; admins invite the roles below admin (AccessService.canAssign).
+ * Owners invite any role below owner; admins invite the roles below admin; teachers and trainers invite students
+ * (AccessService.canAssign), and only into channels they have themselves. Invitations for scoped roles can come
+ * with channels, granted on joining.
  * Accepting never gives more than the invitation says, and only to the account with the invited, confirmed address.
  *
  * Invitations live in invite_codes, which tenant requests cannot read (migration 005), so these handlers run in
@@ -14,13 +16,13 @@ import { BadRequestException, Body, ConflictException, Controller, ForbiddenExce
 import { Throttle } from '@nestjs/throttler';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { AccessService, ASSIGNABLE_ROLES, canAssign, CallerRole, MemberRole } from '../common/access.service';
+import { AccessService, ASSIGNABLE_ROLES, canAssign, CallerRole, isScoped, MemberRole } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
 import { Doc } from '../common/docs';
 import { renderAccountEmail } from '../common/email';
 import { actor, AuthUser, CurrentUser, parse, Public, requirePerson, userRef, Uuid } from '../common/http';
 import { hashInviteCode, newInviteCode } from '../common/invites';
-import { requireSeat, seatUsage } from '../common/seats';
+import { grantInviteChannels, requireSeat, seatUsage } from '../common/seats';
 import { SystemDb } from '../common/tenant-scope.interceptor';
 import { loadConfig } from '../config';
 import { Db } from '../db/db.service';
@@ -31,17 +33,21 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', engineer: 'Engineer
 
 const tokenHash = (token: string) => createHash('sha256').update(`email-invite:${token}`).digest('hex');
 
+/** Channels the people who join get (scoped roles only: teacher, trainer, student, employee). */
+const projectIds = z.array(z.uuid()).max(50).optional();
 const emailInviteBody = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   role: z.enum(ASSIGNABLE_ROLES),
   expiresInDays: z.number().int().min(1).max(30).default(7),
+  projectIds,
 });
-/** Class codes: student or viewer only (student becomes available with channel-level access, phase 4). */
+/** Class codes: student or viewer only. */
 const classCodeBody = z.object({
   label: z.string().trim().min(1).max(120),
-  role: z.enum(['viewer']),
+  role: z.enum(['student', 'viewer']),
   maxUses: z.number().int().min(1).max(10000),
   expiresInDays: z.number().int().min(1).max(365),
+  projectIds,
 });
 const revokeBody = z.object({ removeMembers: z.boolean().optional() });
 const seatsBody = z.object({ seatLimit: z.number().int().min(1).max(100000).nullable() });
@@ -73,14 +79,16 @@ export class InvitationsController {
   @SystemDb()
   @Get('organizations/:id/invitations')
   async list(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
-    await this.requireManager(user, id);
+    const caller = await this.requireInviter(user, id);
+    const onlyMine = isScoped(caller); // teachers and trainers: the invitations they created
     const rows = await this.db.query(
-      `SELECT i.id, i.kind, i.label, i.email, i.role, i.max_uses, i.used_count, i.expires_at, i.revoked_at, i.created_at, i.accepted_at,
+      `SELECT i.id, i.kind, i.label, i.email, i.role, i.project_ids, i.max_uses, i.used_count, i.expires_at, i.revoked_at, i.created_at, i.accepted_at,
               cu.display_name AS created_by_name, au.display_name AS accepted_by_name,
               (SELECT count(*)::int FROM organization_members m WHERE m.invite_id = i.id) AS members
        FROM invite_codes i LEFT JOIN users cu ON cu.id = i.created_by LEFT JOIN users au ON au.id = i.accepted_by
-       WHERE i.organization_id = $1 AND i.kind IN ('email', 'class') ORDER BY i.created_at DESC LIMIT 500`,
-      [id],
+       WHERE i.organization_id = $1 AND i.kind IN ('email', 'class') AND ($2::uuid IS NULL OR i.created_by = $2)
+       ORDER BY i.created_at DESC LIMIT 500`,
+      [id, onlyMine ? user.id : null],
     );
     return {
       items: rows.map((i) => ({
@@ -89,6 +97,7 @@ export class InvitationsController {
         label: i.label,
         email: i.email,
         role: i.role,
+        projectIds: i.project_ids ?? [],
         maxUses: i.max_uses,
         usedCount: i.used_count,
         members: i.members,
@@ -109,9 +118,10 @@ export class InvitationsController {
   @Post('organizations/:id/invitations')
   async inviteByEmail(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     requirePerson(user);
-    const caller = await this.requireManager(user, id);
+    const caller = await this.requireInviter(user, id);
     const input = parse(emailInviteBody, body);
     this.requireAssignable(caller, input.role);
+    const channels = await this.channels(user, caller, id, input.role, input.projectIds);
     const token = randomBytes(24).toString('base64url');
     const link = `${loadConfig().CONSOLE_URL.replace(/\/+$/, '')}/invite#token=${token}`;
     const row = await this.db.tx(async (c) => {
@@ -125,9 +135,9 @@ export class InvitationsController {
       await requireSeat(c, id);
       const inv = (
         await c.query(
-          `INSERT INTO invite_codes (kind, code_hash, label, organization_id, role, email, max_uses, expires_at, created_by)
-           VALUES ('email', $1, $2, $3, $4, $5, 1, now() + make_interval(days => $6), $7) RETURNING id, expires_at`,
-          [tokenHash(token), `Invitation for ${input.email}`, id, input.role, input.email, input.expiresInDays, userRef(user)],
+          `INSERT INTO invite_codes (kind, code_hash, label, organization_id, role, email, max_uses, expires_at, created_by, project_ids)
+           VALUES ('email', $1, $2, $3, $4, $5, 1, now() + make_interval(days => $6), $7, $8) RETURNING id, expires_at`,
+          [tokenHash(token), `Invitation for ${input.email}`, id, input.role, input.email, input.expiresInDays, userRef(user), channels],
         )
       ).rows[0];
       const inviter = (await c.query<{ display_name: string }>('SELECT display_name FROM users WHERE id = $1', [user.id])).rows[0]?.display_name ?? 'Someone';
@@ -153,12 +163,12 @@ export class InvitationsController {
         input.email,
         { subject: `${inviter} invited you to ${org.name} on ARC Cloud`, text, html },
       ]);
-      await this.audit.record({ ...actor(user), organizationId: id, action: 'invite.create', resourceType: 'invite_code', resourceId: inv.id, metadata: { kind: 'email', email: input.email, role: input.role, expiresInDays: input.expiresInDays } }, c);
+      await this.audit.record({ ...actor(user), organizationId: id, action: 'invite.create', resourceType: 'invite_code', resourceId: inv.id, metadata: { kind: 'email', email: input.email, role: input.role, expiresInDays: input.expiresInDays, projectIds: channels ?? [] } }, c);
       return inv;
     });
     // The link is also returned once, so the inviter can share it another way (WhatsApp, a class chat). It still
     // works only for the invited address.
-    return { id: row.id, email: input.email, role: input.role, expiresAt: row.expires_at, link };
+    return { id: row.id, email: input.email, role: input.role, projectIds: channels ?? [], expiresAt: row.expires_at, link };
   }
 
   @Doc('Create a class code (shared, student or viewer, limited uses, capped by seats)', { body: classCodeBody })
@@ -167,17 +177,18 @@ export class InvitationsController {
   @Post('organizations/:id/class-codes')
   async createClassCode(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     requirePerson(user);
-    const caller = await this.requireManager(user, id);
+    const caller = await this.requireInviter(user, id);
     const input = parse(classCodeBody, body);
     this.requireAssignable(caller, input.role);
+    const channels = await this.channels(user, caller, id, input.role, input.projectIds);
     const code = newInviteCode();
     const row = await this.db.one(
-      `INSERT INTO invite_codes (kind, code_hash, label, organization_id, role, max_uses, expires_at, created_by)
-       VALUES ('class', $1, $2, $3, $4, $5, now() + make_interval(days => $6), $7) RETURNING id, expires_at`,
-      [hashInviteCode(code), input.label, id, input.role, input.maxUses, input.expiresInDays, userRef(user)],
+      `INSERT INTO invite_codes (kind, code_hash, label, organization_id, role, max_uses, expires_at, created_by, project_ids)
+       VALUES ('class', $1, $2, $3, $4, $5, now() + make_interval(days => $6), $7, $8) RETURNING id, expires_at`,
+      [hashInviteCode(code), input.label, id, input.role, input.maxUses, input.expiresInDays, userRef(user), channels],
     );
-    await this.audit.record({ ...actor(user), organizationId: id, action: 'invite.create', resourceType: 'invite_code', resourceId: row.id, metadata: { kind: 'class', label: input.label, role: input.role, maxUses: input.maxUses, expiresInDays: input.expiresInDays } });
-    return { id: row.id, code, label: input.label, role: input.role, maxUses: input.maxUses, expiresAt: row.expires_at };
+    await this.audit.record({ ...actor(user), organizationId: id, action: 'invite.create', resourceType: 'invite_code', resourceId: row.id, metadata: { kind: 'class', label: input.label, role: input.role, maxUses: input.maxUses, expiresInDays: input.expiresInDays, projectIds: channels ?? [] } });
+    return { id: row.id, code, label: input.label, role: input.role, projectIds: channels ?? [], maxUses: input.maxUses, expiresAt: row.expires_at };
   }
 
   @Doc('Revoke an invitation or class code; optionally remove the people who joined with it (never the owner or admins)', { body: revokeBody })
@@ -185,15 +196,17 @@ export class InvitationsController {
   @Post('organizations/:id/invitations/:inviteId/revoke')
   @HttpCode(200)
   async revoke(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Param('inviteId', Uuid()) inviteId: string, @Body() body: unknown) {
-    const caller = await this.requireManager(user, id);
+    const caller = await this.requireInviter(user, id);
     const { removeMembers } = parse(revokeBody, body ?? {});
     return this.db.tx(async (c) => {
       const inv = (
         await c.query<{ id: string; role: MemberRole }>(
-          `UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 AND organization_id = $2 AND kind IN ('email', 'class') RETURNING id, role`,
-          [inviteId, id],
+          `UPDATE invite_codes SET revoked_at = COALESCE(revoked_at, now())
+           WHERE id = $1 AND organization_id = $2 AND kind IN ('email', 'class') AND ($3::uuid IS NULL OR created_by = $3) RETURNING id, role`,
+          [inviteId, id, isScoped(caller) ? user.id : null],
         )
       ).rows[0];
+      // Teachers and trainers revoke only their own invitations; someone else's is "not found" to them.
       if (!inv) throw new NotFoundException({ code: 'not_found' });
       // An admin cannot revoke (or remove the people of) an invitation for a role they could not give.
       this.requireAssignable(caller, inv.role);
@@ -281,6 +294,7 @@ export class InvitationsController {
       await requireSeat(c, inv.organization_id, { excludeInviteId: inv.id });
       await c.query(`UPDATE invite_codes SET used_count = 1, accepted_by = $2, accepted_at = now() WHERE id = $1`, [inv.id, user.id]);
       await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [inv.organization_id, user.id, inv.role, inv.id]);
+      await grantInviteChannels(c, inv.id, user.id);
       // Joining an organization answers "who is this account for?" if it was still open.
       await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [user.id]);
       await this.audit.record({ actorType: 'user', actorId: user.id, organizationId: inv.organization_id, action: 'invite.accept', resourceType: 'invite_code', resourceId: inv.id, metadata: { role: inv.role } }, c);
@@ -301,7 +315,38 @@ export class InvitationsController {
     return role;
   }
 
+  /**
+   * Who may invite: the owner and admins (as managers), and teachers and trainers (students only, enforced by
+   * canAssign). Returns the caller's role.
+   */
+  private async requireInviter(user: AuthUser, orgId: string): Promise<CallerRole> {
+    const role = await this.access.requireOrg(user, orgId, 'engineer', { allowRestricted: true });
+    const o = await this.db.one<{ kind: string }>('SELECT kind FROM organizations WHERE id = $1', [orgId]);
+    if (o?.kind === 'personal') throw new ConflictException({ code: 'personal_workspace', message: 'A personal workspace is just you. For a team, ask ARC LABS to set up an organization.' });
+    if (role === 'owner' || role === 'admin' || role === 'teacher' || role === 'trainer') return role;
+    throw new ForbiddenException({ code: 'insufficient_role' });
+  }
+
+  /**
+   * Validates the channels an invitation comes with: only for scoped roles, all in this organization, and for a
+   * teacher or trainer only channels they have themselves. Returns them (or null for none).
+   */
+  private async channels(user: AuthUser, caller: CallerRole, orgId: string, role: MemberRole, ids?: string[]): Promise<string[] | null> {
+    const unique = [...new Set(ids ?? [])];
+    if (!unique.length) return null;
+    if (!isScoped(role)) {
+      throw new BadRequestException({ code: 'channels_for_scoped_roles', message: 'Only teachers, trainers, students and employees get channels; other roles see every channel.' });
+    }
+    const allowed = isScoped(caller)
+      ? await this.db.query<{ id: string }>('SELECT project_id AS id FROM project_members WHERE organization_id = $1 AND user_id = $2 AND project_id = ANY($3::uuid[])', [orgId, user.id, unique])
+      : await this.db.query<{ id: string }>('SELECT id FROM projects WHERE organization_id = $1 AND id = ANY($2::uuid[])', [orgId, unique]);
+    if (allowed.length !== unique.length) throw new NotFoundException({ code: 'not_found', message: 'One of those channels is not in this organization, or not yours to share.' });
+    return unique;
+  }
+
   private requireAssignable(caller: CallerRole, role: MemberRole) {
-    if (!canAssign(caller, role)) throw new ForbiddenException({ code: 'role_not_assignable', message: 'Only the owner can invite admins.' });
+    if (!canAssign(caller, role)) {
+      throw new ForbiddenException({ code: 'role_not_assignable', message: isScoped(caller) ? 'Teachers and trainers invite students only.' : 'Only the owner can invite admins.' });
+    }
   }
 }

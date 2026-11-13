@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, isAdmin, ROLE_LABEL } from '../api';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { api, ApiError, isAdmin, isScoped, ROLE_LABEL } from '../api';
 import { useSession } from '../session';
 import { ArcMark, usePoll, useToast } from './ui';
 import { Icon } from './icons';
@@ -21,9 +21,12 @@ export function Layout() {
   const link = ({ isActive }: { isActive: boolean }) => `side-link${isActive ? ' active' : ''}`;
   const [openAlerts, setOpenAlerts] = useState(0);
   const [joining, setJoining] = useState(false);
+  const location = useLocation();
+  // Teachers, trainers, students and employees see only their channels: no organization-wide pages or overview.
+  const scoped = isScoped(org?.role);
   usePoll(
     () =>
-      orgId
+      orgId && !scoped
         ? api<{ alerts: { triggered: number } }>('GET', `/organizations/${orgId}/overview`)
             .then((o) => setOpenAlerts(o.alerts.triggered))
             .catch(async (err) => {
@@ -37,7 +40,7 @@ export function Layout() {
             })
         : undefined,
     15_000,
-    [orgId],
+    [orgId, scoped],
   );
 
   useEffect(() => {
@@ -53,6 +56,10 @@ export function Layout() {
       }
     }
   }, [projectId]);
+
+  // The organization's overview is not for scoped roles: open their first channel instead.
+  const atOrgHome = location.pathname.replace(/\/+$/, '') === `/o/${orgId}`;
+  if (scoped && atOrgHome && list?.length) return <Navigate to={`/o/${orgId}/p/${list[0].id}`} replace />;
 
   if (orgs.length && !org) {
     return (
@@ -117,6 +124,11 @@ export function Layout() {
           ))}
         </nav>
 
+        {scoped && !list?.length && (
+          <p className="side-empty small">No channels yet. Your teacher or an admin gives you access to channels.</p>
+        )}
+
+        {!scoped && (
         <nav className="side-group" aria-label="Organization">
           <div className="side-heading">Organization</div>
           <NavLink to={`/o/${orgId}`} end className={link}>
@@ -149,6 +161,7 @@ export function Layout() {
             </NavLink>
           )}
         </nav>
+        )}
 
         {user?.isPlatformAdmin && (
           <nav className="side-group" aria-label="ARC LABS">
@@ -195,7 +208,17 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
-        <Outlet context={{ org }} />
+        {scoped && atOrgHome ? (
+          <div className="empty">
+            <h3>No channels yet</h3>
+            <p>
+              You are {org?.role === 'student' ? 'a student' : `a${org?.role === 'employee' ? 'n' : ''} ${ROLE_LABEL[org!.role!].toLowerCase()}`} in {org?.name}. You see the channels your teacher or an admin gives you
+              access to; none so far.
+            </p>
+          </div>
+        ) : (
+          <Outlet context={{ org }} />
+        )}
       </main>
       <JoinInviteDialog open={joining} onClose={() => setJoining(false)} />
     </div>

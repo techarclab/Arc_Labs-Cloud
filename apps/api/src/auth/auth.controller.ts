@@ -11,7 +11,7 @@ import { AuditService } from '../common/audit.service';
 import { BrokerAdmin } from '../common/broker-admin.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
-import { requireSeat } from '../common/seats';
+import { grantInviteChannels, requireSeat } from '../common/seats';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
 import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
@@ -141,6 +141,7 @@ export class AuthController {
         if (invite?.organization_id) {
           await requireSeat(c, invite.organization_id);
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
+          await grantInviteChannels(c, invite.id, u.id);
           // Joined an organization with the code: that answers "who is this account for?".
           await c.query(`UPDATE users SET account_type = 'organization' WHERE id = $1`, [u.id]);
           u.account_type = 'organization';
@@ -410,6 +411,7 @@ export class AuthController {
       if (invite?.organization_id) {
         await requireSeat(c, invite.organization_id);
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
+        await grantInviteChannels(c, invite.id, u.id);
         await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [u.id]);
       }
       await this.audit.record(
@@ -443,6 +445,7 @@ export class AuthController {
       await requireSeat(c, invite.organization_id!);
       await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
       await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, current.id, invite.role, invite.id]);
+      await grantInviteChannels(c, invite.id, current.id);
       await this.audit.record(
         { actorType: 'user', actorId: current.id, organizationId: invite.organization_id!, action: 'user.join_organization', resourceType: 'organization', resourceId: invite.organization_id!, metadata: { inviteId: invite.id, role: invite.role } },
         c,
@@ -482,7 +485,10 @@ export class AuthController {
           [invite.organization_id, current.id, invite.role, invite.id],
         );
         // Already a member (e.g. joined at sign-up with this code): no second use.
-        if (joined.rowCount) await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+        if (joined.rowCount) {
+          await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+          await grantInviteChannels(c, invite.id, current.id);
+        }
         organization = { id: invite.organization_id!, name: invite.name, role: invite.role! };
       }
       const note = input.accountType === 'other' ? input.note || null : null;

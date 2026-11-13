@@ -26,8 +26,12 @@ interface Seats { members: number; pending: number; limit: number; max: number; 
 const ROLE_HELP: Partial<Record<Role, string>> = {
   owner: 'Everything, and the only one who can add or remove admins and transfer ownership. One per organization.',
   admin: 'Everything else: settings, devices, keys, the audit log, and people below admin.',
-  engineer: 'Add and manage channels, devices and rules.',
-  viewer: 'See devices and data, no changes.',
+  engineer: 'Add and manage channels, devices and rules, in every channel.',
+  viewer: 'See every channel’s devices and data, no changes.',
+  teacher: 'Manages devices and rules in the channels given to them, and brings students into those channels.',
+  trainer: 'Like a teacher: their channels only, and can bring in students.',
+  student: 'Sees and uses the devices of the channels given to them. Nothing organization-wide.',
+  employee: 'Sees and uses the devices of the channels given to them. Nothing organization-wide.',
 };
 const STATUS: Record<Invitation['status'], string> = { active: 'Open', used_up: 'Used', expired: 'Expired', revoked: 'Revoked' };
 
@@ -381,13 +385,14 @@ function ClassCodeDialog({ orgId, onClose, onDone }: { orgId: string; onClose: (
   const [label, setLabel] = useState('');
   const [uses, setUses] = useState(60);
   const [days, setDays] = useState(14);
+  const [role, setRole] = useState<'student' | 'viewer'>('student');
   const [made, setMade] = useState<{ code: string; label: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     try {
-      const r = await api<{ code: string; label: string }>('POST', `/organizations/${orgId}/class-codes`, { label, role: 'viewer', maxUses: uses, expiresInDays: days });
+      const r = await api<{ code: string; label: string }>('POST', `/organizations/${orgId}/class-codes`, { label, role, maxUses: uses, expiresInDays: days });
       setMade(r);
       onDone();
     } catch (err) {
@@ -418,7 +423,7 @@ function ClassCodeDialog({ orgId, onClose, onDone }: { orgId: string; onClose: (
     >
       {made ? (
         <div className="form">
-          <p>Share this code with “{made.label}”. Each person enters it under <b>Join with invite code</b> (or when they sign up) and joins as a viewer.</p>
+          <p>Share this code with “{made.label}”. Each person enters it under <b>Join with invite code</b> (or when they sign up) and joins as a {role}.</p>
           <div className="row">
             <code style={{ fontSize: 20, letterSpacing: 2 }}>{made.code}</code>
             <CopyButton text={made.code} label="Copy code" />
@@ -427,7 +432,14 @@ function ClassCodeDialog({ orgId, onClose, onDone }: { orgId: string; onClose: (
         </div>
       ) : (
         <form id="class-code" className="form" onSubmit={submit}>
-          <p className="muted small">A shared code for a class or batch. People who use it join as <b>viewers</b> (student accounts arrive with channel-level access).</p>
+          <p className="muted small">A shared code for a class or batch. To give students a channel straight away, make the code from that channel’s settings (Access).</p>
+          <label className="field">
+            Joins as
+            <select value={role} onChange={(e) => setRole(e.target.value as 'student' | 'viewer')}>
+              <option value="student">Student: only the channels given to them</option>
+              <option value="viewer">Viewer: sees every channel, no changes</option>
+            </select>
+          </label>
           <label className="field">
             Name
             <input required maxLength={120} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ECE batch 2026, section B" autoFocus />
