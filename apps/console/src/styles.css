@@ -215,7 +215,9 @@ table.grid tr.clickable:hover td { background: #f6f8fa; }
 /* ---------- Dialog ---------- */
 dialog.modal { border: 0; border-radius: var(--r-md); padding: 0; width: min(560px, calc(100vw - 32px)); color: var(--ink); box-shadow: 0 20px 60px rgba(20, 32, 46, 0.25); }
 dialog.modal::backdrop { background: rgba(20, 32, 46, 0.45); }
-.modal-head { padding: 18px 22px 0; }
+.modal-head { padding: 18px 22px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.modal-close { flex: none; border: 0; background: transparent; color: var(--ink-2); font-size: 24px; line-height: 1; width: 32px; height: 32px; margin: -4px -8px 0 0; border-radius: 8px; cursor: pointer; }
+.modal-close:hover { background: #eef2f7; color: var(--ink); }
 .modal-body { padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; }
 .modal-foot { padding: 14px 22px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--line-soft); }
 .secret {

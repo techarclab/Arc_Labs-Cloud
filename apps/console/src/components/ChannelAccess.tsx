@@ -5,7 +5,7 @@
  * Also: invite students by email straight into this channel, or make a class code for it.
  */
 import { FormEvent, useCallback, useState } from 'react';
-import { api, assignableRoles, Org, Role, ROLE_LABEL } from '../api';
+import { api, assignableRoles, Org, Role, ROLE_LABEL, roleLabel } from '../api';
 import { CopyButton, ErrorBox, Modal, usePoll, useToast } from './ui';
 
 interface Person { userId: string; email: string; displayName: string; role: Role }
@@ -70,7 +70,7 @@ export function ChannelAccess({ org, projectId, projectName }: { org: Org; proje
                   <td>
                     <b>{g.displayName}</b> <span className="muted small">{g.email}</span>
                   </td>
-                  <td>{ROLE_LABEL[g.role]}</td>
+                  <td>{roleLabel(g.role)}</td>
                   <td style={{ textAlign: 'right' }}>
                     {g.canRevoke && (
                       <button className="btn small danger" onClick={() => void change('DELETE', g)}>
@@ -89,7 +89,7 @@ export function ChannelAccess({ org, projectId, projectName }: { org: Org; proje
               <option value="">Give access to…</option>
               {access.candidates.map((c) => (
                 <option key={c.userId} value={c.userId}>
-                  {c.displayName} ({ROLE_LABEL[c.role]})
+                  {c.displayName} ({roleLabel(c.role)})
                 </option>
               ))}
             </select>

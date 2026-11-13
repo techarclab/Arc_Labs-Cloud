@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { api, assignableRoles, canManageTeam, Org, Role, ROLE_LABEL } from '../api';
+import { api, assignableRoles, canManageTeam, Org, Role, ROLE_LABEL, roleLabel } from '../api';
 import { CopyButton, ErrorBox, Modal, usePoll, useToast } from '../components/ui';
 import { dateTime } from '../format';
 import { useSession } from '../session';
@@ -174,7 +174,7 @@ export function TeamPage() {
                         ))}
                       </select>
                     ) : (
-                      ROLE_LABEL[m.role]
+                      roleLabel(m.role)
                     )}
                   </td>
                   <td className="hide-sm muted">{dateTime(m.joinedAt)}</td>

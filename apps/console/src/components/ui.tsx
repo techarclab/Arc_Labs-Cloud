@@ -59,11 +59,26 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="modal" onClose={onClose} onCancel={onClose} style={wide ? { width: `min(${typeof wide === 'number' ? wide : 680}px, calc(100vw - 32px))` } : undefined}>
+    <dialog
+      ref={ref}
+      className="modal"
+      onClose={onClose}
+      onCancel={onClose}
+      // A click on the dimmed backdrop (outside the box) closes it too.
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          const r = e.currentTarget.getBoundingClientRect();
+          if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose();
+        }
+      }}
+      style={wide ? { width: `min(${typeof wide === 'number' ? wide : 680}px, calc(100vw - 32px))` } : undefined}>
       {open && (
         <>
           <div className="modal-head">
             <h2>{title}</h2>
+            <button type="button" className="modal-close" aria-label="Close" title="Close" onClick={onClose}>
+              ×
+            </button>
           </div>
           <div className="modal-body">{children}</div>
           {footer && <div className="modal-foot">{footer}</div>}
