@@ -912,6 +912,7 @@ async function main() {
     await rolesAndOwnership({ tA, tB, orgA, orgB });
     await invitationsAndSeats({ tA, tB, orgA, sinks });
     await onboarding({ tA, tB, sinks });
+    await channelAccess({ tA, tB, orgA, proj, sinks });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1196,6 +1197,92 @@ async function onboarding(ctx: { tA: string; tB: string; sinks: Sinks }) {
     const me = (await http('GET', '/api/v1/auth/me', quinn.token)).body;
     assert.deepEqual([me.user.accountType, me.user.profession, me.isPlatformAdmin], ['individual', 'hobbyist', false]);
     assert.equal((await http('POST', '/api/v1/onboarding/individual', quinn.token, { profession: 'engineer' })).body.code, 'account_type_set');
+  });
+}
+
+async function channelAccess(ctx: { tA: string; tB: string; orgA: any; proj: any; sinks: Sinks }) {
+  const { tA, tB, orgA, proj, sinks } = ctx;
+  console.log('\nChannel-level access: teachers, students');
+  const tokenOf = (link: string) => new URL(link).hash.slice('#token='.length);
+  const labB = await http('POST', '/api/v1/projects', tA, { organizationId: orgA.id, name: 'Lab B' });
+  assert.equal(labB.status, 201, JSON.stringify(labB.body));
+  const projB = labB.body.id as string;
+  const tess = await sqlUser('tess@lab.test', { accountType: null });
+  const stu = await sqlUser('stu@lab.test', { accountType: null });
+  const sam = await sqlUser('sam@lab.test', { accountType: null });
+  const ids = Object.fromEntries((await sql(`SELECT email, id FROM users WHERE email IN ('bob@other.test')`)).map((r: any) => [r.email, r.id]));
+  const orgWide = [
+    `/api/v1/organizations/${orgA.id}/overview`,
+    `/api/v1/organizations/${orgA.id}/members`,
+    `/api/v1/organizations/${orgA.id}/usage`,
+    `/api/v1/organizations/${orgA.id}/audit-logs`,
+    `/api/v1/organizations/${orgA.id}/rejected-messages`,
+    `/api/v1/alerts?organizationId=${orgA.id}`,
+    `/api/v1/api-keys?organizationId=${orgA.id}`,
+    `/api/v1/firmware/releases?organizationId=${orgA.id}`,
+  ];
+  const projects = async (t: string) => (await http('GET', `/api/v1/projects?organizationId=${orgA.id}`, t)).body.items.map((p: any) => p.id).sort();
+  await check('a teacher invited with a channel sees only that channel, with engineer rights there, and nothing organization-wide', async () => {
+    const inv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tA, { email: 'tess@lab.test', role: 'teacher', projectIds: [proj.id] });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    assert.equal((await http('POST', '/api/v1/invitations/accept', tess.token, { token: tokenOf(inv.body.link) })).status, 200);
+    assert.deepEqual(await projects(tess.token), [proj.id]);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, tess.token)).status, 200);
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, tess.token)).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${projB}`, tess.token)).status, 404, 'other channels do not exist for them');
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${projB}`, tess.token)).status, 404);
+    for (const path of orgWide) assert.equal((await http('GET', path, tess.token)).status, 404, path);
+    assert.equal((await http('GET', `/api/v1/organizations/${orgA.id}`, tess.token)).status, 200, 'the organization name is fine');
+    assert.equal((await http('POST', '/api/v1/projects', tess.token, { organizationId: orgA.id, name: 'Mine' })).status, 404, 'no new channels');
+    assert.equal((await http('PATCH', `/api/v1/projects/${proj.id}`, tess.token, { description: 'Set by the teacher' })).status, 200, 'engineer rights in their channel');
+  });
+  await check('teachers invite students only, only into their own channels; students see their channel read-only', async () => {
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'engineer' })).body.code, 'role_not_assignable');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'viewer' })).body.code, 'role_not_assignable');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'student', projectIds: [projB] })).status, 404, 'not their channel');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tA, { email: 'x@lab.test', role: 'engineer', projectIds: [proj.id] })).body.code, 'channels_for_scoped_roles');
+    const inv = await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, tess.token, { email: 'stu@lab.test', role: 'student', projectIds: [proj.id] });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    assert.equal((await http('POST', '/api/v1/invitations/accept', stu.token, { token: await emailedInviteToken(sinks, 'stu@lab.test') })).status, 200);
+    assert.deepEqual(await projects(stu.token), [proj.id]);
+    assert.equal((await http('GET', `/api/v1/devices?projectId=${proj.id}`, stu.token)).status, 200);
+    assert.equal((await http('POST', '/api/v1/devices', stu.token, { projectId: proj.id, displayName: 'nope' })).status, 403, 'viewer level');
+    assert.equal((await http('GET', `/api/v1/projects/${projB}`, stu.token)).status, 404);
+    for (const path of orgWide) assert.equal((await http('GET', path, stu.token)).status, 404, path);
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations`, stu.token, { email: 'y@lab.test', role: 'student' })).status, 403, 'students do not invite');
+    // A teacher sees only the invitations they made.
+    const mine = (await http('GET', `/api/v1/organizations/${orgA.id}/invitations`, tess.token)).body.items;
+    assert.ok(mine.length > 0 && mine.every((i: any) => i.email === 'stu@lab.test'), JSON.stringify(mine.map((i: any) => i.email)));
+    const alices = (await http('GET', `/api/v1/organizations/${orgA.id}/invitations`, tA)).body.items.find((i: any) => i.email === 'tess@lab.test');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/invitations/${alices.id}/revoke`, tess.token, {})).status, 404, 'not theirs to revoke');
+  });
+  await check('channel access: a class code with a channel; teachers grant and remove students; roles that see everything are not granted', async () => {
+    const code = await http('POST', `/api/v1/organizations/${orgA.id}/class-codes`, tess.token, { label: 'Lab class', role: 'student', maxUses: 30, expiresInDays: 7, projectIds: [proj.id] });
+    assert.equal(code.status, 201, JSON.stringify(code.body));
+    assert.equal((await http('POST', '/api/v1/auth/redeem-invite', sam.token, { inviteCode: code.body.code })).status, 200);
+    assert.deepEqual(await projects(sam.token), [proj.id]);
+    const access = (await http('GET', `/api/v1/projects/${proj.id}/access`, tess.token)).body;
+    assert.deepEqual(access.grants.map((g: any) => g.email).sort(), ['sam@lab.test', 'stu@lab.test']);
+    assert.ok(!JSON.stringify(access).includes('alice@arclabs.test'), 'a teacher does not get the member list');
+    assert.equal((await http('DELETE', `/api/v1/projects/${proj.id}/access/${sam.id}`, tess.token)).status, 204);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, sam.token)).status, 404, 'access removed');
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/access/${sam.id}`, tess.token, {})).status, 200);
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}`, sam.token)).status, 200);
+    assert.equal((await http('PUT', `/api/v1/projects/${proj.id}/access/${ids['bob@other.test']}`, tA, {})).body.code, 'not_scoped');
+    assert.equal((await http('PUT', `/api/v1/projects/${projB}/access/${sam.id}`, tess.token, {})).status, 404, 'not the teacher\'s channel');
+    assert.equal((await http('GET', `/api/v1/projects/${proj.id}/access`, tB)).status, 403, 'a viewer does not manage access');
+    assert.equal((await http('PUT', `/api/v1/projects/${projB}/access/${tess.id}`, tA, {})).status, 200, 'the owner grants a teacher another channel');
+    assert.deepEqual(await projects(tess.token), [proj.id, projB].sort());
+    const actions = (await sql(`SELECT action FROM audit_logs WHERE organization_id = $1 AND action LIKE 'channel.access_%'`, [orgA.id])).map((a: any) => a.action);
+    assert.ok(actions.includes('channel.access_grant') && actions.includes('channel.access_revoke'));
+  });
+  await check('leaving the organization or deleting the channel removes the grants', async () => {
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${stu.id}`, tA)).status, 204);
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM project_members WHERE user_id = $1`, [stu.id]))[0].n, 0);
+    const del = await http('DELETE', `/api/v1/projects/${projB}`, tA, { confirmName: 'Lab B' });
+    assert.ok(del.status >= 200 && del.status < 300, JSON.stringify(del.body));
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM project_members WHERE project_id = $1`, [projB]))[0].n, 0);
+    assert.deepEqual(await projects(tess.token), [proj.id]);
   });
 }
 

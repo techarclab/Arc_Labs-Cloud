@@ -64,6 +64,8 @@ const MESSAGES: Record<string, string> = {
   setup_code_invalid: 'That setup code isn’t valid: it may have been used, revoked, or expired. Ask ARC LABS for a new one.',
   setup_code_email_mismatch: 'That setup code was issued for a different email address. Sign in with that address, or ask ARC LABS.',
   org_type_required: 'Choose what kind of organization this is.',
+  not_scoped: 'Their role already sees every channel. Channel access is for teachers, trainers, students and employees.',
+  channels_for_scoped_roles: 'Only teachers, trainers, students and employees get channels; other roles see every channel.',
   seats_full: 'This organization has no free seats. An owner or admin can raise the limit or remove someone.',
   use_invitations: 'Invite people instead: they join when they accept the invitation.',
   invite_email_mismatch: 'This invitation is for a different email address. Sign in with the address it was sent to.',
@@ -231,10 +233,21 @@ const LEVEL: Record<Role, 1 | 2 | 3> = { owner: 3, admin: 3, individual: 3, teac
 export const canEdit = (r?: Role) => !!r && LEVEL[r] >= 2;
 /** Admin-level settings: API keys, webhooks, firmware, audit log (owner, admin, and the individual in their workspace). */
 export const isAdmin = (r?: Role) => !!r && LEVEL[r] >= 3;
+/** Roles limited to the channels granted to them (no organization-wide pages). Mirrors AccessService.SCOPED_ROLES. */
+export const isScoped = (r?: Role) => r === 'teacher' || r === 'trainer' || r === 'student' || r === 'employee';
+/** Who manages a channel's access list: the owner, admins, and the channel's teachers and trainers. */
+export const canManageAccess = (r?: Role) => r === 'owner' || r === 'admin' || r === 'teacher' || r === 'trainer';
 /** People management exists only in organizations, for the owner and admins. */
 export const canManageTeam = (org?: Org) => org?.kind !== 'personal' && (org?.role === 'owner' || org?.role === 'admin');
 /** Roles this caller may give (mirrors AccessService.canAssign): only the owner deals with admins. */
-export const assignableRoles = (caller?: Role): Role[] => (caller === 'owner' ? ['admin', 'engineer', 'viewer'] : caller === 'admin' ? ['engineer', 'viewer'] : []);
+export const assignableRoles = (caller?: Role): Role[] =>
+  caller === 'owner'
+    ? ['admin', 'teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer']
+    : caller === 'admin'
+      ? ['teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer']
+      : caller === 'teacher' || caller === 'trainer'
+        ? ['student']
+        : [];
 
 /** Fetch a file with the session token and save it (used for CSV export). */
 export async function downloadAuthed(path: string, filename: string) {

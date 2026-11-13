@@ -14,8 +14,8 @@ export type OrgRole = 'org_admin' | 'engineer' | 'viewer';
 const RANK: Record<OrgRole, number> = { viewer: 1, engineer: 2, org_admin: 3 };
 
 /**
- * Each role's level. teacher/trainer/student/employee are scoped to channels from phase 4; until then they cannot
- * be assigned, and these levels are the most they could ever reach organization-wide.
+ * Each role's level. teacher/trainer/student/employee are scoped (SCOPED_ROLES): they have this level only inside
+ * the channels granted to them (project_members), and nothing organization-wide.
  */
 export const LEVEL: Record<MemberRole, OrgRole> = {
   owner: 'org_admin',
@@ -29,15 +29,23 @@ export const LEVEL: Record<MemberRole, OrgRole> = {
   employee: 'viewer',
 };
 
-/** Roles that can be given to someone today (invites, adding, changing a role). Never owner (transfer) or individual. */
-export const ASSIGNABLE_ROLES = ['admin', 'engineer', 'viewer'] as const;
+/** Roles limited to the channels granted to them. */
+export const SCOPED_ROLES: ReadonlySet<MemberRole> = new Set(['teacher', 'trainer', 'student', 'employee']);
+export const isScoped = (role: CallerRole | null | undefined) => !!role && SCOPED_ROLES.has(role);
+
+/** Roles that can be given to someone (invites, changing a role). Never owner (transfer) or individual. */
+export const ASSIGNABLE_ROLES = ['admin', 'teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer'] as const;
 export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 
-/** Who may hand out / take away a role: only the owner deals with admins; admins manage the people below them. */
+/**
+ * Who may hand out / take away a role: only the owner deals with admins; admins manage the people below them;
+ * teachers and trainers may bring in students (invitations, class codes, channel access), nothing else.
+ */
 export function canAssign(callerRole: CallerRole | null, role: MemberRole): boolean {
   if (role === 'owner' || role === 'individual') return false;
   if (callerRole === 'owner') return true;
   if (callerRole === 'admin') return role !== 'admin';
+  if (callerRole === 'teacher' || callerRole === 'trainer') return role === 'student';
   return false;
 }
 
@@ -71,6 +79,8 @@ export class AccessService {
     }
     const role = await this.roleIn(user, orgId);
     if (!role) throw new NotFoundException({ code: 'not_found' });
+    // People with a scoped role are channel-limited too: organization-wide things stay hidden (404, as for keys).
+    if (!user.scope && isScoped(role) && !opts.allowRestricted) throw new NotFoundException({ code: 'not_found' });
     // A suspended organization is closed for everyone but ARC LABS staff (who can sort it out): people, API keys
     // and LMS links alike. Devices are already refused by the broker hooks and the device HTTP API.
     if (!user.isPlatformAdmin) {
@@ -85,7 +95,8 @@ export class AccessService {
     const project = await this.db.one('SELECT * FROM projects WHERE id = $1', [projectId]);
     if (!project) throw new NotFoundException({ code: 'not_found' });
     if (user.scope?.projectIds && !user.scope.projectIds.includes(project.id)) throw new NotFoundException({ code: 'not_found' });
-    await this.requireOrg(user, project.organization_id, min, { allowRestricted: true });
+    const role = await this.requireOrg(user, project.organization_id, min, { allowRestricted: true });
+    await this.requireGrant(user, role, project.id);
     return project;
   }
 
@@ -95,8 +106,28 @@ export class AccessService {
     if (!device) throw new NotFoundException({ code: 'not_found' });
     if (user.scope?.projectIds && !user.scope.projectIds.includes(device.project_id)) throw new NotFoundException({ code: 'not_found' });
     if (user.scope?.deviceIds && !user.scope.deviceIds.includes(device.id)) throw new NotFoundException({ code: 'not_found' });
-    await this.requireOrg(user, device.organization_id, min, { allowRestricted: true });
+    const role = await this.requireOrg(user, device.organization_id, min, { allowRestricted: true });
+    await this.requireGrant(user, role, device.project_id);
     return device;
+  }
+
+  /** A scoped person reaches a channel only with a grant; anyone else is not affected. Not granted: 404. */
+  private async requireGrant(user: AuthUser, role: CallerRole, projectId: string) {
+    if (user.scope || !isScoped(role)) return;
+    const g = await this.db.one('SELECT 1 AS ok FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, user.id]);
+    if (!g) throw new NotFoundException({ code: 'not_found' });
+  }
+
+  /**
+   * The channels a caller may list in an organization: null = all of them. Channel-limited API keys and LMS links,
+   * and people with a scoped role (their grants).
+   */
+  async projectScope(user: AuthUser, orgId: string): Promise<string[] | null> {
+    if (user.scope) return user.scope.projectIds ?? null;
+    const role = await this.roleIn(user, orgId);
+    if (!isScoped(role)) return null;
+    const rows = await this.db.query<{ project_id: string }>('SELECT project_id FROM project_members WHERE organization_id = $1 AND user_id = $2', [orgId, user.id]);
+    return rows.map((r) => r.project_id);
   }
 
   /** SQL filter for device lists: restricted callers only see their devices. */

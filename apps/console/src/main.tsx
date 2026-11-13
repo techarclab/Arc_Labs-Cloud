@@ -28,6 +28,7 @@ import { RulesPage } from './pages/Rules';
 import { UsagePage } from './pages/Usage';
 import { PlatformPage } from './pages/Platform';
 import { SessionProvider, useSession } from './session';
+import { isScoped } from './api';
 import '@fontsource-variable/bricolage-grotesque/opsz.css';
 import '@fontsource/instrument-sans/400.css';
 import '@fontsource/instrument-sans/500.css';
@@ -57,6 +58,9 @@ function Home() {
         const target = remembered ?? ps[0];
         if (target && alive) return nav(`/o/${org.id}/p/${target.id}`, { replace: true });
       }
+      // A student/employee/teacher/trainer without channels yet: their organization's page says so (no setup).
+      const scopedOrg = orgs.find((o) => isScoped(o.role));
+      if (scopedOrg && alive) return nav(`/o/${scopedOrg.id}`, { replace: true });
       if (alive) setNeedsSetup(true);
     })().catch(() => alive && setNeedsSetup(true));
     return () => {

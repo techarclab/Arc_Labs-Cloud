@@ -37,3 +37,19 @@ export async function requireSeat(c: any, orgId: string, opts: { excludeInviteId
   }
   return s;
 }
+
+/**
+ * The channels an invitation or class code comes with become the new member's channel grants (project_members).
+ * Only channels still in the invitation's organization; already granted ones are kept as they are.
+ * Call right after the membership row exists, in the same transaction.
+ */
+export async function grantInviteChannels(c: any, inviteId: string, userId: string) {
+  await c.query(
+    `INSERT INTO project_members (project_id, organization_id, user_id, granted_by)
+     SELECT p.id, p.organization_id, $2, i.created_by FROM invite_codes i
+     JOIN projects p ON p.id = ANY (i.project_ids) AND p.organization_id = i.organization_id
+     WHERE i.id = $1
+     ON CONFLICT DO NOTHING`,
+    [inviteId, userId],
+  );
+}

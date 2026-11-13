@@ -111,7 +111,7 @@ export class ProjectsController {
     const rows = await this.db.query(
       `SELECT p.*, (SELECT count(*)::int FROM devices d WHERE d.project_id = p.id) AS device_count
        FROM projects p WHERE p.organization_id = $1 AND ($2::uuid[] IS NULL OR p.id = ANY($2)) ORDER BY p.name`,
-      [organizationId, user.scope?.projectIds ?? null],
+      [organizationId, await this.access.projectScope(user, organizationId)],
     );
     return { items: rows.map((r) => ({ ...mapProject(r), deviceCount: r.device_count })) };
   }

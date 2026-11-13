@@ -1,7 +1,7 @@
 /** The role model (AccessService): levels for the existing checks, and who may give or take which role. */
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
-import { ASSIGNABLE_ROLES, canAssign, LEVEL, MemberRole } from '../src/common/access.service';
+import { ASSIGNABLE_ROLES, canAssign, isScoped, LEVEL, MemberRole } from '../src/common/access.service';
 
 const ALL: MemberRole[] = ['owner', 'admin', 'teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer', 'individual'];
 
@@ -23,10 +23,17 @@ describe('roles', () => {
     expect(canAssign('admin', 'engineer')).toBe(true);
     expect(canAssign('admin', 'viewer')).toBe(true);
   });
-  it('nobody below admin, and no individual, assigns anything', () => {
-    for (const caller of ['individual', 'engineer', 'teacher', 'trainer', 'viewer', 'student', 'employee'] as MemberRole[]) {
+  it('teachers and trainers bring in students only; nobody else below admin, and no individual, assigns anything', () => {
+    for (const caller of ['teacher', 'trainer'] as MemberRole[]) {
+      for (const r of ALL) expect(canAssign(caller, r)).toBe(r === 'student');
+    }
+    for (const caller of ['individual', 'engineer', 'viewer', 'student', 'employee'] as MemberRole[]) {
       for (const r of ALL) expect(canAssign(caller, r)).toBe(false);
     }
     expect(canAssign(null, 'viewer')).toBe(false);
+  });
+  it('the scoped roles are exactly teacher, trainer, student, employee', () => {
+    expect(ALL.filter((r) => isScoped(r))).toEqual(['teacher', 'trainer', 'student', 'employee']);
+    expect(ASSIGNABLE_ROLES).toEqual(['admin', 'teacher', 'trainer', 'engineer', 'student', 'employee', 'viewer']);
   });
 });
