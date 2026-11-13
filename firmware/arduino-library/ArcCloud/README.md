@@ -70,3 +70,7 @@ Not in this version: ESP8266 (planned), signed over-the-air updates (use `firmwa
 - **1.0.1**: field names follow ARC Cloud's rule exactly (a letter, then letters, digits or `_`). 1.0.0 also
   accepted `-`, `.` and a leading digit or `_`, which ARC Cloud then rejected, so the board looked offline.
 - **1.0.0**: first release.
+
+## License
+
+MIT, see `LICENSE`.
