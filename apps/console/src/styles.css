@@ -839,3 +839,10 @@ fieldset.account-types .hint { display: block; margin-top: 2px; font-size: 12.5p
 /* Team: seats used / limit */
 .seats-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; background: #f3f5fa; border: 1px solid #e3e7ee; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* "Who are you?": professions and kinds as compact chips */
+fieldset.choice.chips { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+fieldset.choice.chips legend { width: 100%; }
+fieldset.choice.chips label { border: 1px solid #d9dfe8; border-radius: 999px; padding: 6px 14px; align-items: center; gap: 8px; }
+fieldset.choice.chips label.selected { border-color: var(--accent); background: #f3f5ff; }
+fieldset.choice.chips input { width: 14px; height: 14px; margin: 0; }

@@ -21,7 +21,7 @@ import { IntegrationsPage } from './pages/Integrations';
 import { LabPage } from './pages/Lab';
 import { PrivacyPage, TermsGate } from './pages/Privacy';
 import { AccountPage } from './pages/Account';
-import { AccountTypeGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
+import { WhoAreYouGate, ProfileGate, ResetPasswordPage, VerifyEmailPage, VerifyGate } from './pages/Onboarding';
 import { InvitePage, PendingInviteGate, pendingInviteToken } from './pages/Invite';
 import { OverviewPage } from './pages/Overview';
 import { RulesPage } from './pages/Rules';
@@ -79,8 +79,8 @@ function Gate() {
   // An emailed invitation that brought them here: accept it first (it also answers "who is this account for?").
   const invite = pendingInviteToken();
   if (invite) return <PendingInviteGate token={invite} onDone={reload} />;
-  // Then, once: who is this account for? (individual, organization with an ARC LABS code, or something else)
-  if (user.accountType === null) return <AccountTypeGate name={user.displayName} onDone={reload} onSignOut={signOut} />;
+  // Then, once: who are you? (individual, organization or institution with an ARC LABS setup code, or joining one)
+  if (user.accountType === null) return <WhoAreYouGate name={user.displayName} email={user.email} onDone={reload} onSignOut={signOut} />;
   return (
     <Routes>
       <Route path="/" element={<Home />} />

@@ -30,6 +30,8 @@ const mapOrg = (o: any, role?: string) => ({
   planId: o.plan_id,
   /** 'personal': someone's own free workspace; 'organization': set up by ARC LABS (a college, school or company). */
   kind: o.kind,
+  /** industry, corporate, school, college or university (organizations set up with a setup code). */
+  orgType: o.org_type ?? null,
   createdAt: o.created_at,
   ...(role ? { role } : {}),
 });

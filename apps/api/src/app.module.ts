@@ -19,6 +19,7 @@ import { MqttPublisher } from './common/mqtt-publisher.service';
 import { MqttHooksController } from './internal/mqtt-hooks.controller';
 import { OrganizationsController } from './organizations/organizations.controller';
 import { InvitationsController } from './organizations/invitations.controller';
+import { OnboardingController } from './onboarding/onboarding.controller';
 import { ProjectsController } from './projects/projects.controller';
 import { AlertsController } from './alerts/alerts.controller';
 import { CommandsController } from './commands/commands.controller';
@@ -110,6 +111,7 @@ class RootController {
     OrgOpsController,
     PlatformController,
     InvitationsController,
+    OnboardingController,
     ProjectsController,
     DevicesController,
     DeviceHttpController,

@@ -286,7 +286,7 @@ export class AuthController {
       };
     }
     const user = await this.db.one(
-      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type,
+      `SELECT id, email, display_name, created_at, terms_version, terms_accepted_at, email_verified_at, age_group, account_type, profession,
               password_hash IS NOT NULL AS has_password, identity_provider_id LIKE 'google:%' AS google
        FROM users WHERE id = $1`,
       [current.id],
@@ -307,6 +307,8 @@ export class AuthController {
         ageGroup: user.age_group ?? null,
         /** 'individual', 'organization' or 'other'; null until the person answers (after confirming the email). */
         accountType: user.account_type ?? null,
+        /** Individuals: engineer, teacher, trainer, hobbyist or other. */
+        profession: user.profession ?? null,
         emailVerifiedAt: user.email_verified_at ?? null,
         /** How this person can sign in (for the profile page). */
         signIn: { password: !!user.has_password, google: !!user.google },
@@ -430,7 +432,7 @@ export class AuthController {
       const invite = (
         await c.query<Invite & { name: string }>(
           `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-           WHERE i.code_hash = $1 AND i.kind <> 'email' AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+           WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
           [hashInviteCode(inviteCode)],
         )
       ).rows[0];
@@ -467,7 +469,7 @@ export class AuthController {
         const invite = (
           await c.query<Invite & { name: string }>(
             `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-             WHERE i.code_hash = $1 AND i.kind <> 'email' AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+             WHERE i.code_hash = $1 AND i.kind IN ('platform', 'class') AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
             [hashInviteCode(input.inviteCode!)],
           )
         ).rows[0];
@@ -751,7 +753,7 @@ export class AuthController {
     const invite = (
       await c.query(
         `UPDATE invite_codes SET used_count = used_count + 1
-         WHERE code_hash = $1 AND kind <> 'email' AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+         WHERE code_hash = $1 AND kind IN ('platform', 'class') AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
          RETURNING id, organization_id, role`,
         [hashInviteCode(code)],
       )
