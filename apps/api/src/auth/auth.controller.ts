@@ -11,6 +11,7 @@ import { AuditService } from '../common/audit.service';
 import { BrokerAdmin } from '../common/broker-admin.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
+import { requireSeat } from '../common/seats';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
 import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
@@ -138,6 +139,7 @@ export class AuthController {
           )
         ).rows[0];
         if (invite?.organization_id) {
+          await requireSeat(c, invite.organization_id);
           await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, u.id, invite.role, invite.id]);
           // Joined an organization with the code: that answers "who is this account for?".
           await c.query(`UPDATE users SET account_type = 'organization' WHERE id = $1`, [u.id]);
@@ -404,6 +406,7 @@ export class AuthController {
       const invite = input.inviteCode ? await this.claimInvite(c, input.inviteCode) : undefined;
       await c.query('UPDATE users SET age_group = $2, invite_id = COALESCE(invite_id, $3) WHERE id = $1', [u.id, input.ageGroup, invite?.id ?? null]);
       if (invite?.organization_id) {
+        await requireSeat(c, invite.organization_id);
         await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [invite.organization_id, u.id, invite.role, invite.id]);
         await c.query(`UPDATE users SET account_type = COALESCE(account_type, 'organization') WHERE id = $1`, [u.id]);
       }
@@ -427,7 +430,7 @@ export class AuthController {
       const invite = (
         await c.query<Invite & { name: string }>(
           `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-           WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+           WHERE i.code_hash = $1 AND i.kind <> 'email' AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
           [hashInviteCode(inviteCode)],
         )
       ).rows[0];
@@ -435,6 +438,7 @@ export class AuthController {
       if (!invite) throw new ForbiddenException({ code: 'invite_invalid', message: 'This code is not valid for joining an organization. It may have expired or been used up.' });
       const already = (await c.query('SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rows[0];
       if (already) throw new ConflictException({ code: 'already_member', message: `You are already a member of ${invite.name}.` });
+      await requireSeat(c, invite.organization_id!);
       await c.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
       await c.query(`INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4)`, [invite.organization_id, current.id, invite.role, invite.id]);
       await this.audit.record(
@@ -463,12 +467,14 @@ export class AuthController {
         const invite = (
           await c.query<Invite & { name: string }>(
             `SELECT i.id, i.organization_id, i.role, o.name FROM invite_codes i JOIN organizations o ON o.id = i.organization_id
-             WHERE i.code_hash = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
+             WHERE i.code_hash = $1 AND i.kind <> 'email' AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses FOR UPDATE OF i`,
             [hashInviteCode(input.inviteCode!)],
           )
         ).rows[0];
         // Unknown, expired, revoked, used up, or a code that only creates accounts: one answer.
         if (!invite) throw new ForbiddenException({ code: 'invite_not_for_organization' });
+        const member = (await c.query('SELECT 1 FROM organization_members WHERE organization_id = $1 AND user_id = $2', [invite.organization_id, current.id])).rowCount;
+        if (!member) await requireSeat(c, invite.organization_id!);
         const joined = await c.query(
           `INSERT INTO organization_members (organization_id, user_id, role, invite_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING user_id`,
           [invite.organization_id, current.id, invite.role, invite.id],
@@ -745,7 +751,7 @@ export class AuthController {
     const invite = (
       await c.query(
         `UPDATE invite_codes SET used_count = used_count + 1
-         WHERE code_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
+         WHERE code_hash = $1 AND kind <> 'email' AND revoked_at IS NULL AND expires_at > now() AND used_count < max_uses
          RETURNING id, organization_id, role`,
         [hashInviteCode(code)],
       )

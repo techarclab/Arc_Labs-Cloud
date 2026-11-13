@@ -16,11 +16,12 @@ import { Db } from '../db/db.service';
  */
 export const PLANS: Record<
   string,
-  { maxDevices: number; maxProjects: number; maxRules: number; maxApiKeys: number; maxWebhooks: number; maxWidgets: number; retentionDays: number }
+  { maxDevices: number; maxProjects: number; maxRules: number; maxApiKeys: number; maxWebhooks: number; maxWidgets: number; retentionDays: number; maxMembers: number }
 > = {
-  free: { maxDevices: 5, maxProjects: 3, maxRules: 10, maxApiKeys: 3, maxWebhooks: 2, maxWidgets: 12, retentionDays: 30 },
-  pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, maxWidgets: 64, retentionDays: 365 },
-  enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, maxWidgets: 64, retentionDays: 1825 },
+  // maxMembers must match migration 011 (the backfill) and the organizations.max_members default.
+  free: { maxDevices: 5, maxProjects: 3, maxRules: 10, maxApiKeys: 3, maxWebhooks: 2, maxWidgets: 12, retentionDays: 30, maxMembers: 10 },
+  pro: { maxDevices: 1000, maxProjects: 200, maxRules: 2000, maxApiKeys: 200, maxWebhooks: 50, maxWidgets: 64, retentionDays: 365, maxMembers: 500 },
+  enterprise: { maxDevices: 100000, maxProjects: 5000, maxRules: 50000, maxApiKeys: 1000, maxWebhooks: 200, maxWidgets: 64, retentionDays: 1825, maxMembers: 10000 },
 };
 
 const settingsBody = z.object({ retentionDays: z.number().int().min(1).max(3650) });
@@ -33,6 +34,7 @@ const planBody = z.object({
   maxWebhooks: z.number().int().min(1).max(10_000).optional(),
   maxWidgets: z.number().int().min(1).max(64).optional(),
   retentionDays: z.number().int().min(1).max(3650).optional(),
+  maxMembers: z.number().int().min(1).max(100_000).optional(),
 });
 
 @ApiTags('Organizations')
@@ -172,6 +174,7 @@ export class OrgOpsController {
       maxWebhooks: input.maxWebhooks ?? p.maxWebhooks,
       maxWidgets: input.maxWidgets ?? p.maxWidgets,
       retentionDays: input.retentionDays ?? p.retentionDays,
+      maxMembers: input.maxMembers ?? p.maxMembers,
     };
     await this.db.tx(async (c) => {
       // A paid plan makes a personal workspace a real organization (ARC LABS has set it up): its one person, the
@@ -180,9 +183,9 @@ export class OrgOpsController {
       if (!before) throw new NotFoundException({ code: 'not_found' });
       await c.query(
         `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9,
-           kind = CASE WHEN $2 <> 'free' THEN 'organization' ELSE kind END
+           max_members = $10, kind = CASE WHEN $2 <> 'free' THEN 'organization' ELSE kind END
          WHERE id = $1`,
-        [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets],
+        [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets, v.maxMembers],
       );
       if (before.kind === 'personal' && input.plan !== 'free') {
         await c.query(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND role = 'individual'`, [id]);
@@ -313,7 +316,7 @@ export class PlatformController {
   async organizations(@CurrentUser() user: AuthUser) {
     this.requireStaff(user);
     const rows = await this.db.query(
-      `SELECT o.id, o.name, o.slug, o.kind, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.max_widgets, o.created_at,
+      `SELECT o.id, o.name, o.slug, o.kind, o.plan, o.retention_days, o.max_devices, o.max_projects, o.max_rules, o.max_api_keys, o.max_webhooks, o.max_widgets, o.max_members, o.seat_limit, o.created_at,
          (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members,
          (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id AND d.lifecycle_status NOT IN ('revoked','retired')) AS devices,
          (SELECT count(*)::int FROM projects p WHERE p.organization_id = o.id) AS projects,
@@ -329,7 +332,8 @@ export class PlatformController {
         kind: o.kind,
         plan: o.plan,
         retentionDays: o.retention_days,
-        limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks, widgetsPerDashboard: o.max_widgets },
+        limits: { devices: o.max_devices, projects: o.max_projects, rules: o.max_rules, apiKeys: o.max_api_keys, webhooks: o.max_webhooks, widgetsPerDashboard: o.max_widgets, members: o.max_members },
+        seatLimit: o.seat_limit,
         members: o.members,
         devices: o.devices,
         projects: o.projects,

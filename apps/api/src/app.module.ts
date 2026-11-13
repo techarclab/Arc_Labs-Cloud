@@ -18,6 +18,7 @@ import { IngestService } from './common/ingest.service';
 import { MqttPublisher } from './common/mqtt-publisher.service';
 import { MqttHooksController } from './internal/mqtt-hooks.controller';
 import { OrganizationsController } from './organizations/organizations.controller';
+import { InvitationsController } from './organizations/invitations.controller';
 import { ProjectsController } from './projects/projects.controller';
 import { AlertsController } from './alerts/alerts.controller';
 import { CommandsController } from './commands/commands.controller';
@@ -108,6 +109,7 @@ class RootController {
     OrganizationsController,
     OrgOpsController,
     PlatformController,
+    InvitationsController,
     ProjectsController,
     DevicesController,
     DeviceHttpController,

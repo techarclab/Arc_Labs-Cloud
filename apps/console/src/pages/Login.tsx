@@ -3,6 +3,7 @@ import { api } from '../api';
 import { ArcMark, ErrorBox } from '../components/ui';
 import { useSession } from '../session';
 import { AgeChoice, AgeGroup, ForgotPasswordForm } from './Onboarding';
+import { pendingInviteInfo } from './Invite';
 
 type GoogleCredentialResponse = { credential?: string };
 type GoogleIdentityApi = {
@@ -257,6 +258,11 @@ export function LoginPage() {
               {mode === 'signin' ? 'Use the email and password you signed up with.' : 'Free: up to 5 devices and 3 channels. No card needed.'}
             </p>
           </div>
+          {pendingInviteInfo() && (
+            <div className="note">
+              Sign in, or create an account, with <b>{pendingInviteInfo()!.email}</b> to join <b>{pendingInviteInfo()!.organizationName}</b>.
+            </div>
+          )}
           {(mode === 'signin' || googleClientId) && (
             <div className="google-auth-section">
               {googleClientId ? (

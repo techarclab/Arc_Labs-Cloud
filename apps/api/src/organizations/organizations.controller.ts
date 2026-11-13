@@ -125,13 +125,17 @@ export class OrganizationsController {
   }
 
   /**
-   * Adds an existing user (being replaced by email invitations in phase 2). Owners can add admins; admins can add
-   * the roles below admin. Someone already in the organization keeps their role: change it with PATCH.
+   * Adds an existing account directly, without the person agreeing. ARC LABS staff only (support); everyone else
+   * invites people (POST /organizations/:id/invitations), so nobody is put into an organization without accepting.
+   * Someone already in the organization keeps their role: change it with PATCH.
    */
-  @Doc('Add member', { body: memberBody })
+  @Doc('Add member (ARC LABS staff only; others send an invitation)', { body: memberBody })
   @Post(':id/members')
   async addMember(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
-    const caller = await this.access.requireOrg(user, id, 'org_admin');
+    const caller = await this.access.requireOrg(user, id, 'org_admin'); // non-members: 404 first, as everywhere
+    if (!user.isPlatformAdmin || user.scope) {
+      throw new ForbiddenException({ code: 'use_invitations', message: 'Invite people instead: they join when they accept (Team → Invite people).' });
+    }
     await this.requireTeam(id);
     const input = parse(memberBody, body);
     this.requireAssignable(caller, input.role);

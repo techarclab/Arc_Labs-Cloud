@@ -29,7 +29,7 @@ type Principal = (typeof PRINCIPALS)[number];
 const RANK: Partial<Record<Principal, number>> = { viewer: 1, engineer: 2, admin: 3 };
 const NEED_RANK: Partial<Record<Need, number>> = { viewer: 1, engineer: 2, org_admin: 3 };
 /** 403 codes that mean "not allowed"; other 403s are business rules (plan limit, wrong password, …). */
-const DENY_CODES = new Set(['insufficient_role', 'platform_admin_only', 'not_found', 'person_required', 'person_only', 'email_unverified', 'profile_incomplete']);
+const DENY_CODES = new Set(['insufficient_role', 'platform_admin_only', 'not_found', 'person_required', 'person_only', 'email_unverified', 'profile_incomplete', 'use_invitations']);
 
 export interface Fixtures {
   orgA: string;
@@ -52,6 +52,7 @@ export interface Fixtures {
   relX: string;
   roA: string;
   inviteX: string;
+  classX: string;
   spareId: string;
   emails: Record<string, string>;
   fields: unknown[];
@@ -184,8 +185,9 @@ async function main() {
     const orgA = ok(await call('POST', '/api/v1/organizations', as('admin'), { name: 'Org A', slug: 'org-a' }), 'org A').id;
     ok(await call('POST', '/api/v1/organizations', as('outsider'), { name: 'Org B', slug: 'org-b' }), 'org B');
     ok(await call('PATCH', `/api/v1/organizations/${orgA}/plan`, as('platform'), { plan: 'pro' }), 'org A on pro');
+    // Members join by invitation; adding them directly is ARC LABS staff only, so the fixture inserts them.
     for (const [who, role] of [['engineer', 'engineer'], ['viewer', 'viewer'], ['spare', 'viewer']]) {
-      ok(await call('POST', `/api/v1/organizations/${orgA}/members`, as('admin'), { email: emails[who as keyof typeof emails], role }), `member ${who}`);
+      await sql(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)`, [orgA, ids[who], role]);
     }
     const project = async (name: string) => ok(await call('POST', '/api/v1/projects', as('admin'), { organizationId: orgA, name, timezone: 'Asia/Kolkata' }), name).id;
     const projA = await project('Channel A');
@@ -243,16 +245,17 @@ async function main() {
     const relX = ok(await call('POST', '/api/v1/firmware/releases', as('admin'), signedRelease()), 'release X').id;
     const roA = ok(await call('POST', '/api/v1/firmware/rollouts', as('admin'), { releaseId: relA, projectId: projA, percent: 10 }), 'rollout').id;
     const inviteX = ok(await call('POST', '/api/v1/platform/invites', as('platform'), { label: 'X', maxUses: 1, expiresInDays: 1 }), 'invite').id;
+    const classX = ok(await call('POST', `/api/v1/organizations/${orgA}/class-codes`, as('admin'), { label: 'X', role: 'viewer', maxUses: 5, expiresInDays: 1 }), 'class code').id;
 
     const f: Fixtures = {
-      orgA, projA, projX, devA, devRevoke, devLifecycle, cmdA, ruleA, ruleX, alertA, keyX, hookA, hookX, linkA, linkX, sigX, relA, relX, roA, inviteX,
+      orgA, projA, projX, devA, devRevoke, devLifecycle, cmdA, ruleA, ruleX, alertA, keyX, hookA, hookX, linkA, linkX, sigX, relA, relX, roA, inviteX, classX,
       spareId: ids.spare, emails, fields, newPublicKey, signedRelease,
     };
 
     // Default path parameter for each resource; a rule's `params` overrides it.
     const defaults = (path: string): Record<string, string> => {
       const pick: [RegExp, Record<string, string>][] = [
-        [/^\/api\/v1\/organizations\/\{id\}/, { id: orgA, userId: f.spareId }],
+        [/^\/api\/v1\/organizations\/\{id\}/, { id: orgA, userId: f.spareId, inviteId: f.classX }],
         [/^\/api\/v1\/(projects|channels)\/\{id\}/, { id: projA, name: 'blink' }],
         [/^\/api\/v1\/devices\/\{id\}/, { id: devA }],
         [/^\/api\/v1\/commands\/\{commandId\}/, { commandId: cmdA }],
