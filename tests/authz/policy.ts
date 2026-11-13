@@ -102,6 +102,11 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/platform/invites': r('platform', 'read'),
   'POST /api/v1/platform/invites': r('platform', 'write', { body: () => ({ label: 'matrix', maxUses: 1, expiresInDays: 1 }) }),
   'POST /api/v1/platform/invites/{id}/revoke': r('platform', 'destructive', { body: () => ({}) }),
+  // Opening support access would give the matrix's platform caller read access to org A for the rest of the run,
+  // so it is not exercised for allowed callers here (e2e covers it); denial is still tested.
+  'POST /api/v1/platform/organizations/{id}/support-access': r('platform', 'none'),
+  'GET /api/v1/platform/support-access': r('platform', 'read'),
+  'POST /api/v1/platform/support-access/{id}/end': r('platform', 'none'),
   'POST /api/v1/platform/org-setup-codes': r('platform', 'write', { body: () => ({ email: 'matrix-owner@example.test', plan: 'pro' }) }),
 
   // ---------- channels ----------
@@ -196,12 +201,6 @@ export const POLICY: Record<string, Rule> = {
  * Differences between the intended policy and today's code. While an entry is here, the matrix expects the CURRENT
  * behaviour in the cells it names and reports them as known defects (not failures). Fix the code, delete the entry.
  */
-export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: string, rule: Rule, op: string) => boolean }[] = [
-  {
-    id: 'DEF-001',
-    title:
-      'Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"',
-    // Includes the channel feeds: they check users.is_platform_admin, the only source of platform admin now.
-    applies: (principal, rule) => principal === 'platform' && (rule.need === 'viewer' || rule.need === 'engineer' || rule.need === 'org_admin'),
-  },
-];
+// DEF-001 (platform admins acting as an admin in every organization, bypassing row-level security) was fixed in
+// phase 5: ARC LABS staff get an organization's data only through time-limited, read-only support access.
+export const KNOWN_DEFECTS: { id: string; title: string; applies: (principal: string, rule: Rule, op: string) => boolean }[] = [];

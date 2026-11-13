@@ -1401,6 +1401,95 @@
         ]
       }
     },
+    "/api/v1/platform/organizations/{id}/support-access": {
+      "post": {
+        "operationId": "PlatformController_openSupport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  },
+                  "minutes": {
+                    "default": 60,
+                    "type": "integer",
+                    "minimum": 15,
+                    "maximum": 480
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Open support access to an organization (read-only, time-limited, audited)",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/support-access": {
+      "get": {
+        "operationId": "PlatformController_supportSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Support access sessions (open and recent)",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
+    "/api/v1/platform/support-access/{id}/end": {
+      "post": {
+        "operationId": "PlatformController_endSupport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "End your support access early",
+        "tags": [
+          "Platform administration"
+        ]
+      }
+    },
     "/api/v1/platform/invites/{id}/revoke": {
       "post": {
         "operationId": "PlatformController_revokeInvite",

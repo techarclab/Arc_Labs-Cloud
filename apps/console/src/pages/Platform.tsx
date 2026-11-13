@@ -3,6 +3,7 @@ import { api } from '../api';
 import { ago, dateTime } from '../format';
 import { CopyButton, ErrorBox, Modal, useNow, usePoll, useToast } from '../components/ui';
 import { useSession } from '../session';
+import { useNavigate } from 'react-router-dom';
 
 type Limits = { devices: number; projects: number; rules: number; apiKeys: number; webhooks: number };
 interface PlatformOrg {
@@ -30,6 +31,7 @@ export function PlatformPage() {
   const [plans, setPlans] = useState<Plans>({});
   const [error, setError] = useState<unknown>(null);
   const [editing, setEditing] = useState<PlatformOrg | null>(null);
+  const [supportFor, setSupportFor] = useState<PlatformOrg | null>(null);
   const [q, setQ] = useState('');
 
   const load = useCallback(async () => {
@@ -63,7 +65,10 @@ export function PlatformPage() {
       <div className="page-head">
         <div>
           <h1>ARC LABS admin</h1>
-          <p className="sub">Every customer organization on this ARC Cloud, with its plan and limits. You can’t see their devices or data from here.</p>
+          <p className="sub">
+            Every customer organization on this ARC Cloud, with its plan and limits. To look at an organization’s devices and data, open support access: read-only,
+            time-limited, with a reason, recorded in its audit log and emailed to its owner.
+          </p>
         </div>
         <input type="search" placeholder="Search organizations" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 260 }} aria-label="Search organizations" />
       </div>
@@ -122,6 +127,9 @@ export function PlatformPage() {
                   <td className="hide-sm">{o.members}</td>
                   <td className="hide-sm">{o.lastDataAt ? ago(o.lastDataAt, now) : <span className="muted">never</span>}</td>
                   <td style={{ textAlign: 'right' }}>
+                    <button className="btn small quiet" onClick={() => setSupportFor(o)}>
+                      Support access
+                    </button>{' '}
                     <button className="btn small" onClick={() => setEditing(o)}>
                       Change plan
                     </button>
@@ -139,8 +147,10 @@ export function PlatformPage() {
           </table>
         </div>
       </section>
+      <SupportSessions />
       <SetupCodesSection />
       <InvitesSection orgs={items ?? []} />
+      {supportFor && <SupportModal org={supportFor} onClose={() => setSupportFor(null)} />}
       {editing && (
         <PlanModal
           org={editing}
@@ -640,5 +650,132 @@ function SetupCodeModal({ onClose, onCreated }: { onClose: () => void; onCreated
         <ErrorBox error={error} />
       </form>
     </Modal>
+  );
+}
+
+/** Open read-only, time-limited support access to one organization, with a reason; then go there. */
+function SupportModal({ org, onClose }: { org: PlatformOrg; onClose: () => void }) {
+  const { refreshOrgs } = useSession();
+  const nav = useNavigate();
+  const [reason, setReason] = useState('');
+  const [minutes, setMinutes] = useState(60);
+  const [error, setError] = useState<unknown>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      await api('POST', `/platform/organizations/${org.id}/support-access`, { reason: reason.trim(), minutes });
+      await refreshOrgs();
+      nav(`/o/${org.id}`);
+    } catch (err) {
+      setError(err);
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Support access to ${org.name}`}
+      footer={
+        <>
+          <button className="btn quiet" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" type="submit" form="support">
+            Open read-only access
+          </button>
+        </>
+      }
+    >
+      <form id="support" className="form" onSubmit={submit}>
+        <div className="note">
+          You will see {org.name}’s channels, devices and readings, read-only, until the time runs out. The reason goes into its audit log and an email to its owner.
+        </div>
+        <label className="field">
+          Reason
+          <span className="hint">At least a sentence, e.g. “Ticket 42: devices in Lab B not reporting since Monday”.</span>
+          <textarea required minLength={10} maxLength={500} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+        </label>
+        <label className="field">
+          For
+          <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
+            {[15, 30, 60, 120, 240, 480].map((m) => (
+              <option key={m} value={m}>
+                {m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <ErrorBox error={error} />
+      </form>
+    </Modal>
+  );
+}
+
+interface SupportSession { id: string; organizationId: string; organizationName: string; reason: string; staff: string; mine: boolean; createdAt: string; expiresAt: string; endedAt: string | null; open: boolean }
+
+/** Recent support access by ARC LABS staff: who looked where, why, and whether it is still open. */
+function SupportSessions() {
+  const toast = useToast();
+  const { refreshOrgs } = useSession();
+  const [items, setItems] = useState<SupportSession[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const load = useCallback(async () => {
+    try {
+      setItems((await api<{ items: SupportSession[] }>('GET', '/platform/support-access')).items);
+    } catch (e) {
+      setError(e);
+    }
+  }, []);
+  usePoll(load, 60_000, [load]);
+  async function end(s: SupportSession) {
+    try {
+      await api('POST', `/platform/support-access/${s.id}/end`);
+      await refreshOrgs();
+      toast(`Support access to ${s.organizationName} ended`);
+      void load();
+    } catch (e) {
+      setError(e);
+    }
+  }
+  if (!items?.length && !error) return null;
+  return (
+    <section className="panel" style={{ marginTop: 20 }}>
+      <div className="panel-head" style={{ padding: '14px 18px' }}>
+        <h3 style={{ margin: 0 }}>Support access</h3>
+      </div>
+      <ErrorBox error={error} />
+      <div className="table-wrap">
+        <table className="grid">
+          <thead>
+            <tr>
+              <th>Organization</th>
+              <th>By</th>
+              <th className="hide-sm">Reason</th>
+              <th>Until</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {(items ?? []).slice(0, 20).map((s) => (
+              <tr key={s.id} style={s.open ? undefined : { opacity: 0.6 }}>
+                <td>
+                  <b>{s.organizationName}</b>
+                </td>
+                <td>{s.staff}</td>
+                <td className="hide-sm small">{s.reason}</td>
+                <td>{s.open ? dateTime(s.expiresAt) : s.endedAt ? `ended ${dateTime(s.endedAt)}` : 'expired'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {s.open && s.mine && (
+                    <button className="btn small" onClick={() => void end(s)}>
+                      End
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

@@ -40,7 +40,7 @@ import './styles.css';
 
 /** Sends a signed-in user to their first project, or to setup if they have none. */
 function Home() {
-  const { orgs, refreshProjects } = useSession();
+  const { orgs, refreshProjects, user } = useSession();
   const nav = useNavigate();
   const [needsSetup, setNeedsSetup] = useState(false);
   useEffect(() => {
@@ -60,6 +60,7 @@ function Home() {
       }
       // A student/employee/teacher/trainer without channels yet: their organization's page says so (no setup).
       const scopedOrg = orgs.find((o) => isScoped(o.role));
+      if (user?.isPlatformAdmin && !orgs.some((o) => o.role !== 'support') && alive) return nav('/platform', { replace: true });
       if (scopedOrg && alive) return nav(`/o/${scopedOrg.id}`, { replace: true });
       if (alive) setNeedsSetup(true);
     })().catch(() => alive && setNeedsSetup(true));
@@ -89,6 +90,8 @@ function Gate() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/setup" element={<SetupPage />} />
+      {/* ARC LABS staff who are not in any organization themselves still reach the platform page. */}
+      <Route path="/platform" element={<div className="main standalone"><PlatformPage /></div>} />
       <Route path="/o/:orgId" element={<Layout />}>
         <Route index element={<OverviewPage />} />
         <Route path="p/:projectId" element={<ChannelLayout />}>

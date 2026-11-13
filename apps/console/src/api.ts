@@ -66,6 +66,8 @@ const MESSAGES: Record<string, string> = {
   org_type_required: 'Choose what kind of organization this is.',
   not_scoped: 'Their role already sees every channel. Channel access is for teachers, trainers, students and employees.',
   channels_for_scoped_roles: 'Only teachers, trainers, students and employees get channels; other roles see every channel.',
+  support_read_only: 'Support access is read-only: ARC LABS staff can look, not change anything.',
+  use_support_access: 'To look at this organization, open support access from the Platform page.',
   seats_full: 'This organization has no free seats. An owner or admin can raise the limit or remove someone.',
   use_invitations: 'Invite people instead: they join when they accept the invitation.',
   invite_email_mismatch: 'This invitation is for a different email address. Sign in with the address it was sent to.',
@@ -158,9 +160,10 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 // ---- Types (mirror the API responses) ----
 
 /** A person's role in an organization (the API's organization_members.role). */
-export type Role = 'owner' | 'admin' | 'teacher' | 'trainer' | 'engineer' | 'student' | 'employee' | 'viewer' | 'individual';
+export type Role = 'owner' | 'admin' | 'teacher' | 'trainer' | 'engineer' | 'student' | 'employee' | 'viewer' | 'individual' | 'support';
 /** kind 'personal': someone's own free workspace; 'organization': set up by ARC LABS. */
-export interface Org { id: string; name: string; slug: string; role?: Role; kind?: 'personal' | 'organization' }
+/** support: ARC LABS staff looking in with time-limited, read-only support access (until `until`). */
+export interface Org { id: string; name: string; slug: string; role?: Role; kind?: 'personal' | 'organization'; support?: { id: string; until: string } }
 export interface Project { id: string; organizationId: string; name: string; description: string; timezone: string; readApiKey: string; deviceCount?: number }
 export interface Connectivity { status: 'online' | 'offline' | 'unknown'; source: string; thresholdSeconds: number }
 export interface Device {
@@ -226,9 +229,10 @@ export const ROLE_LABEL: Record<Role, string> = {
   employee: 'Employee',
   viewer: 'Viewer',
   individual: 'Personal workspace',
+  support: 'ARC LABS support (read-only)',
 };
 /** The API's access levels (AccessService.LEVEL): what a role may do across the organization. */
-const LEVEL: Record<Role, 1 | 2 | 3> = { owner: 3, admin: 3, individual: 3, teacher: 2, trainer: 2, engineer: 2, student: 1, employee: 1, viewer: 1 };
+const LEVEL: Record<Role, 1 | 2 | 3> = { owner: 3, admin: 3, individual: 3, teacher: 2, trainer: 2, engineer: 2, student: 1, employee: 1, viewer: 1, support: 1 };
 /** Can change channels, devices, rules (engineer level and up). */
 export const canEdit = (r?: Role) => !!r && LEVEL[r] >= 2;
 /** Admin-level settings: API keys, webhooks, firmware, audit log (owner, admin, and the individual in their workspace). */

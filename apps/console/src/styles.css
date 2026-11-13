@@ -848,3 +848,7 @@ fieldset.choice.chips label.selected { border-color: var(--accent); background: 
 fieldset.choice.chips input { width: 14px; height: 14px; margin: 0; }
 
 .side-empty { color: #94a3b8; padding: 4px 14px 12px; line-height: 1.45; }
+
+/* ARC LABS support access banner (inside an organization) */
+.support-banner { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: #fff7e6; border: 1px solid #f3d38a; color: #6b4a12; border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; font-size: 14px; }
+.main.standalone { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }

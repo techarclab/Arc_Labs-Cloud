@@ -143,7 +143,7 @@ export function AccountPage() {
               {me.isPlatformAdmin && (
                 <>
                   <dt>ARC LABS</dt>
-                  <dd>platform admin (plans and invite codes for every organization; no access to their data)</dd>
+                  <dd>platform admin (plans, setup codes and usage for every organization; their data only through time-limited, read-only, audited support access)</dd>
                 </>
               )}
             </dl>

@@ -269,6 +269,8 @@ async function main() {
         [/^\/api\/v1\/firmware\/releases\/\{id\}/, { id: relX }],
         [/^\/api\/v1\/firmware\/rollouts\/\{id\}/, { id: roA }],
         [/^\/api\/v1\/platform\/invites\/\{id\}/, { id: inviteX }],
+        [/^\/api\/v1\/platform\/organizations\/\{id\}/, { id: orgA }],
+        [/^\/api\/v1\/platform\/support-access\/\{id\}/, { id: '00000000-0000-4000-8000-000000000000' }],
       ];
       return pick.find(([re]) => re.test(path))?.[1] ?? {};
     };

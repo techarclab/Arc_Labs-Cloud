@@ -4,8 +4,11 @@ import { AuthUser } from './http';
 
 /** What a person is in an organization (organization_members.role). */
 export type MemberRole = 'owner' | 'admin' | 'teacher' | 'trainer' | 'engineer' | 'student' | 'employee' | 'viewer' | 'individual';
-/** A caller's role: a member role, or the role of an API key / service account / LMS link (viewer or engineer). */
-export type CallerRole = MemberRole;
+/**
+ * A caller's role: a member role, the role of an API key / service account / LMS link (viewer or engineer), or
+ * 'support': ARC LABS staff with active, time-limited support access to this organization (read-only).
+ */
+export type CallerRole = MemberRole | 'support';
 /**
  * Access levels the API's checks are written against: requireOrg(user, org, 'engineer'). Named after the original
  * three roles so the existing call sites read the same; 'org_admin' means "admin level".
@@ -17,7 +20,8 @@ const RANK: Record<OrgRole, number> = { viewer: 1, engineer: 2, org_admin: 3 };
  * Each role's level. teacher/trainer/student/employee are scoped (SCOPED_ROLES): they have this level only inside
  * the channels granted to them (project_members), and nothing organization-wide.
  */
-export const LEVEL: Record<MemberRole, OrgRole> = {
+export const LEVEL: Record<CallerRole, OrgRole> = {
+  support: 'viewer', // and read-only: requireOrg refuses anything above viewer level
   owner: 'org_admin',
   admin: 'org_admin',
   individual: 'org_admin', // runs their personal workspace; team management is refused separately (no team there)
@@ -30,7 +34,7 @@ export const LEVEL: Record<MemberRole, OrgRole> = {
 };
 
 /** Roles limited to the channels granted to them. */
-export const SCOPED_ROLES: ReadonlySet<MemberRole> = new Set(['teacher', 'trainer', 'student', 'employee']);
+export const SCOPED_ROLES: ReadonlySet<CallerRole> = new Set(['teacher', 'trainer', 'student', 'employee']);
 export const isScoped = (role: CallerRole | null | undefined) => !!role && SCOPED_ROLES.has(role);
 
 /** Roles that can be given to someone (invites, changing a role). Never owner (transfer) or individual. */
@@ -60,13 +64,24 @@ export class AccessService {
 
   async roleIn(user: AuthUser, orgId: string): Promise<CallerRole | null> {
     if (user.scope) return user.scope.orgId === orgId ? user.scope.role : null;
-    // Known defect DEF-001 (fixed in phase 5): platform admins act as an admin (not the owner) everywhere.
-    if (user.isPlatformAdmin) return 'admin';
     const row = await this.db.one<{ role: MemberRole }>(
       'SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2',
       [orgId, user.id],
     );
-    return row?.role ?? null;
+    if (row) return row.role;
+    // ARC LABS staff are not members of customer organizations: only open support access lets them look in.
+    if (user.isPlatformAdmin && (await this.supportAccess(user.id, orgId))) return 'support';
+    return null;
+  }
+
+  /** The caller's open support access to an organization (support_access is platform-only: read in system scope). */
+  async supportAccess(userId: string, orgId: string): Promise<{ id: string; expires_at: Date } | null> {
+    return this.db.asSystem(() =>
+      this.db.one<{ id: string; expires_at: Date }>(
+        'SELECT id, expires_at FROM support_access WHERE user_id = $1 AND organization_id = $2 AND ended_at IS NULL AND expires_at > now() ORDER BY expires_at DESC LIMIT 1',
+        [userId, orgId],
+      ),
+    );
   }
 
   /**
@@ -86,6 +101,9 @@ export class AccessService {
     if (!user.isPlatformAdmin) {
       const org = await this.db.one<{ status: string }>('SELECT status FROM organizations WHERE id = $1', [orgId]);
       if (org?.status !== 'active') throw new ForbiddenException({ code: 'org_suspended', message: 'This organization is suspended. Contact ARC LABS.' });
+    }
+    if (role === 'support' && min !== 'viewer') {
+      throw new ForbiddenException({ code: 'support_read_only', message: 'Support access is read-only: ARC LABS staff can look, not change anything.' });
     }
     if (RANK[LEVEL[role]] < RANK[min]) throw new ForbiddenException({ code: 'insufficient_role', required: min });
     return role;

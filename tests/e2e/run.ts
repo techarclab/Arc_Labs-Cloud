@@ -523,7 +523,8 @@ async function main() {
       const all = await http('GET', '/api/v1/platform/organizations', tStaff);
       assert.equal(all.status, 200);
       assert.ok(all.body.items.some((o: any) => o.id === victimOrg.id), 'legitimate admin sees every organization');
-      assert.equal((await http('GET', `/api/v1/devices/${victimDev.id}`, tStaff)).status, 200, 'legitimate admin reaches any tenant');
+      // Metadata only: a platform admin sees the organization in the platform list, not its data (phase 5).
+      assert.equal((await http('GET', `/api/v1/devices/${victimDev.id}`, tStaff)).status, 404, 'no tenant data without support access');
       assert.match(adminCli('list').out, /staff@arclabs\.test/);
 
       const rv = adminCli('revoke', 'staff@arclabs.test');
@@ -913,6 +914,7 @@ async function main() {
     await invitationsAndSeats({ tA, tB, orgA, sinks });
     await onboarding({ tA, tB, sinks });
     await channelAccess({ tA, tB, orgA, proj, sinks });
+    await platformBoundary({ tA, tB, orgB, sinks });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1286,6 +1288,68 @@ async function channelAccess(ctx: { tA: string; tB: string; orgA: any; proj: any
   });
 }
 
+async function platformBoundary(ctx: { tA: string; tB: string; orgB: any; sinks: Sinks }) {
+  const { tA, tB, orgB, sinks } = ctx;
+  console.log('\nPlatform boundary: metadata only, support access');
+  // Alice plays an ARC LABS staff member; orgB (owned by Bob) is the customer.
+  await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
+  try {
+    const projB = (await http('POST', '/api/v1/projects', tB, { organizationId: orgB.id, name: 'Customer channel' })).body.id as string;
+    const devB = (await http('POST', '/api/v1/devices', tB, { projectId: projB, displayName: 'Customer device' })).body.device.id as string;
+    const tenantRoutes = [
+      `/api/v1/organizations/${orgB.id}`,
+      `/api/v1/organizations/${orgB.id}/overview`,
+      `/api/v1/organizations/${orgB.id}/members`,
+      `/api/v1/projects/${projB}`,
+      `/api/v1/devices/${devB}`,
+      `/api/v1/devices?projectId=${projB}`,
+      `/api/v1/channels/${projB}/feeds.json`,
+    ];
+    let support = '';
+    await check('ARC LABS staff see metadata, not an organization\'s data', async () => {
+      const orgs = (await http('GET', '/api/v1/platform/organizations', tA)).body.items;
+      assert.ok(orgs.some((o: any) => o.id === orgB.id), 'listed with its plan and counts');
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 404, path);
+      assert.ok(!(await http('GET', '/api/v1/organizations', tA)).body.items.some((o: any) => o.id === orgB.id));
+      const self = await http('POST', `/api/v1/organizations/${orgB.id}/members`, tA, { email: 'alice@arclabs.test', role: 'viewer' });
+      assert.equal(self.body.code, 'use_support_access', 'staff cannot add themselves to look around');
+    });
+    await check('support access: needs a reason, is read-only, visible to the customer (audit log + email), and ends', async () => {
+      assert.equal((await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'help' })).status, 400, 'a real reason');
+      assert.equal((await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tB, { reason: 'I am not staff, let me in' })).status, 403);
+      const r = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Ticket 42: customer device not reporting', minutes: 30 });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.mode, 'read-only');
+      support = r.body.id;
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 200, path);
+      const listed = (await http('GET', '/api/v1/organizations', tA)).body.items.find((o: any) => o.id === orgB.id);
+      assert.equal(listed.role, 'support');
+      assert.equal(listed.support.id, support);
+      assert.equal((await http('PATCH', `/api/v1/projects/${projB}`, tA, { description: 'changed by staff' })).body.code, 'support_read_only');
+      assert.equal((await http('POST', '/api/v1/devices', tA, { projectId: projB, displayName: 'staff device' })).body.code, 'support_read_only');
+      assert.equal((await http('POST', `/api/v1/devices/${devB}/revoke`, tA, {})).body.code, 'support_read_only');
+      // The customer sees it: their audit log, and an email to the owner.
+      const audit = (await http('GET', `/api/v1/organizations/${orgB.id}/audit-logs`, tB)).body.items;
+      const opened = audit.find((a: any) => a.action === 'support.access_open');
+      assert.equal(opened.metadata.reason, 'Ticket 42: customer device not reporting');
+      await eventually(async () => sinks.emails.find((e) => e.to === 'bob@other.test' && /support access/i.test(e.raw)), 'email to the owner');
+      const sessions = (await http('GET', '/api/v1/platform/support-access', tA)).body.items;
+      assert.ok(sessions.some((x: any) => x.id === support && x.open && x.mine));
+      assert.equal((await http('POST', `/api/v1/platform/support-access/${support}/end`, tA)).status, 200);
+      for (const path of tenantRoutes) assert.equal((await http('GET', path, tA)).status, 404, `after ending: ${path}`);
+      assert.ok((await http('GET', `/api/v1/organizations/${orgB.id}/audit-logs`, tB)).body.items.some((a: any) => a.action === 'support.access_end'));
+    });
+    await check('support access expires on its own', async () => {
+      const r = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Ticket 43: follow-up check', minutes: 15 });
+      assert.equal((await http('GET', `/api/v1/projects/${projB}`, tA)).status, 200);
+      await sql(`UPDATE support_access SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE id = $1`, [r.body.id]);
+      assert.equal((await http('GET', `/api/v1/projects/${projB}`, tA)).status, 404);
+    });
+  } finally {
+    await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
+  }
+}
+
 async function rolesAndOwnership(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {
   const { tA, tB, orgA, orgB } = ctx;
   console.log('\nRoles & ownership');
@@ -1357,7 +1421,11 @@ async function orgSuspension(ctx: { tA: string; tB: string; orgA: any; orgB: any
       const listed = (await http('GET', '/api/v1/organizations', tB)).body.items.find((o: any) => o.id === orgB.id);
       assert.equal(listed?.status, 'suspended', 'members can still see that it is suspended');
       await sql(`UPDATE users SET is_platform_admin = true WHERE email = 'alice@arclabs.test'`);
-      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 200, 'ARC LABS staff can still get in');
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 404, 'staff are not members');
+      const sa = await http('POST', `/api/v1/platform/organizations/${orgB.id}/support-access`, tA, { reason: 'Customer asked why the organization is suspended', minutes: 15 });
+      assert.equal(sa.status, 201, JSON.stringify(sa.body));
+      assert.equal((await http('GET', `/api/v1/organizations/${orgB.id}/overview`, tA)).status, 200, 'ARC LABS staff with support access can still look');
+      await http('POST', `/api/v1/platform/support-access/${sa.body.id}/end`, tA);
     } finally {
       await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
       await sql(`UPDATE organizations SET status = 'active' WHERE id = $1`, [orgB.id]);

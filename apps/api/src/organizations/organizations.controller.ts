@@ -92,7 +92,21 @@ export class OrganizationsController {
        WHERE m.user_id = $1 ORDER BY o.name`,
       [user.id],
     );
-    return { items: rows.map((r) => mapOrg(r, r.role)) };
+    const items = rows.map((r) => mapOrg(r, r.role));
+    // ARC LABS staff: organizations they have open support access to (read-only, until it expires).
+    if (user.isPlatformAdmin) {
+      const support = await this.db.asSystem(() =>
+        this.db.query(
+          `SELECT o.*, s.id AS support_id, s.expires_at AS support_until FROM support_access s JOIN organizations o ON o.id = s.organization_id
+           WHERE s.user_id = $1 AND s.ended_at IS NULL AND s.expires_at > now() ORDER BY o.name`,
+          [user.id],
+        ),
+      );
+      for (const r of support) {
+        if (!items.some((i) => i.id === r.id)) items.push({ ...mapOrg(r, 'support'), support: { id: r.support_id, until: r.support_until } } as any);
+      }
+    }
+    return { items };
   }
 
   @Doc('Get')
@@ -132,17 +146,22 @@ export class OrganizationsController {
    * Someone already in the organization keeps their role: change it with PATCH.
    */
   @Doc('Add member (ARC LABS staff only; others send an invitation)', { body: memberBody })
+  @SystemDb() // staff are not members of the organization; everyone else is refused below
   @Post(':id/members')
   async addMember(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
-    const caller = await this.access.requireOrg(user, id, 'org_admin'); // non-members: 404 first, as everywhere
     if (!user.isPlatformAdmin || user.scope) {
+      await this.access.requireOrg(user, id, 'org_admin'); // non-members: 404 first, as everywhere
       throw new ForbiddenException({ code: 'use_invitations', message: 'Invite people instead: they join when they accept (Team → Invite people).' });
     }
+    if (!(await this.db.one('SELECT id FROM organizations WHERE id = $1', [id]))) throw new NotFoundException({ code: 'not_found' });
     await this.requireTeam(id);
     const input = parse(memberBody, body);
-    this.requireAssignable(caller, input.role);
+    // Staff act with an admin's reach (never the owner's), and never add themselves: looking at an organization's
+    // data goes through time-limited, audited support access instead.
+    this.requireAssignable('admin', input.role);
     const target = await this.db.one('SELECT id FROM users WHERE email = $1', [input.email]);
     if (!target) throw new NotFoundException({ code: 'user_not_found', message: 'The user must register first' });
+    if (target.id === user.id) throw new ForbiddenException({ code: 'use_support_access', message: 'To look at this organization, open support access (Platform page).' });
     const added = await this.db.one(
       `INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)
        ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING role`,

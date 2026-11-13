@@ -11,6 +11,7 @@ import { hashInviteCode, newInviteCode } from '../common/invites';
 import { renderAccountEmail } from '../common/email';
 import { loadConfig } from '../config';
 import { Db } from '../db/db.service';
+import { SystemDb } from '../common/tenant-scope.interceptor';
 
 /**
  * Named plans. Platform admins assign them; limits can also be set individually.
@@ -161,8 +162,9 @@ export class OrgOpsController {
     return { retentionDays: input.retentionDays };
   }
 
-  /** Platform admins (ARC LABS staff) assign a plan and limits. */
+  /** Platform admins (ARC LABS staff) assign a plan and limits. A platform action: system scope, staff only. */
   @Doc('Plan', { body: planBody })
+  @SystemDb()
   @Patch(':id/plan')
   async plan(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
     if (!user.isPlatformAdmin || user.scope) throw new ForbiddenException({ code: 'platform_admin_only' });
@@ -200,6 +202,12 @@ export class OrgOpsController {
 
 const revokeInviteBody = z.object({ removeMembers: z.boolean().optional() });
 
+const supportBody = z.object({
+  /** Why ARC LABS needs to look (shown in the organization's audit log and the email to its owner). */
+  reason: z.string().trim().min(10, 'say why, in a sentence').max(500),
+  minutes: z.number().int().min(15).max(480).default(60),
+});
+
 const setupCodeBody = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   plan: z.enum(['free', 'pro', 'enterprise']),
@@ -230,7 +238,12 @@ function inviteStatus(i: { revoked_at: Date | null; expires_at: Date; used_count
   return 'active';
 }
 
-/** ARC LABS staff (users.is_platform_admin, set only with tools/platform-admin): every customer organization at a glance. */
+/**
+ * ARC LABS staff (users.is_platform_admin): every customer organization at a glance, as metadata (plans, counts,
+ * codes). Not their data: for that, staff open time-limited, read-only, audited support access.
+ * Platform-level, so system scope; every handler checks requireStaff.
+ */
+@SystemDb()
 @ApiTags('Platform administration')
 @Controller('api/v1/platform')
 export class PlatformController {
@@ -350,6 +363,97 @@ export class PlatformController {
       return r;
     });
     return { id: row.id, code, email: input.email, plan: input.plan, orgType: input.orgType ?? null, expiresAt: row.expires_at };
+  }
+
+  /**
+   * Opens read-only support access to one organization, for a limited time, with a reason. Recorded in the
+   * organization's own audit log (its admins see it) and emailed to its owner. Opening it again replaces the open one.
+   */
+  @Doc('Open support access to an organization (read-only, time-limited, audited)', { body: supportBody })
+  @Post('organizations/:id/support-access')
+  async openSupport(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string, @Body() body: unknown) {
+    this.requireStaff(user);
+    const input = parse(supportBody, body);
+    return this.db.tx(async (c) => {
+      const org = (await c.query<{ name: string }>('SELECT name FROM organizations WHERE id = $1', [id])).rows[0];
+      if (!org) throw new NotFoundException({ code: 'not_found' });
+      await c.query('UPDATE support_access SET ended_at = now() WHERE user_id = $1 AND organization_id = $2 AND ended_at IS NULL', [user.id, id]);
+      const row = (
+        await c.query(
+          `INSERT INTO support_access (organization_id, user_id, reason, expires_at) VALUES ($1, $2, $3, now() + make_interval(mins => $4)) RETURNING id, expires_at`,
+          [id, user.id, input.reason, input.minutes],
+        )
+      ).rows[0];
+      const staff = (await c.query<{ display_name: string; email: string }>('SELECT display_name, email FROM users WHERE id = $1', [user.id])).rows[0];
+      await this.audit.record(
+        { ...actor(user), organizationId: id, action: 'support.access_open', resourceType: 'organization', resourceId: id, metadata: { supportAccessId: row.id, reason: input.reason, minutes: input.minutes, expiresAt: row.expires_at, staff: staff.display_name } },
+        c,
+      );
+      // Tell the owner (transparency): who at ARC LABS, why, until when.
+      const owner = (await c.query<{ email: string }>(`SELECT u.email FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = $1 AND m.role IN ('owner', 'individual') LIMIT 1`, [id])).rows[0];
+      if (owner) {
+        const text = [
+          'Hello,',
+          '',
+          `${staff.display_name} from ARC LABS opened read-only support access to ${org.name} on ARC Cloud, for ${input.minutes} minutes.`,
+          `Reason: ${input.reason}`,
+          '',
+          'Support access lets ARC LABS look at your channels, devices and readings to help you; it cannot change anything. It is recorded in your organization’s audit log.',
+          `Questions? Reply to your ARC LABS contact.`,
+          '',
+          'ARC LABS, Hyderabad',
+        ].join('\n');
+        await c.query(`INSERT INTO deliveries (organization_id, kind, recipient, event_type, payload) VALUES ($1, 'email', $2, 'support.access', $3)`, [
+          id,
+          owner.email,
+          { subject: `ARC LABS opened support access to ${org.name}`, text },
+        ]);
+      }
+      return { id: row.id, organizationId: id, expiresAt: row.expires_at, mode: 'read-only' };
+    });
+  }
+
+  @Doc('Support access sessions (open and recent)')
+  @Get('support-access')
+  async supportSessions(@CurrentUser() user: AuthUser) {
+    this.requireStaff(user);
+    const rows = await this.db.query(
+      `SELECT s.id, s.organization_id, o.name AS organization_name, s.reason, s.created_at, s.expires_at, s.ended_at, u.display_name AS staff, s.user_id
+       FROM support_access s JOIN organizations o ON o.id = s.organization_id JOIN users u ON u.id = s.user_id
+       ORDER BY s.created_at DESC LIMIT 100`,
+    );
+    return {
+      items: rows.map((s) => ({
+        id: s.id,
+        organizationId: s.organization_id,
+        organizationName: s.organization_name,
+        reason: s.reason,
+        staff: s.staff,
+        mine: s.user_id === user.id,
+        createdAt: s.created_at,
+        expiresAt: s.expires_at,
+        endedAt: s.ended_at,
+        open: !s.ended_at && new Date(s.expires_at) > new Date(),
+      })),
+    };
+  }
+
+  @Doc('End your support access early')
+  @Post('support-access/:id/end')
+  @HttpCode(200)
+  async endSupport(@CurrentUser() user: AuthUser, @Param('id', Uuid()) id: string) {
+    this.requireStaff(user);
+    return this.db.tx(async (c) => {
+      const row = (
+        await c.query<{ organization_id: string }>(
+          `UPDATE support_access SET ended_at = now() WHERE id = $1 AND user_id = $2 AND ended_at IS NULL RETURNING organization_id`,
+          [id, user.id],
+        )
+      ).rows[0];
+      if (!row) throw new NotFoundException({ code: 'not_found' });
+      await this.audit.record({ ...actor(user), organizationId: row.organization_id, action: 'support.access_end', resourceType: 'organization', resourceId: row.organization_id, metadata: { supportAccessId: id } }, c);
+      return { id, ended: true };
+    });
   }
 
   @Doc('Revoke invite code; optionally also remove the people who joined an organization with it', { body: revokeInviteBody })

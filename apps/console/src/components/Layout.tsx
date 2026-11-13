@@ -57,6 +57,17 @@ export function Layout() {
     }
   }, [projectId]);
 
+  async function endSupport() {
+    if (!org?.support) return;
+    try {
+      await api('POST', `/platform/support-access/${org.support.id}/end`);
+    } finally {
+      const left = await refreshOrgs().catch(() => []);
+      const own = left.find((o) => o.role !== 'support');
+      nav(own ? `/o/${own.id}/platform` : '/platform', { replace: true });
+    }
+  }
+
   // The organization's overview is not for scoped roles: open their first channel instead.
   const atOrgHome = location.pathname.replace(/\/+$/, '') === `/o/${orgId}`;
   if (scoped && atOrgHome && list?.length) return <Navigate to={`/o/${orgId}/p/${list[0].id}`} replace />;
@@ -208,6 +219,17 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
+        {org?.role === 'support' && org.support && (
+          <div className="support-banner" role="status">
+            <span>
+              <b>ARC LABS support access</b> to {org.name}: read-only, until {new Date(org.support.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Recorded in
+              this organization’s audit log.
+            </span>
+            <button className="btn small" onClick={() => void endSupport()}>
+              End now
+            </button>
+          </div>
+        )}
         {scoped && atOrgHome ? (
           <div className="empty">
             <h3>No channels yet</h3>
