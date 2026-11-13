@@ -45,6 +45,8 @@ export interface AuthUser {
   isPlatformAdmin: boolean;
   kind?: 'user' | 'api_key' | 'service_account' | 'learner';
   scope?: PrincipalScope;
+  /** The server-side session a person's token belongs to (sessions table); absent for keys and older tokens. */
+  sessionId?: string;
 }
 
 export const isPerson = (u: AuthUser) => !u.scope;
@@ -96,7 +98,7 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    let payload: { sub: string; typ?: string; lms?: string; iat?: number };
+    let payload: { sub: string; typ?: string; lms?: string; iat?: number; sid?: string };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
@@ -118,6 +120,15 @@ export class JwtAuthGuard implements CanActivate {
     if (!user) throw new UnauthorizedException({ code: 'invalid_token' });
     // Signed out everywhere (password reset): tokens issued before that second no longer work.
     if (user.revoked != null && (payload.iat ?? 0) < Number(user.revoked)) throw new UnauthorizedException({ code: 'session_revoked' });
+    // A session token works only while its session does: logging out or signing out a device ends it at once.
+    if (payload.sid) {
+      const live = await this.db.one(
+        `UPDATE sessions SET last_seen_at = CASE WHEN last_seen_at < now() - interval '5 minutes' THEN now() ELSE last_seen_at END
+         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > now() RETURNING id`,
+        [payload.sid, user.id],
+      );
+      if (!live) throw new UnauthorizedException({ code: 'session_revoked' });
+    }
     if (!user.email_verified_at || !user.age_group) {
       const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_INCOMPLETE, [ctx.getHandler(), ctx.getClass()]);
       if (!allowed) {
@@ -128,7 +139,7 @@ export class JwtAuthGuard implements CanActivate {
     }
     // Platform admin comes ONLY from the database flag (set by an operator with tools/platform-admin). Never derive
     // it from the email address: registration does not prove ownership of an email, so anyone could claim one.
-    req.user = { id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin === true, kind: 'user' } satisfies AuthUser;
+    req.user = { id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin === true, kind: 'user', ...(payload.sid ? { sessionId: payload.sid } : {}) } satisfies AuthUser;
     return true;
   }
 

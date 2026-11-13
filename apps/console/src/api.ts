@@ -3,7 +3,17 @@
 // When the console is hosted separately (e.g. Vercel), set VITE_API_URL to the API's address at build time.
 export const API_ORIGIN = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || window.location.origin;
 
-const TOKEN_KEY = 'arc.token';
+/**
+ * The access token lives only in memory (a page script that got in could not read it from storage afterwards).
+ * A reload renews it from the httpOnly refresh cookie (POST /auth/refresh), so people stay signed in.
+ */
+let accessToken: string | null = null;
+// Older consoles kept the token in localStorage: remove it.
+try {
+  localStorage.removeItem('arc.token');
+} catch {
+  /* ignore */
+}
 
 // A learner link (/lab#token) uses its own short-lived token without touching the signed-in session.
 let tokenOverride: string | null = null;
@@ -12,20 +22,32 @@ export function setTokenOverride(t: string | null) {
 }
 
 export function getToken(): string | null {
-  if (tokenOverride) return tokenOverride;
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
+  return tokenOverride ?? accessToken;
 }
 export function setToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* storage unavailable: session lasts until reload */
-  }
+  accessToken = token;
+}
+
+let refreshing: Promise<boolean> | null = null;
+/** Gets a new access token with the session cookie. One request at a time; false when there is no live session. */
+export function refreshAccessToken(): Promise<boolean> {
+  refreshing ??= fetch(`${API_ORIGIN}/api/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
+    .then(async (r) => {
+      if (!r.ok) return false;
+      accessToken = (await r.json()).accessToken ?? null;
+      return !!accessToken;
+    })
+    .catch(() => false)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+/** Ends this browser's session on the server (and clears the cookie). */
+export async function logout() {
+  accessToken = null;
+  await fetch(`${API_ORIGIN}/api/v1/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => undefined);
 }
 
 export class ApiError extends Error {
@@ -116,18 +138,22 @@ function unreachableMessage() {
   return `Can’t reach the ARC Cloud server at ${API_ORIGIN}. It may be starting up or offline — try again in a minute.`;
 }
 
-export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+export async function api<T = any>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   const token = getToken();
   let res: Response;
   try {
     res = await fetch(`${API_ORIGIN}/api/v1${path}`, {
       method,
+      // Sign-in responses set the refresh cookie; it is only ever sent back to /api/v1/auth.
+      credentials: 'include',
       headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, 'network', unreachableMessage(), null);
   }
+  // The access token expired (they last minutes): renew it from the session cookie once, then try again.
+  if (res.status === 401 && token && !tokenOverride && !retried && (await refreshAccessToken())) return api<T>(method, path, body, true);
   // A hosted console with no API behind it gets the page HTML (or a 404/405) instead of JSON.
   const isJson = (res.headers.get('content-type') ?? '').includes('json');
   if (!isJson && res.status !== 204 && !import.meta.env.VITE_API_URL && !isLocal()) {

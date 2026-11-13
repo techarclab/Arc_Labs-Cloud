@@ -1,5 +1,5 @@
 /** "Your account": who you are, how you sign in, your organizations, password and sessions. */
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ROLE_LABEL } from '../api';
 import { DeleteAccountDialog } from '../components/DeleteAccount';
@@ -20,6 +20,14 @@ interface Me {
   };
   memberships: { id: string; name?: string; role: keyof typeof ROLE_LABEL }[];
   isPlatformAdmin: boolean;
+}
+
+/** "Chrome on macOS" from a user-agent string (rough, for recognising your own devices). */
+function describeDevice(ua: string | null): string {
+  if (!ua) return 'Unknown device';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /node|curl|python/i.test(ua) ? 'Script' : 'Browser';
+  const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${browser} on ${os}` : browser;
 }
 
 const day = (s: string | null) => (s ? new Date(s).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
@@ -92,6 +100,27 @@ export function AccountPage() {
     } finally {
       signOut();
       nav('/');
+    }
+  }
+
+  const [sessions, setSessions] = useState<{ id: string; createdAt: string; lastSeenAt: string; userAgent: string | null; ip: string | null; current: boolean }[] | null>(null);
+  const loadSessions = useCallback(async () => {
+    try {
+      setSessions((await api<{ items: NonNullable<typeof sessions> }>('GET', '/auth/sessions')).items);
+    } catch {
+      setSessions([]);
+    }
+  }, []);
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
+  async function endSession(id: string) {
+    try {
+      await api('DELETE', `/auth/sessions/${id}`);
+      toast('That device is signed out');
+      void loadSessions();
+    } catch (err) {
+      setError(err);
     }
   }
 
@@ -218,6 +247,31 @@ export function AccountPage() {
             <h2>Sessions</h2>
           </div>
           <div className="panel-body">
+            {!!sessions?.length && (
+              <table className="grid" style={{ marginBottom: 14 }}>
+                <tbody>
+                  {sessions.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <b>{describeDevice(s.userAgent)}</b>
+                        {s.current && <span className="pill ok" style={{ marginLeft: 8 }}>this device</span>}
+                        <div className="small muted">
+                          Signed in {day(s.createdAt)} · last active {day(s.lastSeenAt)}
+                          {s.ip ? ` · ${s.ip}` : ''}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {!s.current && (
+                          <button className="btn small" type="button" onClick={() => void endSession(s.id)}>
+                            Sign out
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
             <p className="muted">Lost a phone or used a shared computer? This signs you out on every device and browser, including this one.</p>
             <button className="btn danger" type="button" onClick={() => void signOutEverywhere()}>
               Sign out everywhere

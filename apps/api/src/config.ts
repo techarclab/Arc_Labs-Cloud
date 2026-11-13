@@ -9,7 +9,20 @@ const schema = z.object({
   /** Read for every new DB connection (rotated passwords); DATABASE_URL then has no password. */
   DATABASE_PASSWORD_FILE: z.string().min(1).optional(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-  JWT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
+  /** Access tokens: short-lived; the console renews them with the refresh cookie (sessions, migration 015). */
+  JWT_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  /** How long a session lasts without signing in again (the refresh cookie's lifetime). */
+  SESSION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+  /** The refresh cookie is Secure (HTTPS only). "false" only for local development over plain http. */
+  SESSION_COOKIE_SECURE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  /**
+   * SameSite of the refresh cookie. "strict" works when the console and the API share a site (arcloud.arclabs.in and
+   * api.arcloud.arclabs.in); "none" (with Secure) only when they are on different sites (e.g. vercel.app + railway.app).
+   */
+  SESSION_COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).default('strict'),
   /** Google OAuth Web client ID; also published to the console for Google Identity Services. */
   GOOGLE_CLIENT_ID: z.string().trim().optional().transform((value) => value || undefined),
   ALLOW_SIGNUP: z

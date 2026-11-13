@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { api, getToken, onUnauthorized, Org, Project, setToken } from './api';
+import { api, getToken, logout, onUnauthorized, Org, Project, refreshAccessToken, setToken } from './api';
 
 interface User {
   id: string;
@@ -52,7 +52,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const load = useCallback(async () => {
-    if (!getToken()) {
+    // A reload starts without a token: renew it from the session cookie (no cookie or session ended: signed out).
+    if (!getToken() && !(await refreshAccessToken())) {
       setUser(null);
       setLoading(false);
       return;
@@ -89,6 +90,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(() => {
+    void logout(); // ends the session on the server too
     setToken(null);
     setUser(null);
     setOrgs([]);

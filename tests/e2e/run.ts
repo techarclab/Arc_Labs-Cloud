@@ -915,6 +915,7 @@ async function main() {
     await onboarding({ tA, tB, sinks });
     await channelAccess({ tA, tB, orgA, proj, sinks });
     await platformBoundary({ tA, tB, orgB, sinks });
+    await sessionsSection('http://127.0.0.1:3200');
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1348,6 +1349,88 @@ async function platformBoundary(ctx: { tA: string; tB: string; orgB: any; sinks:
   } finally {
     await sql(`UPDATE users SET is_platform_admin = false WHERE email = 'alice@arclabs.test'`);
   }
+}
+
+async function sessionsSection(base: string) {
+  console.log('\nSessions: httpOnly refresh cookie, rotation, logout, devices');
+  // (Signs in on the second API: sign-in is rate-limited per IP on each API.)
+  const { hashSecret } = await import('../../apps/api/dist/common/crypto.js');
+  await sql(
+    `INSERT INTO users (email, display_name, password_hash, email_verified_at, age_group, account_type, terms_version, terms_accepted_at)
+     VALUES ('sess@x.test', 'Sess', $1, now(), 'adult', 'individual', '2000-01-01', now())`,
+    [await hashSecret('session-password-123')],
+  );
+  const call = async (method: string, path: string, opts: { token?: string; cookie?: string; body?: unknown } = {}) => {
+    const r = await fetch(base + path, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+        ...(opts.cookie ? { cookie: opts.cookie } : {}),
+      },
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    });
+    const setCookie = r.headers.getSetCookie().find((c) => c.startsWith('arc_refresh=')) ?? null;
+    return { status: r.status, body: await r.json().catch(() => null), setCookie, cookie: setCookie ? setCookie.split(';')[0] : null };
+  };
+  const login = () => call('POST', '/api/v1/auth/login', { body: { email: 'sess@x.test', password: 'session-password-123' } });
+  const sid = (token: string) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sid as string;
+
+  await check('signing in sets an httpOnly, Secure, SameSite=Strict refresh cookie for /api/v1/auth only; the token names its session', async () => {
+    const r = await login();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.setCookie, 'cookie set');
+    for (const attr of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/api/v1/auth']) assert.ok(r.setCookie!.includes(attr), `${attr} in ${r.setCookie}`);
+    assert.match(sid(r.body.accessToken), /^[0-9a-f-]{36}$/);
+    const list = (await call('GET', '/api/v1/auth/sessions', { token: r.body.accessToken })).body.items;
+    assert.ok(list.some((x: any) => x.id === sid(r.body.accessToken) && x.current));
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM sessions WHERE refresh_hash = $1`, [r.cookie!.split('.').pop()]))[0].n, 0, 'only a hash is stored');
+  });
+  await check('refresh rotates the cookie; a just-replaced cookie still works for a moment (two tabs); an old one later revokes the session', async () => {
+    const first = await login();
+    const r1 = await call('POST', '/api/v1/auth/refresh', { cookie: first.cookie! });
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    assert.ok(r1.cookie && r1.cookie !== first.cookie, 'rotated');
+    assert.equal(sid(r1.body.accessToken), sid(first.body.accessToken), 'same session');
+    const tab2 = await call('POST', '/api/v1/auth/refresh', { cookie: first.cookie! });
+    assert.equal(tab2.status, 200, 'grace window for a second tab');
+    assert.equal(tab2.setCookie, null, 'and no new cookie for it');
+    await sql(`UPDATE sessions SET rotated_at = now() - interval '2 minutes' WHERE id = $1`, [sid(first.body.accessToken)]);
+    const stolen = await call('POST', '/api/v1/auth/refresh', { cookie: first.cookie! });
+    assert.equal(stolen.status, 401);
+    assert.equal(stolen.body.code, 'session_revoked');
+    assert.equal((await call('POST', '/api/v1/auth/refresh', { cookie: r1.cookie! })).status, 401, 'the whole session is gone');
+    assert.equal((await call('GET', '/api/v1/auth/me', { token: r1.body.accessToken })).body.code, 'session_revoked', 'its access tokens too');
+    assert.equal((await sql(`SELECT revoked_reason FROM sessions WHERE id = $1`, [sid(first.body.accessToken)]))[0].revoked_reason, 'refresh_reuse');
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'session.reuse_detected'`))[0].n, 1);
+    assert.equal((await call('POST', '/api/v1/auth/refresh', { cookie: 'arc_refresh=not-a-session' })).status, 401);
+    assert.equal((await call('POST', '/api/v1/auth/refresh')).body.code, 'no_session');
+  });
+  await check('log out ends the session at once; signing out one device leaves the others', async () => {
+    const a = await login();
+    const out = await call('POST', '/api/v1/auth/logout', { cookie: a.cookie! });
+    assert.equal(out.status, 204);
+    assert.ok(out.setCookie?.includes('Expires=Thu, 01 Jan 1970'), 'cookie cleared');
+    assert.equal((await call('GET', '/api/v1/auth/me', { token: a.body.accessToken })).body.code, 'session_revoked');
+    assert.equal((await call('POST', '/api/v1/auth/refresh', { cookie: a.cookie! })).status, 401);
+    const phone = await login();
+    const laptop = await login();
+    assert.equal((await call('DELETE', `/api/v1/auth/sessions/${sid(phone.body.accessToken)}`, { token: laptop.body.accessToken })).status, 204);
+    assert.equal((await call('GET', '/api/v1/auth/me', { token: phone.body.accessToken })).status, 401, 'the phone is signed out');
+    assert.equal((await call('GET', '/api/v1/auth/me', { token: laptop.body.accessToken })).status, 200, 'the laptop is not');
+    const someoneElses = (await sql(`SELECT id FROM sessions WHERE user_id <> (SELECT id FROM users WHERE email = 'sess@x.test') LIMIT 1`))[0]?.id;
+    if (someoneElses) assert.equal((await call('DELETE', `/api/v1/auth/sessions/${someoneElses}`, { token: laptop.body.accessToken })).status, 404, 'only your own');
+  });
+  await check('a password change keeps this browser and signs out the others', async () => {
+    const keep = await login();
+    const other = await login();
+    const r = await call('POST', '/api/v1/auth/change-password', { token: keep.body.accessToken, body: { currentPassword: 'session-password-123', newPassword: 'session-password-456' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(sid(r.body.accessToken), sid(keep.body.accessToken), 'same session continues');
+    assert.equal((await call('GET', '/api/v1/auth/me', { token: r.body.accessToken })).status, 200);
+    assert.equal((await call('POST', '/api/v1/auth/refresh', { cookie: keep.cookie! })).status, 200, 'its cookie still works');
+    assert.equal((await call('POST', '/api/v1/auth/refresh', { cookie: other.cookie! })).status, 401, 'the other device is out');
+  });
 }
 
 async function rolesAndOwnership(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {

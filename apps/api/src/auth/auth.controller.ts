@@ -1,6 +1,6 @@
 import { ApiTags } from '@nestjs/swagger';
 import { Doc } from '../common/docs';
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, HttpCode, HttpException, Patch, Post, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Patch, Post, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
@@ -9,11 +9,12 @@ import { z } from 'zod';
 import { loadConfig } from '../config';
 import { AuditService } from '../common/audit.service';
 import { BrokerAdmin } from '../common/broker-admin.service';
+import { readRefreshCookie, SessionsService } from '../common/sessions.service';
 import { hashSecret, verifySecret } from '../common/crypto';
 import { renderAccountEmail } from '../common/email';
 import { grantInviteChannels, requireSeat } from '../common/seats';
 import { hashInviteCode, TERMS_VERSION } from '../common/invites';
-import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson } from '../common/http';
+import { AllowIncomplete, AuthUser, CurrentUser, parse, Public, requirePerson, Uuid } from '../common/http';
 import { SystemDb } from '../common/tenant-scope.interceptor';
 import { Db } from '../db/db.service';
 
@@ -112,13 +113,14 @@ export class AuthController {
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
     private readonly broker: BrokerAdmin,
+    private readonly sessions: SessionsService,
   ) {}
 
   @Doc('Register', { body: registerBody })
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
-  async register(@Body() body: unknown) {
+  async register(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(registerBody, body);
     const config = loadConfig();
     // Under-18s join only through an institution's invite code (the institution arranges a parent's consent).
@@ -161,7 +163,7 @@ export class AuthController {
         );
         return u;
       });
-      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type ?? null }, ...(await this.issueToken(user.id)) };
+      return { user: { ...this.publicUser(user), emailVerified: !!user.email_verified_at, accountType: user.account_type ?? null }, ...(await this.sessions.signIn(user.id, req, res)) };
     } catch (err: any) {
       if (err.code === '23505') throw new ConflictException({ code: 'email_taken' });
       throw err;
@@ -173,7 +175,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(200)
-  async login(@Body() body: unknown) {
+  async login(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(loginBody, body);
     const user = await this.db.one(
       `SELECT id, email, display_name, password_hash, status, created_at FROM users WHERE email = $1`,
@@ -181,7 +183,7 @@ export class AuthController {
     );
     const ok = await verifySecret(input.password, user?.password_hash ?? DUMMY_HASH);
     if (!user || !ok || user.status !== 'active') throw new UnauthorizedException({ code: 'invalid_credentials' });
-    return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+    return { user: this.publicUser(user), ...(await this.sessions.signIn(user.id, req, res)) };
   }
 
   @Doc('Google sign-in configuration')
@@ -196,7 +198,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('google')
   @HttpCode(200)
-  async loginWithGoogle(@Body() body: unknown) {
+  async loginWithGoogle(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const config = loadConfig();
     if (!config.GOOGLE_CLIENT_ID) throw new ServiceUnavailableException({ code: 'google_signin_unconfigured' });
     const input = parse(googleLoginBody, body);
@@ -270,7 +272,7 @@ export class AuthController {
     });
 
     await this.audit.record({ actorType: 'user', actorId: user.id, action: 'user.google_login', resourceType: 'user', resourceId: user.id });
-    return { user: this.publicUser(user), ...(await this.issueToken(user.id)) };
+    return { user: this.publicUser(user), ...(await this.sessions.signIn(user.id, req, res)) };
   }
 
   @Doc('Me')
@@ -559,7 +561,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('reset-password')
   @HttpCode(200)
-  async resetPassword(@Body() body: unknown) {
+  async resetPassword(@Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     const input = parse(resetPasswordBody, body);
     const passwordHash = await hashSecret(input.password);
     const userId = await this.db.tx(async (c) => {
@@ -584,7 +586,9 @@ export class AuthController {
       await this.audit.record({ actorType: 'user', actorId: u.id, action: 'user.password_reset', resourceType: 'user', resourceId: u.id }, c);
       return u.id;
     });
-    return { reset: true, ...(await this.issueToken(userId)) };
+    // A new password ends every session (the old one may be known to someone else); this browser gets a new one.
+    await this.sessions.revokeAll(userId, 'password_reset');
+    return { reset: true, ...(await this.sessions.signIn(userId, req, res)) };
   }
 
   @Doc('Change your display name', { body: updateMeBody })
@@ -603,7 +607,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('change-password')
   @HttpCode(200)
-  async changePassword(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+  async changePassword(@CurrentUser() current: AuthUser, @Body() body: unknown, @Req() req: any, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
     const input = parse(changePasswordBody, body);
     const u = await this.db.one<{ password_hash: string | null }>('SELECT password_hash FROM users WHERE id = $1', [current.id]);
@@ -612,7 +616,9 @@ export class AuthController {
     if (!(await verifySecret(input.currentPassword, u.password_hash))) throw new ForbiddenException({ code: 'wrong_password', message: 'The current password is not right.' });
     await this.db.query(`UPDATE users SET password_hash = $2, sessions_revoked_at = date_trunc('second', now()) WHERE id = $1`, [current.id, await hashSecret(input.newPassword)]);
     await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.change_password', resourceType: 'user', resourceId: current.id });
-    return { changed: true, ...(await this.issueToken(current.id)) };
+    await this.sessions.revokeAll(current.id, 'password_change', current.sessionId);
+    // This browser stays signed in: its session goes on, with a token newer than the cut-off above.
+    return { changed: true, ...(current.sessionId ? await this.sessions.accessToken(current.id, current.sessionId) : await this.sessions.signIn(current.id, req, res)) };
   }
 
   @Doc('Sign out on every device, including this one')
@@ -620,8 +626,10 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('sign-out-everywhere')
   @HttpCode(200)
-  async signOutEverywhere(@CurrentUser() current: AuthUser) {
+  async signOutEverywhere(@CurrentUser() current: AuthUser, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
+    await this.sessions.revokeAll(current.id, 'sign_out_everywhere');
+    this.sessions.clearCookie(res);
     // Round up to the next second, so a token issued earlier in this same second is refused too.
     await this.db.query(`UPDATE users SET sessions_revoked_at = date_trunc('second', now()) + interval '1 second' WHERE id = $1`, [current.id]);
     await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.sign_out_everywhere', resourceType: 'user', resourceId: current.id });
@@ -641,7 +649,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('delete-account')
   @HttpCode(200)
-  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown) {
+  async deleteAccount(@CurrentUser() current: AuthUser, @Body() body: unknown, @Res({ passthrough: true }) res: any) {
     requirePerson(current);
     const input = parse(deleteAccountBody, body);
     const u = await this.db.one<{ email: string; password_hash: string | null }>('SELECT email, password_hash FROM users WHERE id = $1', [current.id]);
@@ -699,6 +707,7 @@ export class AuthController {
     });
     // The devices' credentials are gone: end any live broker sessions now rather than at the next ACL check.
     await Promise.all(deviceIds.map((id) => this.broker.disconnect(id)));
+    this.sessions.clearCookie(res);
     return { deleted: true, deletedWorkspaces: plan.deleteWorkspaces.length, deletedDevices: deviceIds.length, leftOrganizations: plan.leave.length };
   }
 
@@ -754,6 +763,51 @@ export class AuthController {
     return row;
   }
 
+  @Doc('Renew the access token with the session cookie (rotates the refresh token)')
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('refresh')
+  @HttpCode(200)
+  async refresh(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    return this.sessions.refresh(req, res);
+  }
+
+  @Doc('Log out: end this session (the cookie’s, and the token’s if given) and clear the cookie')
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('logout')
+  @HttpCode(204)
+  async logout(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    const c = readRefreshCookie(req);
+    if (c) {
+      // Only with the cookie's own secret: knowing a session id is not enough to end someone's session.
+      const s = await this.db.one<{ id: string; user_id: string }>(
+        `SELECT id, user_id FROM sessions WHERE id = $1 AND (refresh_hash = $2 OR prev_refresh_hash = $2)`,
+        [c.sid, sha256(c.secret)],
+      );
+      if (s) await this.sessions.revoke(s.id, s.user_id, 'logout');
+    }
+    this.sessions.clearCookie(res);
+  }
+
+  @Doc('Your signed-in devices (sessions)')
+  @SystemDb()
+  @Get('sessions')
+  async listSessions(@CurrentUser() current: AuthUser) {
+    requirePerson(current);
+    return { items: await this.sessions.list(current.id, current.sessionId) };
+  }
+
+  @Doc('Sign out one device (end one of your sessions)')
+  @SystemDb()
+  @Delete('sessions/:id')
+  @HttpCode(204)
+  async endSession(@CurrentUser() current: AuthUser, @Param('id', Uuid()) id: string) {
+    requirePerson(current);
+    if (!(await this.sessions.revoke(id, current.id, 'signed_out_from_account'))) throw new NotFoundException({ code: 'not_found' });
+    await this.audit.record({ actorType: 'user', actorId: current.id, action: 'user.session_end', resourceType: 'user', resourceId: current.id, metadata: { sessionId: id } });
+  }
+
   /** Claims one use of an invite code inside the caller's transaction; one answer for every kind of bad code. */
   private async claimInvite(c: any, code: string): Promise<Invite> {
     const invite = (
@@ -801,11 +855,6 @@ export class AuthController {
     );
   }
 
-  private async issueToken(userId: string) {
-    const ttl = loadConfig().JWT_TTL_SECONDS;
-    const accessToken = await this.jwt.signAsync({ sub: userId }, { expiresIn: ttl });
-    return { accessToken, tokenType: 'Bearer', expiresIn: ttl };
-  }
 
   private publicUser(u: any) {
     return { id: u.id, email: u.email, displayName: u.display_name, createdAt: u.created_at };

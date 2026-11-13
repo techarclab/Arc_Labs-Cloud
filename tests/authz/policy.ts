@@ -48,6 +48,8 @@ export const POLICY: Record<string, Rule> = {
   'GET /api/v1/invitations/preview': r('public', 'none'), // needs a real emailed token
   'POST /api/v1/auth/forgot-password': r('public', 'none'),
   'POST /api/v1/auth/reset-password': r('public', 'none'),
+  'POST /api/v1/auth/refresh': r('public', 'none'), // needs the httpOnly session cookie (e2e covers it)
+  'POST /api/v1/auth/logout': r('public', 'none'), // ends the cookie's session; harmless without one
   'POST /api/v1/oauth/token': r('public', 'none'),
 
   // ---------- the caller's own account ----------
@@ -65,6 +67,8 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/auth/redeem-invite': r('user', 'write', { body: () => ({ inviteCode: 'ARC-AAAA-BBBB-CCCC' }) }),
   'POST /api/v1/auth/change-password': r('user', 'write', { body: () => ({ currentPassword: 'not-the-password-1', newPassword: 'matrix-new-password-1' }) }),
   'POST /api/v1/auth/sign-out-everywhere': r('user', 'none'),
+  'GET /api/v1/auth/sessions': r('user', 'read'),
+  'DELETE /api/v1/auth/sessions/{id}': r('user', 'none', { params: () => ({ id: '00000000-0000-4000-8000-000000000000' }) }), // would end the caller's own session
   'GET /api/v1/organizations': r('user', 'read'),
   'POST /api/v1/organizations': r('user', 'write', { body: () => ({ name: 'Matrix extra', slug: `matrix-${Date.now()}` }) }),
 
