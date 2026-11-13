@@ -150,6 +150,7 @@ export function pythonScript(opts: {
   L.push('    global counter');
   L.push('    metrics = {k: v for k, v in read_sensors().items() if isinstance(v, (int, float)) and v == v}   # drop None and NaN');
   L.push('    if not metrics:');
+  L.push('        print("Nothing sent: read_sensors() returned no numbers. Fill in the TODO lines (the device shows offline until it reports).")');
   L.push('        return');
   L.push('    counter += 1');
   L.push('    message = {');
