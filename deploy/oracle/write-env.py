@@ -17,7 +17,9 @@ import string
 
 CONF = os.environ.get("ARC_CONF_DIR", "/etc/arc-cloud")
 DB_SECRET_DIR = os.environ.get("ARC_DB_SECRET_DIR", "/opt/arc-cloud-data/db-secret")
-EXTRA_KEYS = {"GOOGLE_CLIENT_ID", "PLATFORM_ADMIN_EMAILS", "ALLOW_SIGNUP", "ORGS_PER_USER", "SMTP_URL", "MAIL_FROM"}
+# PLATFORM_ADMIN_EMAILS is no longer passed on (platform admins come only from users.is_platform_admin, set with
+# apps/api/dist/tools/platform-admin.js); an old extra.env that still has it is filtered out like any unknown key.
+EXTRA_KEYS = {"GOOGLE_CLIENT_ID", "ALLOW_SIGNUP", "ORGS_PER_USER", "SMTP_URL", "MAIL_FROM"}
 POSTGRES_UID = 999  # `postgres` user in the postgres:16 (Debian) image
 NODE_GID = 1000     # `node` user in the API/worker image (node:22-alpine)
 SECRET_KEYS = {     # name -> length

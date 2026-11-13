@@ -32,7 +32,7 @@ grep -q ' api\.arc\.test' /etc/hosts || echo "127.0.0.1 $API_HOST $MQTT_HOST $CO
 install -d -m 0700 "$CONF"
 printf 'ACME_EMAIL=%s\nAPI_HOST=%s\nMQTT_HOST=%s\nCONSOLE_HOST=%s\n' "$ACME_EMAIL" "$API_HOST" "$MQTT_HOST" "$CONSOLE_HOST" > "$CONF/config"
 # Operator settings as on the VM (extra.env), minus email: the worker has no SMTP here, tests confirm accounts in SQL.
-printf 'ALLOW_SIGNUP=true\nPLATFORM_ADMIN_EMAILS=platform-admin@arc.test\nORGS_PER_USER=1\n' > "$CONF/extra.env"
+printf 'ALLOW_SIGNUP=true\nORGS_PER_USER=1\n' > "$CONF/extra.env"
 
 # --- arc-deploy, step 2 onwards -------------------------------------------------------------------------------
 install -m 0755 "$ROOT/deploy/aws/arc-cert-sync.sh" /usr/local/bin/arc-cert-sync

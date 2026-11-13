@@ -47,7 +47,11 @@ export function PlatformPage() {
     return (
       <div className="empty">
         <h3>ARC LABS staff only</h3>
-        <p>Platform administrators are set with PLATFORM_ADMIN_EMAILS on the API server.</p>
+        <p>
+          An operator grants platform administrator access on the server with the <code>platform-admin</code> tool
+          (<code>node apps/api/dist/tools/platform-admin.js grant you@example.com</code>). It can&rsquo;t be requested
+          from the console.
+        </p>
       </div>
     );
   }

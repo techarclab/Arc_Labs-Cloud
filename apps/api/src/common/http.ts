@@ -1,4 +1,3 @@
-import { isPlatformAdminEmail } from '../config';
 import { createHash } from 'node:crypto';
 import {
   BadRequestException,
@@ -127,7 +126,9 @@ export class JwtAuthGuard implements CanActivate {
           : new ForbiddenException({ code: 'profile_incomplete', message: 'Finish setting up your account first.' });
       }
     }
-    req.user = { id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin || isPlatformAdminEmail(user.email), kind: 'user' } satisfies AuthUser;
+    // Platform admin comes ONLY from the database flag (set by an operator with tools/platform-admin). Never derive
+    // it from the email address: registration does not prove ownership of an email, so anyone could claim one.
+    req.user = { id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin === true, kind: 'user' } satisfies AuthUser;
     return true;
   }
 

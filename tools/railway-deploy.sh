@@ -15,8 +15,6 @@ PROJECT_ID="${RAILWAY_PROJECT_ID:-41619fd2-2193-4924-8628-0ea60750a7d7}"
 ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
 REPO="${GITHUB_REPO:-techarclab/Arc_Labs-Cloud}"
 CONSOLE_URL="${CONSOLE_URL:-https://arc-labs-cloud.vercel.app}"
-# ARC LABS staff who manage every organization's plan (comma-separated).
-PLATFORM_ADMIN_EMAILS="${PLATFORM_ADMIN_EMAILS:-techarclab@gmail.com}"
 # Optional: email server for alert emails, e.g. smtps://user:app-password@smtp.gmail.com:465
 SMTP_URL="${SMTP_URL:-}"
 MAIL_FROM="${MAIL_FROM:-ARC Cloud <alerts@arclabs.in>}"
@@ -114,7 +112,6 @@ create_or_update api \
   'HTTP_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}' \
   "CORS_ORIGINS=$CONSOLE_URL" \
   "CONSOLE_URL=$CONSOLE_URL" \
-  "PLATFORM_ADMIN_EMAILS=$PLATFORM_ADMIN_EMAILS" \
   ALLOW_SIGNUP=true
 R environment edit --service-config api deploy.healthcheckPath /health/ready >/dev/null 2>&1 \
   && ok "health check: /health/ready" || warn "set Healthcheck Path /health/ready in api -> Settings -> Deploy"
