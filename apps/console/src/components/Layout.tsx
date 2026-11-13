@@ -177,7 +177,7 @@ export function Layout() {
               <span title={org ? `Your role in ${org.name}` : undefined}>
                 {user?.isPlatformAdmin ? 'ARC LABS admin · ' : ''}
                 {/* Your own free workspace is not an organization you administer for others. */}
-                {org?.kind === 'personal' && org.role === 'org_admin' ? 'Personal workspace' : org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
+                {org?.role === 'individual' ? 'Personal workspace' : org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
               </span>
             </span>
           </div>

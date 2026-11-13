@@ -141,7 +141,7 @@ export function DeleteAccountDialog({ open, email, hasPassword, onClose, onDelet
             )}
             {plan.blockers.length > 0 && (
               <div className="note warn">
-                You are the only admin of <b>{plan.blockers.map((o) => o.name).join(', ')}</b>. Make someone else an admin there first (Team page), or ask ARC LABS to close it. Then come back here.
+                You own <b>{plan.blockers.map((o) => o.name).join(', ')}</b>. Transfer ownership to an admin there first (Team page), or ask ARC LABS to close it. Then come back here.
               </div>
             )}
             {plan.platformAdmin && <div className="note warn">This is an ARC LABS staff account. Platform admin must be removed with the operator tool before it can be deleted.</div>}

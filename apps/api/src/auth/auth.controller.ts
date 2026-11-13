@@ -60,7 +60,7 @@ type DeletionPlan = {
   deleteWorkspaces: { id: string; name: string; devices: number }[];
   /** Organizations the person just leaves (someone else stays admin, or they are not an admin). */
   leave: { id: string; name: string }[];
-  /** Organizations where the person is the only admin but not the only member: they must hand over first. */
+  /** Organizations the person owns: they must transfer ownership first (or ARC LABS closes the organization). */
   blockers: { id: string; name: string }[];
   platformAdmin: boolean;
 };
@@ -650,7 +650,7 @@ export class AuthController {
         throw new ConflictException({
           code: 'sole_admin',
           organizations: plan.blockers,
-          message: `You are the only admin of ${plan.blockers.map((o) => o.name).join(', ')}. Make someone else an admin there first (Team page), or ask ARC LABS to close it.`,
+          message: `You own ${plan.blockers.map((o) => o.name).join(', ')}. Transfer ownership to an admin there first (Team page), or ask ARC LABS to close it.`,
         });
       }
       const deviceIds: string[] = [];
@@ -693,18 +693,19 @@ export class AuthController {
       await c.query(
         `SELECT o.id, o.name, o.kind, m.role,
                 (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1) AS others,
-                (SELECT count(*)::int FROM organization_members x WHERE x.organization_id = o.id AND x.user_id <> $1 AND x.role = 'org_admin') AS other_admins,
                 (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id) AS devices
          FROM organization_members m JOIN organizations o ON o.id = m.organization_id
          WHERE m.user_id = $1 ORDER BY o.name`,
         [userId],
       )
-    ).rows as { id: string; name: string; kind: string; role: string; others: number; other_admins: number; devices: number }[];
+    ).rows as { id: string; name: string; kind: string; role: string; others: number; devices: number }[];
     const plan: DeletionPlan = { deleteWorkspaces: [], leave: [], blockers: [], platformAdmin };
     for (const o of rows) {
-      if (o.role !== 'org_admin' || o.other_admins > 0) plan.leave.push({ id: o.id, name: o.name });
+      // Members (admins included: the owner stays) just leave.
+      if (o.role !== 'owner' && o.role !== 'individual') plan.leave.push({ id: o.id, name: o.name });
       // Only a personal workspace with nobody else in it is deleted; an organization ARC LABS set up never is.
-      else if (o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      else if (o.role === 'individual' && o.others === 0 && o.kind === 'personal') plan.deleteWorkspaces.push({ id: o.id, name: o.name, devices: o.devices });
+      // The owner of an organization: transfer ownership first (or ARC LABS closes it).
       else plan.blockers.push({ id: o.id, name: o.name });
     }
     return plan;

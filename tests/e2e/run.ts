@@ -170,6 +170,10 @@ async function main() {
 
     const orgA = (await http('POST', '/api/v1/organizations', tA, { name: 'ARC Labs', slug: 'arc-labs' })).body;
     const orgB = (await http('POST', '/api/v1/organizations', tB, { name: 'Other Co', slug: 'other-co' })).body;
+    // Both start as personal workspaces (their creators are not ARC LABS staff). ARC Labs plays a team organization
+    // that ARC LABS has set up for Alice, with Alice as owner (from phase 3 this happens with a setup code).
+    await sql(`UPDATE organizations SET kind = 'organization' WHERE id = $1`, [orgA.id]);
+    await sql(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND role = 'individual'`, [orgA.id]);
     await check('new organizations start on the free plan (5 devices, 3 channels, 30 days, 12 widgets)', async () => {
       const [o] = await sql(`SELECT o.plan, o.max_devices, o.max_projects, o.retention_days, o.max_widgets, u.email FROM organizations o JOIN users u ON u.id = o.created_by WHERE o.id = $1`, [orgA.id]);
       assert.deepEqual(o, { plan: 'free', max_devices: 5, max_projects: 3, retention_days: 30, max_widgets: 12, email: 'alice@arclabs.test' });
@@ -736,9 +740,11 @@ async function main() {
       assert.equal((await http('POST', '/api/v1/devices', tB, { projectId: proj.id, displayName: 'nope' })).status, 403);
       assert.equal((await http('POST', `/api/v1/devices/${dev.id}/revoke`, tB, {})).status, 403);
     });
-    await check('cannot remove the last org admin', async () => {
+    await check('the owner cannot be removed or leave (transfer ownership first)', async () => {
       const me = (await http('GET', '/api/v1/auth/me', tA)).body.user;
-      assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${me.id}`, tA)).status, 409);
+      const r = await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${me.id}`, tA);
+      assert.equal(r.status, 409);
+      assert.equal(r.body.code, 'owner_role');
     });
 
     console.log('\nCredential lifecycle');
@@ -770,7 +776,7 @@ async function main() {
     await check('audit log records provisioning, rotation and revocation', async () => {
       const r = await http('GET', `/api/v1/organizations/${orgA.id}/audit-logs`, tA);
       const actions = r.body.items.map((i: any) => i.action);
-      for (const a of ['device.create', 'device.credentials.rotate', 'device.revoke', 'member.upsert']) assert.ok(actions.includes(a), a);
+      for (const a of ['device.create', 'device.credentials.rotate', 'device.revoke', 'member.add']) assert.ok(actions.includes(a), a);
     });
     console.log('\nChannels: fields, HTTP API, controls, feeds, dashboards');
     const httpUrl = (q: string) => `${API}/api/v1/update?${q}`;
@@ -897,6 +903,7 @@ async function main() {
     await phases4to7({ tA, tB, orgA, orgB, proj, dev2, key2, sinks });
     await accountDeletion({ tA, orgA, kicked });
     await orgSuspension({ tA, tB, orgA, orgB });
+    await rolesAndOwnership({ tA, tB, orgA, orgB });
   } finally {
     for (const p of procs) p.kill('SIGTERM');
     await new Promise((r) => broker.close(() => r(null)));
@@ -1003,6 +1010,60 @@ async function tokenFor(email: string) {
   const now = Math.floor(Date.now() / 1000);
   const head = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: id, iat: now, exp: now + 600, iss: 'arc-cloud', aud: 'arc-cloud-api' })}`;
   return { id, token: `${head}.${createHmac('sha256', SECRETS.JWT_SECRET).update(head).digest('base64url')}` };
+}
+
+async function rolesAndOwnership(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {
+  const { tA, tB, orgA, orgB } = ctx;
+  console.log('\nRoles & ownership');
+  const ids = Object.fromEntries((await sql(`SELECT email, id FROM users WHERE email IN ('alice@arclabs.test', 'bob@other.test', 'minor1@school.test')`)).map((r: any) => [r.email, r.id]));
+  const alice = ids['alice@arclabs.test'];
+  const bob = ids['bob@other.test'];
+  const roleOf = async (org: string, user: string) => (await sql(`SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2`, [org, user]))[0]?.role;
+  await check('only the owner promotes to admin; an admin cannot touch the owner, transfer, or make admins', async () => {
+    assert.equal(await roleOf(orgA.id, alice), 'owner');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${bob}`, tA, { role: 'admin' })).status, 200);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${alice}`, tB, { role: 'viewer' })).body.code, 'owner_role');
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${alice}`, tB)).body.code, 'owner_role');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tB, { userId: bob })).body.code, 'owner_only');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/members`, tB, { email: 'minor1@school.test', role: 'admin' })).body.code, 'role_not_assignable');
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${alice}`, tA, { role: 'owner' })).status, 400, 'owner is never assigned');
+    const added = await http('POST', `/api/v1/organizations/${orgA.id}/members`, tB, { email: 'minor1@school.test', role: 'viewer' });
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/members`, tB, { email: 'minor1@school.test', role: 'engineer' })).body.code, 'already_member', 'adding never silently changes a role');
+  });
+  await check('a member can leave; the owner cannot', async () => {
+    const tM = (await tokenFor('minor1@school.test')).token;
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${ids['minor1@school.test']}`, tM)).status, 204);
+    assert.equal(await roleOf(orgA.id, ids['minor1@school.test']), undefined);
+    assert.equal((await http('DELETE', `/api/v1/organizations/${orgA.id}/members/${alice}`, tA)).body.code, 'owner_role');
+  });
+  await check('ownership transfer: to an admin only, audited, exactly one owner throughout', async () => {
+    const r = await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tA, { userId: bob });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(await roleOf(orgA.id, bob), 'owner');
+    assert.equal(await roleOf(orgA.id, alice), 'admin');
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM organization_members WHERE organization_id = $1 AND role = 'owner'`, [orgA.id]))[0].n, 1);
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tA, { userId: alice })).body.code, 'owner_only', 'the old owner has no say any more');
+    const audit = await sql(`SELECT metadata FROM audit_logs WHERE action = 'organization.transfer_ownership' AND organization_id = $1`, [orgA.id]);
+    assert.deepEqual(audit[0].metadata, { from: alice, to: bob });
+    // And back, then Bob returns to viewer (as the rest of this suite expects).
+    assert.equal((await http('POST', `/api/v1/organizations/${orgA.id}/transfer-ownership`, tB, { userId: alice })).status, 200);
+    assert.equal((await http('PATCH', `/api/v1/organizations/${orgA.id}/members/${bob}`, tA, { role: 'viewer' })).status, 200);
+    await assert.rejects(sql(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND user_id = $2`, [orgA.id, bob]), /organization_members_one_owner/, 'the database refuses a second owner');
+  });
+  await check('a personal workspace has no team; a paid plan makes it an organization owned by its person', async () => {
+    assert.equal(await roleOf(orgB.id, bob), 'individual');
+    assert.equal((await http('POST', `/api/v1/organizations/${orgB.id}/members`, tB, { email: 'alice@arclabs.test', role: 'viewer' })).body.code, 'personal_workspace');
+    assert.equal((await http('GET', '/api/v1/organizations', tB)).body.items.find((o: any) => o.id === orgB.id).role, 'individual');
+    await sql(`UPDATE users SET is_platform_admin = true WHERE id = $1`, [alice]);
+    try {
+      assert.equal((await http('PATCH', `/api/v1/organizations/${orgB.id}/plan`, tA, { plan: 'pro' })).status, 200);
+    } finally {
+      await sql(`UPDATE users SET is_platform_admin = false WHERE id = $1`, [alice]);
+    }
+    assert.equal((await sql(`SELECT kind FROM organizations WHERE id = $1`, [orgB.id]))[0].kind, 'organization');
+    assert.equal(await roleOf(orgB.id, bob), 'owner');
+  });
 }
 
 async function orgSuspension(ctx: { tA: string; tB: string; orgA: any; orgB: any }) {

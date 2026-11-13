@@ -173,13 +173,21 @@ export class OrgOpsController {
       maxWidgets: input.maxWidgets ?? p.maxWidgets,
       retentionDays: input.retentionDays ?? p.retentionDays,
     };
-    await this.db.query(
-      // A paid plan makes a personal workspace a real organization (ARC LABS has set it up).
-      `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9,
-         kind = CASE WHEN $2 <> 'free' THEN 'organization' ELSE kind END
-       WHERE id = $1`,
-      [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets],
-    );
+    await this.db.tx(async (c) => {
+      // A paid plan makes a personal workspace a real organization (ARC LABS has set it up): its one person, the
+      // "individual", becomes the owner, so it can have a team from now on.
+      const before = (await c.query<{ kind: string }>('SELECT kind FROM organizations WHERE id = $1 FOR UPDATE', [id])).rows[0];
+      if (!before) throw new NotFoundException({ code: 'not_found' });
+      await c.query(
+        `UPDATE organizations SET plan = $2, max_devices = $3, max_projects = $4, max_rules = $5, max_api_keys = $6, max_webhooks = $7, retention_days = $8, max_widgets = $9,
+           kind = CASE WHEN $2 <> 'free' THEN 'organization' ELSE kind END
+         WHERE id = $1`,
+        [id, input.plan, v.maxDevices, v.maxProjects, v.maxRules, v.maxApiKeys, v.maxWebhooks, v.retentionDays, v.maxWidgets],
+      );
+      if (before.kind === 'personal' && input.plan !== 'free') {
+        await c.query(`UPDATE organization_members SET role = 'owner' WHERE organization_id = $1 AND role = 'individual'`, [id]);
+      }
+    });
     await this.audit.record({ ...actor(user), organizationId: id, action: 'organization.plan', resourceType: 'organization', resourceId: id, metadata: { plan: input.plan, ...v } });
     return { plan: input.plan, ...v };
   }
@@ -193,7 +201,11 @@ const inviteBody = z
     maxUses: z.number().int().min(1).max(10000),
     expiresInDays: z.number().int().min(1).max(365),
     organizationId: z.uuid().optional(),
-    role: z.enum(['org_admin', 'engineer', 'viewer']).optional(),
+    // 'org_admin' still accepted from older clients; stored as admin. Never owner (ownership is transferred).
+    role: z
+      .enum(['admin', 'engineer', 'viewer', 'org_admin'])
+      .transform((r) => (r === 'org_admin' ? 'admin' : r))
+      .optional(),
   })
   .refine((v) => !v.organizationId === !v.role, { message: 'organizationId and role go together' });
 
@@ -283,7 +295,7 @@ export class PlatformController {
       if (!row) throw new NotFoundException({ code: 'not_found' });
       // Admins stay (an organization must never lose its last admin this way); they can be removed from Team.
       const removed = removeMembers
-        ? (await c.query<{ user_id: string }>(`DELETE FROM organization_members WHERE invite_id = $1 AND role <> 'org_admin' RETURNING user_id`, [id])).rows
+        ? (await c.query<{ user_id: string }>(`DELETE FROM organization_members WHERE invite_id = $1 AND role NOT IN ('owner', 'admin') RETURNING user_id`, [id])).rows
         : [];
       for (const r of removed) {
         await this.audit.record({ ...actor(user), organizationId: row.organization_id, action: 'member.remove', resourceType: 'user', resourceId: r.user_id, metadata: { inviteId: id } }, c);
@@ -306,7 +318,7 @@ export class PlatformController {
          (SELECT count(*)::int FROM devices d WHERE d.organization_id = o.id AND d.lifecycle_status NOT IN ('revoked','retired')) AS devices,
          (SELECT count(*)::int FROM projects p WHERE p.organization_id = o.id) AS projects,
          (SELECT max(d.last_seen_at) FROM devices d WHERE d.organization_id = o.id) AS last_data_at,
-         (SELECT u.email FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = o.id AND m.role = 'org_admin' ORDER BY m.joined_at LIMIT 1) AS owner_email
+         (SELECT u.email FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = o.id AND m.role IN ('owner', 'individual') LIMIT 1) AS owner_email
        FROM organizations o ORDER BY o.created_at DESC`,
     );
     return {

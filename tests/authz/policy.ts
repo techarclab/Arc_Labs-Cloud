@@ -71,6 +71,9 @@ export const POLICY: Record<string, Rule> = {
   'POST /api/v1/organizations/{id}/members': r('org_admin', 'write', { body: (f) => ({ email: f.emails.spare2, role: 'viewer' }) }),
   'PATCH /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'write', { body: () => ({ role: 'viewer' }) }),
   'DELETE /api/v1/organizations/{id}/members/{userId}': r('org_admin', 'destructive'),
+  // Owner only (the matrix's org admin created org A, so is its owner). Transferring to a viewer is refused with 409
+  // (make them an admin first): enough to show the caller was not refused for permissions.
+  'POST /api/v1/organizations/{id}/transfer-ownership': r('org_admin', 'write', { body: (f) => ({ userId: f.spareId }) }),
   'GET /api/v1/organizations/{id}/audit-logs': r('org_admin', 'read'),
   'GET /api/v1/organizations/{id}/rejected-messages': r('engineer', 'read'),
   'GET /api/v1/organizations/{id}/overview': r('viewer', 'read'),

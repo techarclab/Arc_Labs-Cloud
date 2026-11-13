@@ -1,27 +1,32 @@
 import { FormEvent, useCallback, useState } from 'react';
-import { useOutletContext, useParams } from 'react-router-dom';
-import { api, isAdmin, Org, Role, ROLE_LABEL } from '../api';
+import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { api, assignableRoles, canManageTeam, Org, Role, ROLE_LABEL } from '../api';
 import { ErrorBox, Modal, usePoll, useToast } from '../components/ui';
 import { dateTime } from '../format';
 import { useSession } from '../session';
 
 interface Member { userId: string; email: string; displayName: string; role: Role; joinedAt: string }
 
-const ROLE_HELP: Record<Role, string> = {
-  org_admin: 'Everything, including the team, revoking devices and the audit log.',
-  engineer: 'Add and manage projects’ devices and settings.',
+/** What the roles people can hold today mean (teacher, trainer, student and employee arrive with channel-level access). */
+const ROLE_HELP: Partial<Record<Role, string>> = {
+  owner: 'Everything, and the only one who can add or remove admins and transfer ownership. One per organization.',
+  admin: 'Everything else: settings, devices, keys, the audit log, and people below admin.',
+  engineer: 'Add and manage channels, devices and rules.',
   viewer: 'See devices and data, no changes.',
 };
 
 export function TeamPage() {
   const { orgId = '' } = useParams();
   const { org } = useOutletContext<{ org?: Org }>();
-  const { user } = useSession();
+  const { user, refreshOrgs } = useSession();
   const toast = useToast();
+  const nav = useNavigate();
   const [members, setMembers] = useState<Member[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [adding, setAdding] = useState(false);
-  const admin = isAdmin(org?.role);
+  const manage = canManageTeam(org);
+  const mine = assignableRoles(org?.role);
+  const personal = org?.kind === 'personal';
 
   const load = useCallback(async () => {
     try {
@@ -32,42 +37,63 @@ export function TeamPage() {
   }, [orgId]);
   usePoll(load, 60_000, [orgId]);
 
-  async function changeRole(m: Member, role: Role) {
+  async function act(fn: () => Promise<unknown>, done: string) {
     try {
-      await api('PATCH', `/organizations/${orgId}/members/${m.userId}`, { role });
-      toast(`${m.displayName} is now ${ROLE_LABEL[role].toLowerCase()}`);
+      await fn();
+      toast(done);
       setError(null);
       void load();
     } catch (e) {
       setError(e);
     }
   }
-  async function remove(m: Member) {
-    if (!confirm(`Remove ${m.displayName} from ${org?.name}? They’ll lose access straight away.`)) return;
+  const changeRole = (m: Member, role: Role) =>
+    act(() => api('PATCH', `/organizations/${orgId}/members/${m.userId}`, { role }), `${m.displayName} is now ${ROLE_LABEL[role].toLowerCase()}`);
+  const remove = (m: Member) =>
+    confirm(`Remove ${m.displayName} from ${org?.name}? They’ll lose access straight away.`) &&
+    act(() => api('DELETE', `/organizations/${orgId}/members/${m.userId}`), `${m.displayName} removed`);
+  const transfer = (m: Member) =>
+    confirm(`Make ${m.displayName} the owner of ${org?.name}? You become an admin, and only they can make you owner again.`) &&
+    act(async () => {
+      await api('POST', `/organizations/${orgId}/transfer-ownership`, { userId: m.userId });
+      await refreshOrgs();
+    }, `${m.displayName} is now the owner`);
+  async function leave() {
+    if (!user || !confirm(`Leave ${org?.name}? You lose access straight away; someone would have to invite you again.`)) return;
     try {
-      await api('DELETE', `/organizations/${orgId}/members/${m.userId}`);
-      toast(`${m.displayName} removed`);
-      setError(null);
-      void load();
+      await api('DELETE', `/organizations/${orgId}/members/${user.id}`);
+      await refreshOrgs();
+      toast(`You left ${org?.name}`);
+      nav('/');
     } catch (e) {
       setError(e);
     }
   }
+
+  // The owner and the people the caller may manage; never yourself (leave instead).
+  const canTouch = (m: Member) => manage && m.userId !== user?.id && m.role !== 'owner' && mine.includes(m.role);
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Team</h1>
-          <p className="sub">People who can sign in to {org?.name} and what they’re allowed to do.</p>
+          <p className="sub">
+            {personal ? 'This is your personal workspace: it is just you.' : `People who can sign in to ${org?.name} and what they’re allowed to do.`}
+          </p>
         </div>
-        {admin && (
+        {manage && (
           <button className="btn primary" onClick={() => setAdding(true)}>
             Add person
           </button>
         )}
       </div>
       <ErrorBox error={error} />
+      {personal && (
+        <div className="note" style={{ marginBottom: 14 }}>
+          A personal workspace has no team. To work with others, join their organization with an invite code, or ask ARC LABS to set one up for your college, school or company.
+        </div>
+      )}
       <section className="panel" style={{ marginTop: error ? 14 : 0 }}>
         <div className="table-wrap">
           <table className="grid">
@@ -77,7 +103,7 @@ export function TeamPage() {
                 <th>Email</th>
                 <th>Role</th>
                 <th className="hide-sm">Joined</th>
-                {admin && <th />}
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -89,9 +115,9 @@ export function TeamPage() {
                   </td>
                   <td>{m.email}</td>
                   <td>
-                    {admin ? (
-                      <select value={m.role} onChange={(e) => changeRole(m, e.target.value as Role)} aria-label={`Role for ${m.displayName}`} style={{ width: 'auto' }}>
-                        {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
+                    {canTouch(m) ? (
+                      <select value={m.role} onChange={(e) => void changeRole(m, e.target.value as Role)} aria-label={`Role for ${m.displayName}`} style={{ width: 'auto' }}>
+                        {mine.map((r) => (
                           <option key={r} value={r}>
                             {ROLE_LABEL[r]}
                           </option>
@@ -102,35 +128,48 @@ export function TeamPage() {
                     )}
                   </td>
                   <td className="hide-sm muted">{dateTime(m.joinedAt)}</td>
-                  {admin && (
-                    <td style={{ textAlign: 'right' }}>
-                      <button className="btn small danger" onClick={() => remove(m)}>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {org?.role === 'owner' && m.role === 'admin' && !personal && (
+                      <button className="btn small" onClick={() => void transfer(m)}>
+                        Make owner
+                      </button>
+                    )}{' '}
+                    {canTouch(m) && (
+                      <button className="btn small danger" onClick={() => void remove(m)}>
                         Remove
                       </button>
-                    </td>
-                  )}
+                    )}
+                    {m.userId === user?.id && !personal && m.role !== 'owner' && (
+                      <button className="btn small" onClick={() => void leave()}>
+                        Leave
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </section>
-      <section className="panel" style={{ marginTop: 20 }}>
-        <div className="panel-body">
-          <h3 style={{ marginBottom: 10 }}>What each role can do</h3>
-          <dl className="kv">
-            {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
-              <div key={r} style={{ display: 'contents' }}>
-                <dt>{ROLE_LABEL[r]}</dt>
-                <dd>{ROLE_HELP[r]}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
+      {!personal && (
+        <section className="panel" style={{ marginTop: 20 }}>
+          <div className="panel-body">
+            <h3 style={{ marginBottom: 10 }}>What each role can do</h3>
+            <dl className="kv">
+              {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
+                <div key={r} style={{ display: 'contents' }}>
+                  <dt>{ROLE_LABEL[r]}</dt>
+                  <dd>{ROLE_HELP[r]}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </section>
+      )}
       {adding && (
         <AddMember
           orgId={orgId}
+          roles={mine}
           onClose={() => setAdding(false)}
           onAdded={() => {
             setAdding(false);
@@ -143,9 +182,9 @@ export function TeamPage() {
   );
 }
 
-function AddMember({ orgId, onClose, onAdded }: { orgId: string; onClose: () => void; onAdded: () => void }) {
+function AddMember({ orgId, roles, onClose, onAdded }: { orgId: string; roles: Role[]; onClose: () => void; onAdded: () => void }) {
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Role>('engineer');
+  const [role, setRole] = useState<Role>(roles.includes('engineer') ? 'engineer' : roles[0]);
   const [error, setError] = useState<unknown>(null);
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -181,7 +220,7 @@ function AddMember({ orgId, onClose, onAdded }: { orgId: string; onClose: () => 
         <label className="field">
           Role
           <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
+            {roles.map((r) => (
               <option key={r} value={r}>
                 {ROLE_LABEL[r]}: {ROLE_HELP[r]}
               </option>
