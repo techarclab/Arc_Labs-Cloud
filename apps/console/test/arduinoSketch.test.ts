@@ -12,21 +12,26 @@ const gen = (over: Partial<Parameters<typeof arduinoSketch>[0]> = {}) =>
   arduinoSketch({ device, fields, provisioned: false, host: DEFAULT_HOST, port: 8883, topicBase: 'arc/v1/o/p/d', ...over });
 
 describe('Arduino sketch generator', () => {
-  it('quick start: credentials as #defines, begin() with them', () => {
-    const s = gen({ token: 'tok-123' });
+  it('quick start: the device key is the only credential, begin() takes it', () => {
+    const s = gen({ token: 'arc_dk_key-123' });
+    expect(s).toContain('#define DEVICE_KEY     "arc_dk_key-123"');
+    expect(s).toContain('arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_KEY);');
+    for (const old of ['DEVICE_ID', 'DEVICE_TOKEN', 'DEVICE_TOPIC', 'arc/v1/o/p/d']) expect(s).not.toContain(old);
+  });
+  it('a local test server spells the values out (the key is the token)', () => {
+    const s = gen({ token: 'arc_dk_key-123', host: 'mqtt.local', port: 18883 });
     expect(s).toContain(`#define DEVICE_ID      "${device.id}"`);
-    expect(s).toContain('#define DEVICE_TOKEN   "tok-123"');
-    expect(s).toContain('#define DEVICE_TOPIC   "arc/v1/o/p/d"');
-    expect(s).toContain('arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_ID, DEVICE_TOKEN, DEVICE_TOPIC);');
+    expect(s).toContain('#define DEVICE_TOKEN   "arc_dk_key-123"');
+    expect(s).toContain('arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_ID, DEVICE_TOKEN, DEVICE_TOPIC, "mqtt.local", 18883);');
   });
   it('no secrets mode: no token, no Wi-Fi password, no device id in the text', () => {
-    const s = gen({ token: 'tok-123', provisioned: true });
-    for (const secret of ['tok-123', 'DEVICE_TOKEN', 'WIFI_PASSWORD', device.id]) expect(s).not.toContain(secret);
+    const s = gen({ token: 'arc_dk_key-123', provisioned: true });
+    for (const secret of ['key-123', 'DEVICE_KEY', 'DEVICE_TOKEN', 'WIFI_PASSWORD', device.id]) expect(s).not.toContain(secret);
     expect(s).toContain('arc.beginProvisioned();');
     expect(s).toContain('arc.intervalSeconds() * 1000UL');
   });
   it('without a token it asks for one instead of inventing it', () => {
-    expect(gen()).toContain('"paste-the-device-token-here"');
+    expect(gen()).toContain('"arc_dk_paste-your-device-key-here"');
   });
   it('sensor fields become add() in field order; rssi is measured; controls become onControl()', () => {
     const s = gen();
@@ -55,7 +60,7 @@ describe('Arduino sketch generator', () => {
   it('names from users cannot break out of comments or strings', () => {
     const evil = gen({ device: { ...device, displayName: 'x */ int pwned; /* "q"\nnext' }, channelName: 'c */ #include', token: 'a"b\\c' });
     expect(evil.indexOf('*/')).toBe(evil.indexOf(' */\n#include <ArcCloud.h>') + 1);
-    expect(evil).toContain('#define DEVICE_TOKEN   "a\\"b\\\\c"');
+    expect(evil).toContain('#define DEVICE_KEY     "a\\"b\\\\c"');
     expect(evil.split('\n').filter((l) => l.includes('next')).every((l) => l.includes('pwned'))).toBe(true);
   });
   it('field labels with */ cannot end the comment early either', () => {

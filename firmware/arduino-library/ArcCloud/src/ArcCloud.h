@@ -4,7 +4,7 @@
  *   #include <ArcCloud.h>
  *   ArcCloud arc;
  *   void setup() {
- *     arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_ID, DEVICE_TOKEN, DEVICE_TOPIC);
+ *     arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_KEY);   // the device key from ARC Cloud: arc_dk_...
  *     arc.onControl("led1", [](float v) { digitalWrite(2, v >= 1); });
  *     arc.every(15000, [] { arc.add("temperature", readTemp()); arc.send(); });
  *   }
@@ -13,9 +13,11 @@
  * Field names ("temperature", "led1") must match "Name in firmware" in the channel's settings; once a channel has
  * fields, ARC Cloud rejects readings with any other name (see Rejected data).
  *
- * Two ways to give the board its credentials:
- *   begin(ssid, pass, id, token, topic)  quick start: the values are in your sketch. Fine for your own board, but the
- *                                        compiled file then contains the token: never share it or host it for OTA.
+ * Ways to give the board its credentials:
+ *   begin(ssid, pass, key)               quick start: Wi-Fi and the device key in your sketch. The library asks ARC Cloud
+ *                                        (HTTPS) for the rest once at start-up and keeps a copy in flash. Fine for your own
+ *                                        board, but the compiled file contains the key: never share it or host it for OTA.
+ *   begin(ssid, pass, id, token, topic)  the same with the values spelled out (sketches from before the device key).
  *   beginProvisioned()                    nothing secret in the sketch: paste the PROVISION line from ARC Cloud
  *                                        ("ESP32 over USB") into the Serial Monitor once; it is kept in flash (NVS).
  *
@@ -38,7 +40,10 @@
 #ifndef ARC_PORT
 #define ARC_PORT 8883
 #endif
-#define ARC_CLOUD_LIBRARY_VERSION "1.0.1"
+#ifndef ARC_API_HOST
+#define ARC_API_HOST "api.arcloud.arclabs.in"
+#endif
+#define ARC_CLOUD_LIBRARY_VERSION "1.1.0"
 
 class ArcCloud {
  public:
@@ -52,7 +57,12 @@ class ArcCloud {
   static const uint8_t MAX_CONTROLS = 16;
   static const uint8_t MAX_TIMERS = 8;
 
-  /** Quick start: credentials in the sketch. `topic` is the device's topic base, arc/v1/<org>/<channel>/<device>. */
+  /**
+   * Quick start with the device key (arc_dk_..., shown when the device is added or its key replaced). Where to connect
+   * and the device's topic come from ARC Cloud (`apiHost`, HTTPS on 443) at start-up, with a copy kept in flash.
+   */
+  void begin(const char *wifiSsid, const char *wifiPassword, const char *deviceKey, const char *apiHost = ARC_API_HOST);
+  /** Credentials spelled out. `topic` is the device's topic base, arc/v1/<org>/<channel>/<device>. */
   void begin(const char *wifiSsid, const char *wifiPassword, const char *deviceId, const char *deviceToken, const char *topic,
              const char *host = ARC_HOST, uint16_t port = ARC_PORT);
   /** No secrets in the sketch: Wi-Fi and device settings come from flash, written once with a PROVISION line over USB. */
@@ -98,7 +108,8 @@ class ArcCloud {
 
   WiFiClientSecure net_;
   PubSubClient mqtt_{net_};
-  String wifiSsid_, wifiPassword_, deviceId_, token_, topicBase_, host_;
+  String wifiSsid_, wifiPassword_, deviceId_, token_, topicBase_, host_, deviceKey_, apiHost_;
+  bool configFetched_ = true;  // false while settings still have to come from ARC Cloud (device key)
   uint16_t port_ = ARC_PORT;
   uint32_t intervalS_ = 15;
   const char *firmwareVersion_ = "sketch";
@@ -117,6 +128,8 @@ class ArcCloud {
 
   void start();
   bool validate();
+  bool fetchConfig();
+  void loadCachedConfig();
   void loadSettings();
   void pollSerial();
   String applyProvision(const char *json);

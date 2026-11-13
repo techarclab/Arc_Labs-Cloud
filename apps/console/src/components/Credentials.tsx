@@ -80,24 +80,36 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
   const tabs = tabsFor(device.deviceType);
   const [tab, setTab] = useState<Tab>(tabs[0][0]);
   const [saved, setSaved] = useState(false);
+  const key = credentials.deviceKey ?? credentials.password;
   const fileName = `${device.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'device'}.json`;
 
   return (
     <Modal
       open
       wide
-      onClose={() => (saved || confirm('Close without saving the password? You won’t be able to see it again.')) && onClose()}
-      title={replaced ? `New password for ${device.displayName}` : `${device.displayName} is registered`}
+      onClose={() => (saved || confirm('Close without saving the device key? You won’t be able to see it again.')) && onClose()}
+      title={replaced ? `New device key for ${device.displayName}` : `${device.displayName} is registered`}
       footer={
-        <button className="btn primary" onClick={() => (saved || confirm('Close without saving the password? You won’t be able to see it again.')) && onClose()}>
+        <button className="btn primary" onClick={() => (saved || confirm('Close without saving the device key? You won’t be able to see it again.')) && onClose()}>
           Done
         </button>
       }
     >
       <div className="note">
-        Save this password now. ARC Cloud only stores a scrambled version of it, so it can’t be shown again. If you lose it, replace it from the device page.
-        {replaced && ' The old password has stopped working.'}
+        Save this device key now. ARC Cloud only stores a scrambled version of it, so it can’t be shown again. If you lose it, make a new one from the device page.
+        {replaced && ' The old key has stopped working.'}
       </div>
+
+      <dl className="secret">
+        <dt>Device key</dt>
+        <dd>{key}</dd>
+        <span onClick={() => setSaved(true)}>
+          <CopyButton text={key} label="Copy key" />
+        </span>
+      </dl>
+      <p className="small muted">
+        This one key is all your board needs: the ArcCloud library (<code>arc.begin(wifi, password, key)</code>), the Python script and the HTTP API all take it. The tabs below have ready-made code with it filled in.
+      </p>
 
       <div className="tabs" role="tablist">
         {tabs.map(([k, label]) => (
@@ -110,7 +122,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       {tab === 'python' && (
         <PythonCodePanel
           device={{ ...device, connection: device.connection ?? { mqttHost: credentials.mqttHost, mqttPort: credentials.mqttPort, topicBase: credentials.topics.telemetry.replace(/\/telemetry$/, '') } }}
-          token={credentials.password}
+          token={key}
           onCopied={() => setSaved(true)}
         />
       )}
@@ -118,7 +130,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       {tab === 'arduino' && (
         <ArduinoCodePanel
           device={{ ...device, connection: device.connection ?? { mqttHost: credentials.mqttHost, mqttPort: credentials.mqttPort, topicBase: credentials.topics.telemetry.replace(/\/telemetry$/, '') } }}
-          token={credentials.password}
+          token={key}
           onCopied={() => setSaved(true)}
         />
       )}
@@ -176,7 +188,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
       {tab === 'http' && credentials.http && (
         <>
           <p>
-            Like ThingSpeak: send readings with a web request. The device’s password is its API key; send it in the <code>Authorization</code> header, not in the URL (URLs end up in proxy and server logs). Use your computer’s Wi-Fi address instead of <code>localhost</code> when calling from an ESP32.
+            Like ThingSpeak: send readings with a web request. The device key is the API key; send it in the <code>Authorization</code> header, not in the URL (URLs end up in proxy and server logs). Use your computer’s Wi-Fi address instead of <code>localhost</code> when calling from an ESP32.
           </p>
           <dl className="secret">
             <dt>API key</dt>
@@ -206,7 +218,8 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
               ['Server', `${credentials.mqttHost}:${credentials.mqttPort} (TLS)`],
               ['Client ID', credentials.clientId],
               ['Username', credentials.username],
-              ['Password', credentials.password],
+              ['Device key', key],
+              ['Password (MQTT)', credentials.password],
               ['Data topic', credentials.topics.telemetry],
               ['State topic', credentials.topics.state],
               ...(credentials.topics.commands ? ([['Control topic', credentials.topics.commands]] as const) : []),
@@ -215,7 +228,7 @@ export function CredentialsDialog({ device, credentials, onClose, replaced }: { 
             <div key={k} style={{ display: 'contents' }}>
               <dt>{k}</dt>
               <dd>{v}</dd>
-              <span onClick={() => k === 'Password' && setSaved(true)}>
+              <span onClick={() => (k === 'Device key' || k === 'Password (MQTT)') && setSaved(true)}>
                 <CopyButton text={v} />
               </span>
             </div>

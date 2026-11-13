@@ -189,6 +189,8 @@ export interface Credentials {
   clientId: string;
   username: string;
   password: string;
+  /** arc_dk_<id>_<secret>: everything a device needs in one string (older APIs: absent). */
+  deviceKey?: string;
   topics: { telemetry: string; state: string; commands?: string; commandAcks?: string };
   http?: { apiKey: string; updateUrl: string; controlsUrl: string };
 }

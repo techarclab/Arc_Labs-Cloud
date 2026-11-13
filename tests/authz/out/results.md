@@ -1,20 +1,13 @@
-# Authorization matrix, 2026-11-11T09:47:18.988Z
+# Authorization matrix, 2026-11-13T11:37:12.712Z
 
-112 operations in the generated OpenAPI spec × 6 callers: 529 pass, 2 fail, 63 known defect, 0 inconclusive.
+131 operations in the generated OpenAPI spec × 6 callers: 619 pass, 0 fail, 73 known defect, 0 inconclusive.
 
 Every operation has a policy entry.
 
 
-## Failures
-
-| Operation | Caller | Expected | Got | Why |
-|---|---|---|---|---|
-| `DELETE /api/v1/rules/{id}` | viewer | deny | 204  | NOT REFUSED |
-| `DELETE /api/v1/rules/{id}` | engineer | allow | 404 not_found | allowed caller refused or failed |
-
 ## Known defects (current behaviour expected until fixed)
 
-- **DEF-001** (63 cells): Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"
+- **DEF-001** (73 cells): Platform admins get org_admin rights in EVERY organization and bypass row-level security (AccessService.roleIn, TenantScopeInterceptor); the console says they have "no access to their data"
 
 ## Grid
 
@@ -37,18 +30,22 @@ Every operation has a policy entry.
 | `POST /api/v1/auth/resend-verification` | user | ✓ 401 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 429 |
 | `POST /api/v1/auth/complete-profile` | user | ✓ 401 | ✓ 409 | ✓ 409 | ✓ 409 | ✓ 409 | ✓ 409 |
 | `POST /api/v1/auth/redeem-invite` | user | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 |
+| `POST /api/v1/auth/account-type` | user | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 |
 | `POST /api/v1/auth/forgot-password` | public | ✓ 400 | · | · | · | · | · |
 | `POST /api/v1/auth/reset-password` | public | ✓ 400 | · | · | · | · | · |
 | `POST /api/v1/auth/change-password` | user | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 429 |
 | `POST /api/v1/auth/sign-out-everywhere` | user | ✓ 401 | · | · | · | · | · |
+| `GET /api/v1/auth/delete-account` | user | ✓ 401 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 |
+| `POST /api/v1/auth/delete-account` | user | ✓ 401 | ✓ 400 | ✓ 400 | ✓ 400 | ✓ 400 | ✓ 429 |
 | `GET /api/v1/organizations` | user | ✓ 401 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 |
 | `POST /api/v1/organizations` | user | ✓ 401 | ✓ 403 | ✓ 201 | ✓ 201 | ✓ 403 | ✓ 201 |
 | `GET /api/v1/organizations/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `PATCH /api/v1/organizations/{id}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
 | `GET /api/v1/organizations/{id}/members` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
-| `POST /api/v1/organizations/{id}/members` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 201 | ! 201 |
+| `POST /api/v1/organizations/{id}/members` | platform | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 201 |
 | `PATCH /api/v1/organizations/{id}/members/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
 | `DELETE /api/v1/organizations/{id}/members/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 204 | · |
+| `POST /api/v1/organizations/{id}/transfer-ownership` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 409 | ! 403 |
 | `GET /api/v1/organizations/{id}/audit-logs` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
 | `GET /api/v1/organizations/{id}/rejected-messages` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/organizations/{id}/overview` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
@@ -57,8 +54,22 @@ Every operation has a policy entry.
 | `PATCH /api/v1/organizations/{id}/plan` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 200 |
 | `GET /api/v1/platform/invites` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 200 |
 | `POST /api/v1/platform/invites` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 201 |
+| `POST /api/v1/platform/org-setup-codes` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 201 |
 | `POST /api/v1/platform/invites/{id}/revoke` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 200 |
 | `GET /api/v1/platform/organizations` | platform | ✓ 401 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 403 | ✓ 200 |
+| `GET /api/v1/organizations/{id}/invitations` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
+| `POST /api/v1/organizations/{id}/invitations` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 201 | ! 201 |
+| `POST /api/v1/organizations/{id}/class-codes` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 201 | ! 201 |
+| `POST /api/v1/organizations/{id}/invitations/{inviteId}/revoke` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | · |
+| `GET /api/v1/organizations/{id}/seats` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
+| `PATCH /api/v1/organizations/{id}/seats` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
+| `GET /api/v1/invitations/preview` | public | ✓ 400 | · | · | · | · | · |
+| `POST /api/v1/invitations/accept` | user | ✓ 401 | · | · | · | · | · |
+| `POST /api/v1/onboarding/individual` | user | ✓ 401 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 200 |
+| `POST /api/v1/onboarding/organization` | user | ✓ 401 | · | · | · | · | · |
+| `GET /api/v1/projects/{id}/access` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
+| `PUT /api/v1/projects/{id}/access/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 409 | ! 409 |
+| `DELETE /api/v1/projects/{id}/access/{userId}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 409 | ! 409 |
 | `GET /api/v1/projects` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `POST /api/v1/projects` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 201 | ! 201 |
 | `GET /api/v1/projects/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
@@ -91,9 +102,10 @@ Every operation has a policy entry.
 | `PUT /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
 | `PATCH /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
 | `DELETE /api/v1/update` | device | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 | ✓ 404 |
+| `GET /api/v1/device/config` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
 | `GET /api/v1/controls` | device | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 | ✓ 401 |
-| `GET /api/v1/channels/{id}/feeds.json` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 404 |
-| `GET /api/v1/channels/{id}/feeds.csv` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ✓ 404 |
+| `GET /api/v1/channels/{id}/feeds.json` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
+| `GET /api/v1/channels/{id}/feeds.csv` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/projects/{id}/command-types` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `PUT /api/v1/projects/{id}/command-types/{name}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 200 | ! 200 |
 | `DELETE /api/v1/projects/{id}/command-types/{name}` | org_admin | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 403 | ✓ 204 | · |
@@ -105,7 +117,7 @@ Every operation has a policy entry.
 | `POST /api/v1/rules` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 201 | ✓ 201 | ! 201 |
 | `GET /api/v1/rules/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `PATCH /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 200 | ! 200 |
-| `DELETE /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✗ 204 | ✗ 404 | · | · |
+| `DELETE /api/v1/rules/{id}` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 204 | · | · |
 | `GET /api/v1/alerts` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `GET /api/v1/alerts/{id}` | viewer | ✓ 401 | ✓ 404 | ✓ 200 | ✓ 200 | ✓ 200 | ! 200 |
 | `POST /api/v1/alerts/{id}/acknowledge` | engineer | ✓ 401 | ✓ 404 | ✓ 403 | ✓ 200 | ✓ 409 | ! 409 |

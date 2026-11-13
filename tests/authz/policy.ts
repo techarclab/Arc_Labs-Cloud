@@ -152,6 +152,7 @@ export const POLICY: Record<string, Rule> = {
   'PATCH /api/v1/update': r('device', 'none', { body: () => ({ temperature: 20 }) }),
   'DELETE /api/v1/update': r('device', 'none'),
   'GET /api/v1/controls': r('device', 'none'),
+  'GET /api/v1/device/config': r('device', 'none'),
 
   // ---------- rules and alerts ----------
   'GET /api/v1/rules': r('viewer', 'read'),

@@ -26,6 +26,9 @@ export function arduinoSketch(opts: {
   const controls = fields.filter((f) => f.kind === 'control').sort((a, b) => a.position - b.position);
   const interval = Math.max(5, device.expectedIntervalSeconds || 15);
   const hostArgs = host !== DEFAULT_HOST || port !== 8883 ? `, ${cstr(host)}, ${port}` : '';
+  // Hosted ARC Cloud: the device key is all the sketch needs (the library fetches the rest). A local test server
+  // spells the values out, since the library's settings request goes to the hosted API.
+  const keyOnly = !hostArgs;
   const range = (f: MetricDef) =>
     [f.unit && f.unit.trim(), f.minValue != null || f.maxValue != null ? `allowed ${f.minValue ?? '…'} to ${f.maxValue ?? '…'}` : '']
       .filter(Boolean)
@@ -40,13 +43,13 @@ export function arduinoSketch(opts: {
   L.push(' * 2. Board: ESP32 (e.g. "ESP32 Dev Module"). Serial Monitor at 115200 baud.');
   if (provisioned) {
     L.push(' * 3. Nothing secret is in this sketch. After uploading, paste this device\'s PROVISION line (ARC Cloud -> Devices ->');
-    L.push(' *    Add device or Replace password -> tab "ESP32 over USB") into the Serial Monitor, line ending "New Line".');
+    L.push(' *    Add device or New device key -> tab "ESP32 over USB") into the Serial Monitor, line ending "New Line".');
   } else {
-    L.push(' * 3. Put in your 2.4 GHz Wi-Fi below.' + (token ? '' : ' Paste the device token you saved when the device was added (or use'));
-    if (!token) L.push(' *    Replace password on the device page to get a new one).');
+    L.push(' * 3. Put in your 2.4 GHz Wi-Fi below.' + (token ? '' : ' Paste the device key (arc_dk_...) you saved when the device was added'));
+    if (!token) L.push(' *    (lost it? "New device key" on the device page gives a new one).');
     L.push(' *');
-    L.push(' * DEVICE_TOKEN works like a password: anyone with it can send data as this device. Don\'t share this sketch or the');
-    L.push(' * compiled file, and don\'t host this build for over-the-air updates. If it leaks: Replace password.');
+    L.push(' * DEVICE_KEY works like a password: anyone with it can send data as this device. Don\'t share this sketch or the');
+    L.push(' * compiled file, and don\'t host this build for over-the-air updates. If it leaks: New device key.');
   }
   L.push(' * Lines marked TODO are yours to fill in. A NAN value is simply not sent, so nothing fake reaches your dashboard.');
   L.push(' */');
@@ -55,9 +58,13 @@ export function arduinoSketch(opts: {
   if (!provisioned) {
     L.push(`#define WIFI_SSID      "your-wifi"`);
     L.push(`#define WIFI_PASSWORD  "your-wifi-password"`);
-    L.push(`#define DEVICE_ID      ${cstr(device.id)}`);
-    L.push(`#define DEVICE_TOKEN   ${cstr(token || 'paste-the-device-token-here')}`);
-    L.push(`#define DEVICE_TOPIC   ${cstr(topicBase)}`);
+    if (keyOnly) {
+      L.push(`#define DEVICE_KEY     ${cstr(token || 'arc_dk_paste-your-device-key-here')}`);
+    } else {
+      L.push(`#define DEVICE_ID      ${cstr(device.id)}`);
+      L.push(`#define DEVICE_TOKEN   ${cstr(token || 'arc_dk_paste-your-device-key-here')}   // the device key`);
+      L.push(`#define DEVICE_TOPIC   ${cstr(topicBase)}`);
+    }
     L.push('');
   }
   L.push('ArcCloud arc;');
@@ -68,7 +75,13 @@ export function arduinoSketch(opts: {
   L.push('  // TODO: pinMode(...) and sensor setup');
   L.push('');
   L.push('  arc.setFirmwareVersion("1.0.0");');
-  L.push(provisioned ? `  arc.beginProvisioned(${hostArgs.slice(2)});` : `  arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_ID, DEVICE_TOKEN, DEVICE_TOPIC${hostArgs});`);
+  L.push(
+    provisioned
+      ? `  arc.beginProvisioned(${hostArgs.slice(2)});`
+      : keyOnly
+        ? '  arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_KEY);'
+        : `  arc.begin(WIFI_SSID, WIFI_PASSWORD, DEVICE_ID, DEVICE_TOKEN, DEVICE_TOPIC${hostArgs});`,
+  );
   if (controls.length) {
     L.push('');
     L.push('  // Dashboard controls. Each handler also runs right after connecting, with the control\'s current value.');

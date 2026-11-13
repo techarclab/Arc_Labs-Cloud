@@ -26,7 +26,7 @@ const EVENT_TEXT: Record<string, string> = {
   first_message: 'First data received',
   connected: 'Connected',
   disconnected: 'Disconnected',
-  credentials_rotated: 'Password replaced',
+  credentials_rotated: 'New device key made',
   revoked: 'Revoked',
   lifecycle_changed: 'Status changed',
   firmware_changed: 'Firmware changed',
@@ -177,7 +177,7 @@ export function DeviceDetail() {
               Edit
             </button>
             <button className="btn" onClick={() => setConfirm('rotate')}>
-              Replace password
+              New device key
             </button>
               </>
             )}
@@ -474,9 +474,9 @@ function ConfirmDialog({ kind, device, onClose, onDone }: { kind: 'rotate' | 're
   const [typed, setTyped] = useState('');
   const copy = {
     rotate: {
-      title: `Replace the password for ${device.displayName}?`,
-      body: 'The current password stops working straight away. The device stays disconnected until you update it with the new password.',
-      action: 'Replace password',
+      title: `Make a new device key for ${device.displayName}?`,
+      body: 'The current key stops working straight away. The device stays disconnected until you put the new key in its code.',
+      action: 'Make a new key',
     },
     suspend: {
       title: `Suspend ${device.displayName}?`,
