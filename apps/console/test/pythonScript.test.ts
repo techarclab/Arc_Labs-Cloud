@@ -79,6 +79,11 @@ describe('Raspberry Pi script generator', () => {
         'a.send_readings(c)',
         'a.on_message(c, None, Msg({"schemaVersion": 1, "field": "led1", "value": 1}))',
         'a.on_message(c, None, Msg({"schemaVersion": 1, "type": "command", "commandId": "c1", "name": "x", "payload": {}}))',
+        'class Refused:', '    is_failure = True', '    value = 135', '    def __str__(self): return "Not authorized"',
+        'c.disconnect = lambda: calls.append("disconnected")',
+        'ud = {"stop": False}',
+        'a.on_connect(c, ud, None, Refused(), None)',
+        'assert ud["stop"] is True',
         'print(json.dumps({"subs": c.subs, "sent": [[t, json.loads(p), q] for t, p, q in c.sent], "calls": calls}))',
       ].join('\n'),
     );
@@ -95,6 +100,6 @@ describe('Raspberry Pi script generator', () => {
     expect(telemetry[1].timestamp).toMatch(/Z$/);
     expect(telemetry[2]).toBe(1);
     expect(ack).toEqual(['arc/v1/o/p/d/cmd-ack', { commandId: 'c1', status: 'error', error: 'no such thing' }, 1]);
-    expect(out.calls).toEqual([1]);
+    expect(out.calls).toEqual([1, 'disconnected']); // a refused token stops the script instead of retrying forever
   });
 });
