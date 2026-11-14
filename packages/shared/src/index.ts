@@ -4,3 +4,4 @@ export * from './telemetry';
 export * from './connectivity';
 export * from './rules';
 export * from './db';
+export * from './device-key';

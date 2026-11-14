@@ -145,6 +145,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: ArcCloud library passes Arduino's checks (the Library Manager runs the same ones)
+        uses: arduino/arduino-lint-action@v2
+        with:
+          path: firmware/arduino-library/ArcCloud
+          compliance: strict
+          library-manager: false
+          project-type: library
       - name: ArcCloud library — its examples, and sketches made by the console's generator (ESP32 and ESP32-S3)
         run: |
           node --experimental-strip-types tools/gen-arduino-samples.ts /tmp/gen

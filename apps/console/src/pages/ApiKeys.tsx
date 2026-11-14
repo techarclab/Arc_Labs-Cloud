@@ -77,7 +77,7 @@ export function ApiKeysPage() {
           </div>
           <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p>
-              Every device has its own write key: the password shown once when you added it. The same key works for MQTT and for the HTTP API. If a device’s key is lost, open the device and choose <b>Replace password</b>.
+              Every device has its own write key: the device key (<code>arc_dk_…</code>) shown once when you added it. The same key works for MQTT, the HTTP API and the ArcCloud libraries. If a device’s key is lost, open the device and choose <b>New device key</b>.
             </p>
             <p className="small muted">Devices added before the HTTP API existed need their password replaced once before HTTP works for them.</p>
             {devices && devices.length > 0 && (

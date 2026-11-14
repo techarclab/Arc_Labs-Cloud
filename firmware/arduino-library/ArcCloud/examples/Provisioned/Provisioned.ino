@@ -5,7 +5,7 @@
  *
  * 1. Channel settings -> Fields: rssi (Sensor) and led1 (Control, 0-1), as in QuickStart.
  * 2. Upload this sketch, open the Serial Monitor (115200 baud, line ending "New Line").
- * 3. ARC Cloud -> Devices -> Add device (or Replace password) -> tab "ESP32 over USB": copy the PROVISION line,
+ * 3. ARC Cloud -> Devices -> Add device (or New device key) -> tab "ESP32 over USB": copy the PROVISION line,
  *    put in your Wi-Fi, paste it into the Serial Monitor and press Enter. The board saves it and restarts.
  *    Serial commands: STATUS (what is stored; the token is never printed), FACTORY-RESET (erase everything).
  *

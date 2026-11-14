@@ -43,8 +43,8 @@ export function pythonScript(opts: {
   L.push('# 2. Fill in the lines marked TODO, then run:  python3 arc_cloud.py');
   L.push('#    To start it on boot, see the systemd example at the end of this file.');
   L.push('#');
-  L.push('# DEVICE_TOKEN works like a password: anyone with it can send data as this device. Keep this file private');
-  L.push('# (chmod 600), and don\'t commit it to GitHub. If it leaks: ARC Cloud -> device -> Replace password.');
+  L.push('# DEVICE_KEY works like a password: anyone with it can send data as this device. Keep this file private');
+  L.push('# (chmod 600), and don\'t commit it to GitHub. If it leaks: ARC Cloud -> device -> New device key.');
   L.push('# A reading of None is simply not sent, so nothing fake reaches your dashboard.');
   L.push('');
   L.push('import json');
@@ -58,7 +58,7 @@ export function pythonScript(opts: {
   L.push(`MQTT_HOST = ${pystr(host)}`);
   L.push(`MQTT_PORT = ${port}`);
   L.push(`DEVICE_ID = ${pystr(device.id)}`);
-  L.push(`DEVICE_TOKEN = ${pystr(token || 'paste-the-device-token-here')}${token ? '' : '  # TODO: the token you saved when the device was added'}`);
+  L.push(`DEVICE_KEY = ${pystr(token || 'arc_dk_paste-your-device-key-here')}${token ? '' : '  # TODO: the device key (arc_dk_...) you saved when the device was added'}`);
   L.push(`TOPIC = ${pystr(topicBase)}`);
   L.push(`INTERVAL_SECONDS = ${interval}`);
   L.push('FIRMWARE_VERSION = "1.0.0"');
@@ -115,7 +115,12 @@ export function pythonScript(opts: {
   L.push('');
   L.push('def on_connect(client, userdata, flags, reason_code, properties):');
   L.push('    if reason_code.is_failure:');
-  L.push('        print("Connection refused:", reason_code, "(check DEVICE_ID and DEVICE_TOKEN)")');
+  L.push('        print("Connection refused:", reason_code)');
+  L.push('        if reason_code.value in (134, 135):   # bad user name or password / not authorized');
+  L.push('            print("ARC Cloud did not accept DEVICE_KEY. Use the key shown when this device was added,")');
+  L.push('            print("or open the device in ARC Cloud -> New device key, and paste the new one into DEVICE_KEY.")');
+  L.push('            client.disconnect()   # retrying with the same token cannot work');
+  L.push('            userdata["stop"] = True');
   L.push('        return');
   L.push('    print("Connected to ARC Cloud")');
   L.push('    client.subscribe(TOPIC + "/cmd", qos=1)');
@@ -145,6 +150,7 @@ export function pythonScript(opts: {
   L.push('    global counter');
   L.push('    metrics = {k: v for k, v in read_sensors().items() if isinstance(v, (int, float)) and v == v}   # drop None and NaN');
   L.push('    if not metrics:');
+  L.push('        print("Nothing sent: read_sensors() returned no numbers. Fill in the TODO lines (the device shows offline until it reports).")');
   L.push('        return');
   L.push('    counter += 1');
   L.push('    message = {');
@@ -158,8 +164,11 @@ export function pythonScript(opts: {
   L.push('');
   L.push('');
   L.push('def main():');
-  L.push('    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID)');
-  L.push('    client.username_pw_set(DEVICE_ID, DEVICE_TOKEN)');
+  L.push('    if not DEVICE_KEY or "paste-your" in DEVICE_KEY:');
+  L.push('        raise SystemExit("Set DEVICE_KEY first: the key shown when this device was added (lost it? ARC Cloud -> device -> New device key).")');
+  L.push('    userdata = {"stop": False}');
+  L.push('    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID, userdata=userdata)');
+  L.push('    client.username_pw_set(DEVICE_ID, DEVICE_KEY)   # the whole key is the password');
   L.push('    client.tls_set_context(ssl.create_default_context())   # verifies the server certificate');
   L.push('    client.on_connect = on_connect');
   L.push('    client.on_message = on_message');
@@ -167,7 +176,7 @@ export function pythonScript(opts: {
   L.push('    client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)');
   L.push('    client.loop_start()');
   L.push('    try:');
-  L.push('        while True:');
+  L.push('        while not userdata["stop"]:');
   L.push('            if client.is_connected():');
   L.push('                send_readings(client)');
   L.push('            time.sleep(INTERVAL_SECONDS)');

@@ -3,7 +3,7 @@ import { Doc } from '../common/docs';
 import { All, BadRequestException, Body, Post, Controller, ForbiddenException, Get, HttpCode, HttpException, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
-import { validateTelemetry } from '@arc/shared';
+import { buildTopic, parseDeviceKey, validateTelemetry } from '@arc/shared';
 import type { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { AccessService } from '../common/access.service';
@@ -54,7 +54,7 @@ function toNumber(v: unknown): number | null {
  *   GET         /api/v1/controls?field=relay                 → 1   (plain text)
  *   GET         /api/v1/channels/{id}/feeds.json?results=100 (header: X-API-Key: READ_KEY; also feeds.csv)
  *
- * KEY is the device's password from registration. HTTPS only in production. ?api_key=KEY in the URL still
+ * KEY is the device key (arc_dk_…) or, as before, the device's password alone. HTTPS only in production. ?api_key=KEY in the URL still
  * works for ThingSpeak-style clients unless DEVICE_KEY_IN_QUERY=false (recommended in production).
  */
 @ApiTags('Device HTTP API')
@@ -120,14 +120,16 @@ export class DeviceHttpController {
     return extractDeviceKey(req as any, loadConfig().DEVICE_KEY_IN_QUERY);
   }
 
-  private async deviceFor(key: string): Promise<IngestDevice> {
+  private async deviceFor(key: string): Promise<IngestDevice & { display_name: string; expected_interval_seconds: number }> {
+    // The device key (arc_dk_<id>_<secret>) carries the device ID: the secret must belong to that very device.
+    const dk = parseDeviceKey(key);
     const d = await this.db.one(
-      `SELECT d.id, d.organization_id, d.project_id, d.lifecycle_status, o.status AS org_status
+      `SELECT d.id, d.organization_id, d.project_id, d.lifecycle_status, d.display_name, d.expected_interval_seconds, o.status AS org_status
        FROM device_credentials c JOIN devices d ON d.id = c.device_id JOIN organizations o ON o.id = d.organization_id
-       WHERE c.api_key_hash = $1 AND c.status = 'active'`,
-      [apiKeyHash(key)],
+       WHERE c.api_key_hash = $1 AND c.status = 'active' AND ($2::uuid IS NULL OR d.id = $2::uuid)`,
+      [apiKeyHash(dk ? dk.secret : key), dk?.deviceId ?? null],
     );
-    if (!d) throw new UnauthorizedException({ code: 'invalid_api_key', message: 'Unknown API key. Copy the key from the device page, or replace the device password to get one.' });
+    if (!d) throw new UnauthorizedException({ code: 'invalid_api_key', message: 'Unknown device key. Use the arc_dk_… key shown when the device was added, or make a new one on the device page (New device key).' });
     if (d.org_status !== 'active' || !INGESTIBLE.includes(d.lifecycle_status)) {
       throw new ForbiddenException({ code: 'device_inactive', message: `This device is ${d.lifecycle_status}.` });
     }
@@ -186,6 +188,28 @@ export class DeviceHttpController {
     const fw = typeof input.firmware_version === 'string' && /^[A-Za-z0-9._+-]{1,40}$/.test(input.firmware_version) ? input.firmware_version : null;
     const stored = await this.ingest.write(device, v.value.metrics, v.deviceTime ?? receivedAt, receivedAt, messageId, fw);
     return { ok: true, duplicate: !stored, deviceId: device.id, receivedAt, values: v.value.metrics };
+  }
+
+  /**
+   * What a device needs besides its key: where to connect and its topic. The ArcCloud libraries call this once at
+   * start-up, so a sketch holds only the Wi-Fi and the device key.
+   */
+  @Doc('Device settings (for device libraries)')
+  @Public()
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  @Get('device/config')
+  async deviceConfig(@Req() req: Request) {
+    const device = await this.deviceFor(this.apiKey(req));
+    const cfg = loadConfig();
+    const topicBase = buildTopic({ orgId: device.organization_id, projectId: device.project_id, deviceId: device.id }, 'telemetry').replace(/\/telemetry$/, '');
+    return {
+      deviceId: device.id,
+      name: device.display_name,
+      mqttHost: cfg.MQTT_PUBLIC_HOST,
+      mqttPort: cfg.MQTT_PUBLIC_PORT,
+      topicBase,
+      intervalSeconds: device.expected_interval_seconds,
+    };
   }
 
   @Doc('Controls')

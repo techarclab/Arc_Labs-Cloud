@@ -23,8 +23,8 @@ export function PythonCodePanel({ device, token, onCopied }: { device: Device; t
       </p>
       <p className="small muted">
         {token
-          ? 'This script contains the device token. Keep it private: run chmod 600 on it, and don’t share it or commit it to GitHub.'
-          : 'Paste the token you saved when the device was added. Lost it? “Replace password” gives a new one (the old one stops working).'}
+          ? 'This script contains the device key. Keep it private: run chmod 600 on it, and don’t share it or commit it to GitHub.'
+          : 'Paste the device key (arc_dk_…) you saved when the device was added. Lost it? “New device key” gives a new one (the old one stops working).'}
       </p>
       <pre className="code sketch" style={{ maxHeight: 420 }} aria-label="Python script">
         {code}

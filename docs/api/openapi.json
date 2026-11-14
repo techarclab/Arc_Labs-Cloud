@@ -3359,6 +3359,21 @@
         ]
       }
     },
+    "/api/v1/device/config": {
+      "get": {
+        "operationId": "DeviceHttpController_deviceConfig",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Device settings (for device libraries)",
+        "tags": [
+          "Device HTTP API"
+        ]
+      }
+    },
     "/api/v1/controls": {
       "get": {
         "operationId": "DeviceHttpController_controls",

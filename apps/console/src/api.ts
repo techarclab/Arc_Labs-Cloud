@@ -189,6 +189,8 @@ export interface Credentials {
   clientId: string;
   username: string;
   password: string;
+  /** arc_dk_<id>_<secret>: everything a device needs in one string (older APIs: absent). */
+  deviceKey?: string;
   topics: { telemetry: string; state: string; commands?: string; commandAcks?: string };
   http?: { apiKey: string; updateUrl: string; controlsUrl: string };
 }
@@ -227,6 +229,12 @@ export const ROLE_LABEL: Record<Role, string> = {
   viewer: 'Viewer',
   individual: 'Personal workspace',
 };
+/** A role's name for people; never "undefined" for a role this console does not know (e.g. an older "org_admin"). */
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) return 'Member';
+  if (role === 'org_admin') return 'Admin';
+  return (ROLE_LABEL as Record<string, string>)[role] ?? role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' ');
+}
 /** The API's access levels (AccessService.LEVEL): what a role may do across the organization. */
 const LEVEL: Record<Role, 1 | 2 | 3> = { owner: 3, admin: 3, individual: 3, teacher: 2, trainer: 2, engineer: 2, student: 1, employee: 1, viewer: 1 };
 /** Can change channels, devices, rules (engineer level and up). */

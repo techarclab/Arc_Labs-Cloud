@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, isAdmin, isScoped, ROLE_LABEL } from '../api';
+import { api, ApiError, isAdmin, isScoped, roleLabel } from '../api';
 import { useSession } from '../session';
 import { ArcMark, usePoll, useToast } from './ui';
 import { Icon } from './icons';
@@ -190,7 +190,7 @@ export function Layout() {
               <span title={org ? `Your role in ${org.name}` : undefined}>
                 {user?.isPlatformAdmin ? 'ARC LABS admin · ' : ''}
                 {/* Your own free workspace is not an organization you administer for others. */}
-                {org?.role === 'individual' ? 'Personal workspace' : org?.role ? `${ROLE_LABEL[org.role]} of ${org.name}` : ''}
+                {org?.role === 'individual' ? 'Personal workspace' : org?.role ? `${roleLabel(org.role)} of ${org.name}` : ''}
               </span>
             </span>
           </div>
@@ -212,7 +212,7 @@ export function Layout() {
           <div className="empty">
             <h3>No channels yet</h3>
             <p>
-              You are {org?.role === 'student' ? 'a student' : `a${org?.role === 'employee' ? 'n' : ''} ${ROLE_LABEL[org!.role!].toLowerCase()}`} in {org?.name}. You see the channels your teacher or an admin gives you
+              You are {org?.role === 'student' ? 'a student' : `a${org?.role === 'employee' ? 'n' : ''} ${roleLabel(org?.role).toLowerCase()}`} in {org?.name}. You see the channels your teacher or an admin gives you
               access to; none so far.
             </p>
           </div>
