@@ -55,19 +55,19 @@ Scope as approved:
 
 | ID | Severity | Status | Finding | Proposed fix |
 |---|---|---|---|---|
-| DEF-001 | **High** | open: **your decision** | Platform admins get org_admin in every organization and bypass row-level security (`AccessService.roleIn`, `TenantScopeInterceptor`). The console tells them "no access to their data" | Remove the bypass (platform routes only), or keep it with disclosure in the privacy notice and audit of every use |
-| DEF-006 | **High** | open | `caddy:2.10`, the only HTTPS entry point: 6 critical / 100 high, 105 fixable, in its Alpine 3.22.3 packages (OpenSSL, curl, musl, libcap) | Newer Caddy image, or an `apk upgrade` layer; gate it |
-| DEF-007 | **High** | open | EMQX image (`emqx/emqx:5.8.9`, Debian 13.2), internet-facing on 8883: 9 critical / 212 high, 114 fixable (GnuTLS, OpenSSL, …) | `apt-get upgrade` layer in `Dockerfile.emqx`, or a newer 5.8 patch image (check licence terms for newer minors) |
-| DEF-004 | Medium | open | Console CSP has no `default-src`/`script-src`, so no XSS protection (ZAP 10055) | Explicit CSP including Google sign-in; browser-test before deploy |
-| DEF-005 | Medium | open | Console nginx master runs as root (Trivy DS-0002, confirmed `uid=0` in CI) | Unprivileged nginx on 8080; Caddy → `console:8080` |
-| DEF-012 | Medium | open | CI actions pinned by tag, not commit SHA: the exact weakness used in the March 2026 Trivy compromise | Pin every action to a full SHA |
+| DEF-001 | **High** | fix in #36, open (decision 2026-11-12: remove access) | Platform admins get org_admin in every organization and bypass row-level security (`AccessService.roleIn`, `TenantScopeInterceptor`). The console tells them "no access to their data" | Remove the bypass (platform routes only), or keep it with disclosure in the privacy notice and audit of every use |
+| DEF-006 | **High** | fix in #38 | `caddy:2.10`, the only HTTPS entry point: 6 critical / 100 high, 105 fixable, in its Alpine 3.22.3 packages (OpenSSL, curl, musl, libcap) | Newer Caddy image, or an `apk upgrade` layer; gate it |
+| DEF-007 | **High** | fix in #38 | EMQX image (`emqx/emqx:5.8.9`, Debian 13.2), internet-facing on 8883: 9 critical / 212 high, 114 fixable (GnuTLS, OpenSSL, …) | `apt-get upgrade` layer in `Dockerfile.emqx`, or a newer 5.8 patch image (check licence terms for newer minors) |
+| DEF-004 | ~~Medium~~ **Low** (corrected 2026-11-12) | hardened in #39 | Initially reported as "no XSS protection". **Wrong:** the strict CSP is a build-time `<meta>` tag, which ZAP (and I) missed. Remaining by design: `style-src 'unsafe-inline'`, `img-src https:` | Full policy now also as a header, drift test + browser check (#39) |
+| DEF-005 | Medium | fix in #39, open | Console nginx master runs as root (Trivy DS-0002, confirmed `uid=0` in CI) | Unprivileged nginx on 8080; Caddy → `console:8080` |
+| DEF-012 | Medium | fix in #37, open | CI actions pinned by tag, not commit SHA: the exact weakness used in the March 2026 Trivy compromise | Pin every action to a full SHA |
 | DEF-009 | Medium (dev only) | open | `vitest` ≤ 4.1.10: 2 critical (tinypool prototype pollution → code execution; mocker path traversal) | Upgrade to Vitest 5 (major) |
 | DEF-002 | Low / open question | not reproduced | Readings sent after an EMQX restart but before the worker re-subscribes could be dropped. Measured 200/200 stored in both restart scenarios | Keep measuring; per-device first-reading check |
 | DEF-003 | Low | open | EMQX enforces 65,536 connections; `base.hocon` says 100,000 | Raise the container's open-file limit or document 65,536 (to confirm the cause) |
-| DEF-008 | Low | open | `postgres:16`: 2 critical / 147 high, 28 fixable; not reachable from outside the Docker network | Pull the rebuilt image on the next deploy |
+| DEF-008 | Low | fix in #38 | `postgres:16`: 2 critical / 147 high, 28 fixable; not reachable from outside the Docker network | Pull the rebuilt image on the next deploy |
 | DEF-010 | Low | open | *Rejected data* is shown to viewers, but the API requires engineer, so viewers get a 403 | Hide it for viewers, or allow viewers read access |
 | DEF-011 | Low | open | OpenAPI documents PUT/PATCH/DELETE `/api/v1/update` (they answer 404) | Restrict `@All('update')` to GET/POST |
-| DEF-013 | Low | open | Missing Cross-Origin-Opener/Resource-Policy and Permissions-Policy headers (ZAP) | Add in nginx / Caddy |
+| DEF-013 | Low | fix in #39, open (CORP, Permissions-Policy on assets; COOP/COEP kept for Google sign-in) | Missing Cross-Origin-Opener/Resource-Policy and Permissions-Policy headers (ZAP) | Add in nginx / Caddy |
 | — | — | **fixed in PR** | `docs/api/openapi.json` missing 14 operations | #29 |
 | — | — | **fixed in PR** | Library accepted names the server rejects | #30 |
 | — | — | **fixed in PR** | API image: 10 HIGH in the bundled npm CLI; console image: 3 critical / 72+5 high | #32 |
